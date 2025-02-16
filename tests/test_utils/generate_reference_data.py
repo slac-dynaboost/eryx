@@ -17,6 +17,7 @@ def generate_reference_data():
         pdb_path, 
         sampling, sampling, sampling,
         expand_p1=True,
+        res_limit=20.0,
         gnm_cutoff=4.0,
         gamma_intra=1.0,
         gamma_inter=1.0
