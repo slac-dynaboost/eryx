@@ -545,6 +545,7 @@ class GaussianNetworkModel:
         For each atom i in the ASU i_asu in the reference cell,
         asu_neighbors[i_asu][i_cell][j_asu][i] returns the indices of
         its neighbors, if any, in the ASU j_asu in cell i_cell.
+        """
         self.asu_neighbors = []
 
         for i_asu in range(self.n_asu):
