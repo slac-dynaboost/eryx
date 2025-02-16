@@ -5,37 +5,32 @@ from tests.test_utils.log_analysis import LogAnalyzer
 class TestOnePhonon:
 
     @pytest.fixture
-    def base_log_content(self):
-        # Simulated base log content from a successful run (except the final failure message)
-        return (
-            "[OnePhonon.__init__] Enter with args=('tests/pdbs/5zck.pdb', [-4, 4, 1], [-17, 17, 1], [-29, 29, 1]), kwargs={'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': 1.0, 'expand_p1': True}\n"
-            "[OnePhonon._setup] Enter with args=('tests/pdbs/5zck.pdb', True, 0.0, 'asu'), kwargs={}\n"
-            "[AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}\n"
-            "[AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': 0, 'expand_p1': True}\n"
-            "Model run failed: 'NoneType' object has no attribute 'shape'"
-        )
+    def base_log_file(self):
+        return "tests/test_data/logs/base_run/base_run.log"
 
     @pytest.fixture
-    def detailed_log_content(self):
-        # Simulated log content containing a duration value entry.
-        return (
-            "[AtomicModel._get_gemmi_structure] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}\n"
-            "[AtomicModel._get_gemmi_structure] Exit. Duration=0.12s\n"
-            "[AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': 0, 'expand_p1': True}\n"
-        )
+    def edge_log_file(self):
+        return "tests/test_data/logs/edge_cases/edge_run_2.log"
 
-    @pytest.fixture
-    def edge_log_content(self):
-        # Simulated edge case log content (with an error condition: invalid gamma_inter)
-        return (
-            "[OnePhonon.__init__] Enter with args=('tests/pdbs/5zck.pdb', [-4, 4, 1], [-17, 17, 1], [-29, 29, 1]), kwargs={'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': -1.0, 'expand_p1': True}\n"
-            "[OnePhonon._setup] Enter with args=('tests/pdbs/5zck.pdb', True, 0.0, 'asu'), kwargs={}\n"
-            "[AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}\n"
-            "[AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': 0, 'expand_p1': True}\n"
-            "Model run failed: 'NoneType' object has no attribute 'shape'"
-        )
+    def test_input_parameters(self, base_log_file):
+        """Test that input parameters are correctly parsed from log"""
+        with open(base_log_file) as f:
+            log_content = f.read()
+        analyzer = LogAnalyzer(log_content)
+        entries = analyzer.extract_entries()
+        
+        # Check OnePhonon initialization parameters
+        init_entry = next(e for e in entries if e[0] == "OnePhonon.__init__")
+        assert "tests/pdbs/5zck.pdb" in init_entry[1]
+        assert "[-4, 4, 1]" in init_entry[1]
+        assert "[-17, 17, 1]" in init_entry[1]
+        assert "[-29, 29, 1]" in init_entry[1]
+        assert "'gnm_cutoff': 4.0" in init_entry[1]
+        assert "'gamma_intra': 1.0" in init_entry[1]
+        assert "'gamma_inter': 1.0" in init_entry[1]
+        assert "'expand_p1': True" in init_entry[1]
 
-    def test_log_sequence(self, base_log_content):
+    def test_log_sequence(self, base_log_file):
         analyzer = LogAnalyzer(base_log_content)
         expected_sequence = [
             "OnePhonon.__init__",
@@ -109,24 +104,19 @@ class TestOnePhonon:
         for key in expected_sym_ops[1]:
             npt.assert_array_almost_equal(ret_val[1][key], expected_sym_ops[1][key])
 
-    def test_failure_message_present(self, base_log_content):
-        analyzer = LogAnalyzer(base_log_content)
+    def test_failure_message_present(self, base_log_file):
+        with open(base_log_file) as f:
+            log_content = f.read()
+        analyzer = LogAnalyzer(log_content)
         failure_msg = analyzer.get_failure_message()
         assert failure_msg is not None
         assert "Model run failed" in failure_msg
+        assert "'NoneType' object has no attribute 'shape'" in failure_msg
 
-    def test_get_duration_absent(self, base_log_content):
-        # With the base_log_content fixture, no duration is present.
-        analyzer = LogAnalyzer(base_log_content)
-        duration = analyzer.get_duration("AtomicModel._get_gemmi_structure")
-        assert duration is None
-
-    def test_get_duration_detailed(self, detailed_log_content):
-        analyzer = LogAnalyzer(detailed_log_content)
-        duration = analyzer.get_duration("AtomicModel._get_gemmi_structure")
-        assert duration == 0.12
-
-    def test_integration_edge_case(self, edge_log_content):
+    def test_edge_case_invalid_gamma(self, edge_log_file):
+        """Test behavior with invalid gamma_inter parameter"""
+        with open(edge_log_file) as f:
+            log_content = f.read()
         analyzer = LogAnalyzer(edge_log_content)
         failure_msg = analyzer.get_failure_message()
         assert failure_msg is not None

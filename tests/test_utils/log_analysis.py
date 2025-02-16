@@ -45,14 +45,16 @@ class LogAnalyzer:
                 return line
         return None
 
-    def get_duration(self, method_name):
+    def get_method_args(self, method_name):
         """
-        Extract and return the duration from a log entry for the given method.
-        Returns a float value in seconds or None if not found.
+        Extract the arguments passed to a method from its log entry.
+        Returns a tuple of (args, kwargs) or None if not found.
         """
-        pattern = re.compile(rf'\[{re.escape(method_name)}\].*Duration=([\d\.]+)s')
+        pattern = re.compile(rf'\[{re.escape(method_name)}\] Enter with args=([^,]+), kwargs=(.*)')
         for line in self.lines:
             match = pattern.search(line)
             if match:
-                return float(match.group(1))
+                args = eval(match.group(1))
+                kwargs = eval(match.group(2))
+                return args, kwargs
         return None
