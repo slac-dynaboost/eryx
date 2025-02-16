@@ -566,9 +566,9 @@ class GaussianNetworkModel:
         Compute the Hessian matrix for the GNM.
 
         For a pair of atoms i,j the Hessian is defined as:
-        - If i≠j and d_ij ≤ cutoff: H_ij = -gamma_ij 
-        - If i≠j and d_ij > cutoff: H_ij = 0
-        - If i=j: H_ii = -sum_{j≠i} H_ij
+        - If i != j and d_ij <= cutoff: H_ij = -gamma_ij 
+        - If i != j and d_ij > cutoff: H_ij = 0
+        - If i = j: H_ii = -sum_{j != i} H_ij
 
         Returns
         -------
