@@ -47,7 +47,7 @@ def log_method_call(func):
         if result is not None:
             import numpy as np
             if isinstance(result, np.ndarray):
-                logging.debug(f"[{class_name}.{method_name}] Return array shape: {result.shape}")
+                logging.debug(f"[{class_name}.{method_name}] Return array shape: {result.shape}, first few values: {result.flatten()[:5]}")
             else:
                 logging.debug(f"[{class_name}.{method_name}] Return value: {result}")
         return result
