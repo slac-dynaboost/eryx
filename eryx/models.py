@@ -118,7 +118,7 @@ class RigidBodyTranslations:
         
         Parameters
         ----------
-        target : numpy.ndarray, 3d
+        target : numpy.ndarray, with 3 dimensions
             target map, of shape self.map_shape
         sigmas_min : float or tuple of shape (3,)
             lower bound of (an)isotropic sigmas
@@ -354,7 +354,7 @@ class LiquidLikeMotions:
         
         Parameters
         ----------
-        target : numpy.ndarray, 3d
+        target : numpy.ndarray, with 3 dimensions
             target map, of shape self.map_shape
         sigmas_min : float or tuple of shape (3,)
             lower bound of (an)isotropic sigmas
@@ -536,7 +536,7 @@ class RigidBodyRotations:
         
         Parameters
         ----------
-        target : numpy.ndarray, 3d
+        target : numpy.ndarray, with 3 dimensions
             target map, of shape self.map_shape
         sigma_min : float 
             lower bound of sigma
