@@ -59,7 +59,7 @@ def generate_reference_data():
     # 5. Save test parameters
     np.savez(os.path.join(out_dir, "test_params.npz"),
              q_test=q_test,
-             sampling=sampling)
+             sampling={"hsampling": hsampling, "ksampling": ksampling, "lsampling": lsampling})
 
 if __name__ == "__main__":
     generate_reference_data()
