@@ -22,6 +22,7 @@
 ### Technical Guidance
 - Parse logs to extract method entry/exit info, computation values, and intermediate results.
 - Compare extracted values against expected known good values.
+- Inline extracted numerical log values should be embedded in test assertions for immediate validation.
 - Verify the sequence of operations (logging of entry, exit, and intermediate steps).
 - Validate intermediate results and ensure proper error logging.
 - Start with small test cases and incrementally build up to integration and edge case scenarios.
@@ -73,6 +74,7 @@ CREATE tests/test_onephonon.py:
       - Validate matrix construction.
       - Confirm K-vector and phonon calculations.
       - Compare computed values against reference outputs.
+      - Inline extraction of numerical log values using LogAnalyzer.extract_values and assert they match expected hard-coded values.
 ```
 
 3. **Implement Integration Tests**
