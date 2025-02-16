@@ -24,6 +24,9 @@ def generate_reference_data():
         gamma_intra=1.0,
         gamma_inter=1.0
     )
+    # Re-load atomic model with a valid frame (e.g. frame=-1) to ensure xyz is not None
+    from eryx.pdb import AtomicModel
+    onephonon.model = AtomicModel(pdb_path, expand_p1=True, frame=-1)
     
     # 2. Generate form factor reference
     q_test = onephonon.q_grid[:10]
