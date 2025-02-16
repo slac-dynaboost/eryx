@@ -828,6 +828,9 @@ class NonInteractingDeformableMolecules:
         Id = np.multiply(self.q2_unique[self.q2_unique_inverse], Id)
         if outdir is not None:
             np.save(os.path.join(outdir, f"rank_{rank:05}.npy"), Id)
+        elapsed = time.time() - start_time
+        logging.debug("[OnePhonon.apply_disorder] Completed disorder computation in %.2f s. Id stats: min=%.3f, max=%.3f", 
+                      elapsed, np.nanmin(Id), np.nanmax(Id))
         return Id
 
     def compute_intensity_naive(self):

@@ -60,3 +60,8 @@ def test_diffraction_calculation_chain():
          np.flip(central_slice),
          rtol=1e-5
     )
+    # Additional numeric validation: check Hessian symmetry for GaussianNetworkModel
+    hessian = onephonon.gnm.compute_hessian()
+    for i in range(onephonon.n_asu):
+        hi = hessian[i, :, onephonon.crystal.hkl_to_id([0,0,0]), i, :]
+        np.testing.assert_allclose(hi, hi.T, atol=1e-5)
