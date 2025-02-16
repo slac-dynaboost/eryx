@@ -945,10 +945,12 @@ class OnePhonon:
                                                       self.ksampling,
                                                       self.lsampling,
                                                       return_hkl=True)
+        log_array_shape(self.hkl_grid, "hkl_grid")
         self.res_mask, res_map = get_resolution_mask(self.model.cell,
                                                      self.hkl_grid,
                                                      res_limit)
         self.q_grid = 2 * np.pi * np.inner(self.model.A_inv.T, self.hkl_grid).T
+        log_array_shape(self.q_grid, "q_grid")
 
         self.crystal = Crystal(self.model)
         self.crystal.supercell_extent(nx=1, ny=1, nz=1)
@@ -1061,6 +1063,7 @@ class OnePhonon:
         """
         if self.group_by == 'asu':
             self.Amat = np.zeros((self.n_asu, self.n_atoms_per_asu, 3, 6))
+            log_array_shape(self.Amat, "Amat")
             Atmp = np.zeros((3, 3))
             Adiag = np.copy(Atmp)
             np.fill_diagonal(Adiag, 1.)
@@ -1239,6 +1242,7 @@ class OnePhonon:
         hessian = np.zeros((self.n_asu, self.n_dof_per_asu,
                             self.n_cell, self.n_asu, self.n_dof_per_asu),
                            dtype='complex')
+        log_array_shape(hessian, "hessian")
 
         hessian_allatoms = self.gnm.compute_hessian()
 
@@ -1348,6 +1352,7 @@ class OnePhonon:
         else:
             ADP = self.ADP
         Id = np.zeros((self.q_grid.shape[0]), dtype='complex')
+        log_array_shape(Id, "Id")
         for dh in tqdm(range(self.hsampling[2])):
             for dk in range(self.ksampling[2]):
                 for dl in range(self.lsampling[2]):

@@ -206,6 +206,7 @@ class AtomicModel:
         self.adp = None
         self.elements = []
         self.xyz = None
+        log_array_shape(self.xyz, "xyz initial")
 
         if frame == -1:
             frange = range(len(self.structure))
@@ -626,6 +627,7 @@ class GaussianNetworkModel:
         if kvec is None:
             kvec = np.zeros(3)
         Kmat = np.copy(hessian[:, :, self.id_cell_ref, :, :])
+        log_array_shape(Kmat, "Kmat")
 
         for j_cell in range(self.n_cell):
             if j_cell == self.id_cell_ref:
