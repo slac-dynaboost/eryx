@@ -913,6 +913,11 @@ class OnePhonon:
                  res_limit=0., model='gnm',
                  gnm_cutoff=4., gamma_intra=1., gamma_inter=1.,
                  batch_size=10000, n_processes=8):
+        self.pdb_path = pdb_path
+        self.expand_p1 = expand_p1
+        self.res_limit = res_limit
+        self.batch_size = batch_size
+        self.n_processes = n_processes
         self.hsampling = hsampling
         self.ksampling = ksampling
         self.lsampling = lsampling
