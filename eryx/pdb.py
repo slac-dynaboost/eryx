@@ -562,23 +562,24 @@ class GaussianNetworkModel:
 
     @log_method_call
     def compute_hessian(self):
-        r"""
-        For a pair of atoms the Hessian in a GNM is defined as:
-        1. i not j and dij <= cutoff: -gamma_ij
-        2. i not j and dij > cutoff: 0
-        3. i=j: -sum_{j not i} hessian_ij
+        """
+        Compute the Hessian matrix for the GNM.
+
+        For a pair of atoms i,j the Hessian is defined as:
+        - If i≠j and d_ij ≤ cutoff: H_ij = -gamma_ij 
+        - If i≠j and d_ij > cutoff: H_ij = 0
+        - If i=j: H_ii = -sum_{j≠i} H_ij
 
         Returns
         -------
-        hessian: numpy.ndarray,
-                 shape (n_asu, n_atoms_per_asu,
-                        n_cell, n_asu, n_atoms_per_asu)
-                 type 'complex'
-            - dimension 0: index ASUs in reference cell
-            - dimension 1: index their atoms
-            - dimension 2: index neighbor cells
-            - dimension 3: index ASUs in neighbor cell
-            - dimension 4: index atoms in neighbor ASU
+        hessian : numpy.ndarray
+            Shape (n_asu, n_atoms_per_asu, n_cell, n_asu, n_atoms_per_asu)
+            Complex-valued Hessian matrix where:
+            - dim 0: ASUs in reference cell
+            - dim 1: atoms in reference ASU  
+            - dim 2: neighbor cells
+            - dim 3: ASUs in neighbor cell
+            - dim 4: atoms in neighbor ASU
         """
         hessian = np.zeros((self.n_asu, self.n_atoms_per_asu,
                             self.n_cell, self.n_asu, self.n_atoms_per_asu),
@@ -605,24 +606,25 @@ class GaussianNetworkModel:
         return hessian
 
     def compute_K(self, hessian, kvec=None):
-        r"""
-        Noting H(d) the block of the hessian matrix
-        corresponding the the d-th reference cell
-        whose origin is located at r_d, then:
-        K(kvec) = \sum_d H(d) exp(i kvec. r_d)
+        """
+        Compute the dynamical matrix K(k).
+
+        For H(d) being the block of the Hessian matrix corresponding to 
+        the d-th reference cell at position r_d:
+        K(k) = sum_d H(d) exp(i k·r_d)
 
         Parameters
         ----------
-        hessian : numpy.ndarray, see compute_hessian()
+        hessian : numpy.ndarray
+            The Hessian matrix, see compute_hessian()
         kvec : numpy.ndarray, shape (3,)
-            phonon wavevector, default array([0.,0.,0.])
+            Phonon wavevector, defaults to [0,0,0]
 
         Returns
         -------
-        Kmat : numpy.ndarray,
-               shape (n_asu, n_atoms_per_asu,
-                      n_asu, n_atoms_per_asu)
-               type 'complex'
+        Kmat : numpy.ndarray
+            Shape (n_asu, n_atoms_per_asu, n_asu, n_atoms_per_asu)
+            Complex-valued dynamical matrix
         """
         if kvec is None:
             kvec = np.zeros(3)
@@ -641,22 +643,25 @@ class GaussianNetworkModel:
         return Kmat
 
     def compute_Kinv(self, hessian, kvec=None, reshape=True):
-        r"""
-        Compute the inverse of K(kvec)
-        (see compute_K() for the relationship between K and the hessian).
+        """
+        Compute the inverse of the dynamical matrix K(k).
+        
+        See compute_K() for details on K(k).
 
         Parameters
         ----------
-        hessian : numpy.ndarray, see compute_hessian()
+        hessian : numpy.ndarray
+            The Hessian matrix, see compute_hessian()
         kvec : numpy.ndarray, shape (3,)
-            phonon wavevector, default array([0.,0.,0.])
+            Phonon wavevector, defaults to [0,0,0]
+        reshape : bool
+            Whether to reshape the output matrix
 
         Returns
         -------
-        Kinv : numpy.ndarray,
-               shape (n_asu, n_atoms_per_asu,
-                      n_asu, n_atoms_per_asu)
-               type 'complex'
+        Kinv : numpy.ndarray
+            Shape (n_asu, n_atoms_per_asu, n_asu, n_atoms_per_asu) if reshape=True
+            Complex-valued inverse dynamical matrix
         """
         if kvec is None:
             kvec = np.zeros(3)
