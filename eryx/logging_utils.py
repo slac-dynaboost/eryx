@@ -102,3 +102,4 @@ def log_array_shape(array: "np.ndarray", array_name: str = "array") -> None:
         None
     """
     logging.debug(f"[Array Shape] {array_name}.shape={array.shape}")
+TimedOperation = timed_operation
