@@ -1351,6 +1351,7 @@ class OnePhonon:
         to a set of interacting rigid bodies.
         """
         import time
+        import logging
         start_time = time.time()
         logging.debug("[OnePhonon.apply_disorder] Starting disorder computation with rank=%s", rank)
         if use_data_adp:
