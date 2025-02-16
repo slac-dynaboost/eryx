@@ -1350,6 +1350,9 @@ class OnePhonon:
         representation of the asymmetric units, optionally reduced
         to a set of interacting rigid bodies.
         """
+        import time
+        start_time = time.time()
+        logging.debug("[OnePhonon.apply_disorder] Starting disorder computation with rank=%s", rank)
         if use_data_adp:
             ADP = self.model.adp[0] / (8 * np.pi * np.pi)
         else:
