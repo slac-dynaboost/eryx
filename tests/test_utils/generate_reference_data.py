@@ -48,6 +48,11 @@ def generate_reference_data():
     # 4. Generate full diffraction pattern
     Id = onephonon.apply_disorder()
     np.save(os.path.join(out_dir, "diffraction_pattern.npy"), Id)
+    non_nan_idx = np.where(~np.isnan(Id))[0]
+    first_5_values = Id[non_nan_idx][:5]
+    first_5_indices = non_nan_idx[:5]
+    print("First 5 non nan values of Id:", first_5_values)
+    print("Corresponding indices:", first_5_indices)
 
     # 5. Save test parameters
     np.savez(os.path.join(out_dir, "test_params.npz"),
