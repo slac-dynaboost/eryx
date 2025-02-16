@@ -10,7 +10,7 @@ def generate_reference_data():
     os.makedirs(out_dir, exist_ok=True)
 
     # 1. Setup test case with small grid
-    pdb_path = "tests/pdbs/5zck.pdb"
+    pdb_path = "tests/pdbs/5zck_p1.pdb"
     hsampling = [-4, 4, 1]
     ksampling = [-17, 17, 1]
     lsampling = [-29, 29, 1]
