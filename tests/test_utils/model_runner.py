@@ -23,8 +23,10 @@ class ModelRunner:
         try:
             cfg = self.config
             params = cfg["OnePhonon"].copy()
-            params["frame"] = -1
+            # Remove frame parameter since OnePhonon doesn't accept it; set frame on AtomicModel instead
             model = OnePhonon(cfg["setup"]["pdb_path"], cfg["setup"]["hsampling"], cfg["setup"]["ksampling"], cfg["setup"]["lsampling"], **params)
+            from eryx.pdb import AtomicModel
+            model.model = AtomicModel(cfg["setup"]["pdb_path"], expand_p1=True, frame=-1)
             # Assuming the OnePhonon model has a compute_gnm_phonons method
             result = model.compute_gnm_phonons()
             status = "success"
