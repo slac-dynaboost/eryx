@@ -561,7 +561,7 @@ class GaussianNetworkModel:
 
     @log_method_call
     def compute_hessian(self):
-        """
+        r"""
         For a pair of atoms the Hessian in a GNM is defined as:
         1. i not j and dij =< cutoff: -gamma_ij
         2. i not j and dij > cutoff: 0
@@ -604,7 +604,7 @@ class GaussianNetworkModel:
         return hessian
 
     def compute_K(self, hessian, kvec=None):
-        """
+        r"""
         Noting H(d) the block of the hessian matrix
         corresponding the the d-th reference cell
         whose origin is located at r_d, then:
@@ -639,7 +639,7 @@ class GaussianNetworkModel:
         return Kmat
 
     def compute_Kinv(self, hessian, kvec=None, reshape=True):
-        """
+        r"""
         Compute the inverse of K(kvec)
         (see compute_K() for the relationship between K and the hessian).
 
