@@ -31,7 +31,9 @@ class TestOnePhonon:
         assert "'expand_p1': True" in init_entry[1]
 
     def test_log_sequence(self, base_log_file):
-        analyzer = LogAnalyzer(base_log_content)
+        with open(base_log_file) as f:
+            log_content = f.read()
+        analyzer = LogAnalyzer(log_content)
         expected_sequence = [
             "OnePhonon.__init__",
             "OnePhonon._setup",
@@ -117,7 +119,7 @@ class TestOnePhonon:
         """Test behavior with invalid gamma_inter parameter"""
         with open(edge_log_file) as f:
             log_content = f.read()
-        analyzer = LogAnalyzer(edge_log_content)
+        analyzer = LogAnalyzer(log_content)
         failure_msg = analyzer.get_failure_message()
         assert failure_msg is not None
         expected_sequence = [
