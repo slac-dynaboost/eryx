@@ -61,7 +61,10 @@ class TestOnePhonon:
         assert ret_line is not None, "No return value entry found in log"
         # Extract the part after "Return value:"
         _, ret_val_str = ret_line.split("Return value:", 1)
+        # Clean up the string for eval
         ret_val_str = ret_val_str.strip()
+        lines = [line.strip() for line in ret_val_str.splitlines()]
+        ret_val_str = ''.join(lines)
         # Replace 'array(' with 'np.array(' to allow eval
         ret_val_str_mod = ret_val_str.replace("array(", "np.array(")
         ret_val = eval(ret_val_str_mod, {"np": np})
