@@ -1,0 +1,14 @@
+setup:
+  pdb_path: "tests/pdbs/5zck.pdb"
+  root_dir: "test_output"
+  hsampling: [-4, 4, 1]
+  ksampling: [-17, 17, 1]
+  lsampling: [-29, 29, 1]
+  res_limit: 0
+  batch_size: 10000
+  n_processes: 8
+OnePhonon:
+  gnm_cutoff: 4.0
+  gamma_intra: 1.0
+  gamma_inter: 1.0
+  expand_p1: true

@@ -1,0 +1,14 @@
+setup:
+  pdb_path: "tests/pdbs/5zck.pdb"
+  root_dir: "edge_case_output"
+  hsampling: [-10, 10, 2]
+  ksampling: [-20, 20, 2]
+  lsampling: [-30, 30, 2]
+  res_limit: 2
+  batch_size: 5000
+  n_processes: 4
+OnePhonon:
+  gnm_cutoff: 5.0
+  gamma_intra: 0.8
+  gamma_inter: 0.9
+  expand_p1: false
