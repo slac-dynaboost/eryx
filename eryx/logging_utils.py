@@ -8,6 +8,7 @@ array shape tracking.
 import logging
 import time
 import functools
+import numpy as np
 from contextlib import contextmanager
 
 # Configure default logging format
