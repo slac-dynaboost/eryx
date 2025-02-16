@@ -563,7 +563,7 @@ class GaussianNetworkModel:
     def compute_hessian(self):
         r"""
         For a pair of atoms the Hessian in a GNM is defined as:
-        1. i not j and dij =< cutoff: -gamma_ij
+        1. i not j and dij <= cutoff: -gamma_ij
         2. i not j and dij > cutoff: 0
         3. i=j: -sum_{j not i} hessian_ij
 
