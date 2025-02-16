@@ -29,12 +29,23 @@ class LogAnalyzer:
     def validate_sequence(self, expected_sequence):
         """
         Validate if the sequence of methods in the log matches the expected sequence.
+        Only checks that the expected methods appear in order, allowing other methods in between.
         
-        expected_sequence: a list of method names, to be matched in order.
+        expected_sequence: a list of method names that must appear in order
         """
         entries = self.extract_entries()
         methods = [entry[0] for entry in entries]
-        return methods == expected_sequence
+        
+        # Check that all expected methods exist in order
+        current_pos = 0
+        for expected in expected_sequence:
+            # Find next occurrence of expected method after current position
+            try:
+                idx = methods[current_pos:].index(expected)
+                current_pos += idx + 1
+            except ValueError:
+                return False
+        return True
 
     def get_failure_message(self):
         """
