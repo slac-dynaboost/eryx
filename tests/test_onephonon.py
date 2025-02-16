@@ -53,18 +53,22 @@ class TestOnePhonon:
         log_file = os.path.join("tests", "test_data", "logs", "base_run", "base_run.log")
         with open(log_file, "r") as f:
             lines = f.readlines()
-        ret_line = None
+        # Find the return value entry and capture all lines until the next log entry
+        ret_lines = []
+        capture = False
         for line in lines:
             if line.startswith("[AtomicModel._get_sym_ops] Return value:"):
-                ret_line = line.strip()
-                break
-        assert ret_line is not None, "No return value entry found in log"
-        # Extract the part after "Return value:"
-        _, ret_val_str = ret_line.split("Return value:", 1)
-        # Clean up the string for eval
-        ret_val_str = ret_val_str.strip()
-        lines = [line.strip() for line in ret_val_str.splitlines()]
-        ret_val_str = ''.join(lines)
+                capture = True
+                _, val = line.split("Return value:", 1)
+                ret_lines.append(val.strip())
+            elif capture and line.startswith("["):
+                capture = False
+            elif capture:
+                ret_lines.append(line.strip())
+        
+        assert ret_lines, "No return value entry found in log"
+        # Join the lines and clean up for eval
+        ret_val_str = ' '.join(ret_lines)
         # Replace 'array(' with 'np.array(' to allow eval
         ret_val_str_mod = ret_val_str.replace("array(", "np.array(")
         ret_val = eval(ret_val_str_mod, {"np": np})
