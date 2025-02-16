@@ -949,6 +949,8 @@ class OnePhonon:
                                                       self.lsampling,
                                                       return_hkl=True)
         log_array_shape(self.hkl_grid, "hkl_grid")
+        if res_limit <= 0:
+            res_limit = -1
         self.res_mask, res_map = get_resolution_mask(self.model.cell,
                                                      self.hkl_grid,
                                                      res_limit)
