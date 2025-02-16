@@ -155,6 +155,7 @@ class AtomicModel:
         self.space_group = self.structure.spacegroup_hm
         self.unit_cell_axes = get_unit_cell_axes(self.cell)
         
+    @log_method_call
     def _get_sym_ops(self, pdb_file):
         """
         Extract symmetry operations, preferably from the PDB
@@ -187,6 +188,7 @@ class AtomicModel:
         self.n_asu = len(transformations)
         return sym_ops, transformations
     
+    @log_method_call
     def extract_frame(self, expand_p1=False, frame=0):
         """
         Extract the form factors and atomic coordinates for the
@@ -486,6 +488,7 @@ class GaussianNetworkModel:
         self.gamma_intra = gamma_intra
         self._setup_gaussian_network_model()
 
+    @log_method_call
     def _setup_atomic_model(self, pdb_path):
         """
         Build unit cell and its nearest neighbors while
@@ -531,6 +534,7 @@ class GaussianNetworkModel:
                     if (i_cell == self.id_cell_ref) and (j_asu == i_asu):
                         self.gamma[i_cell, i_asu, j_asu] = self.gamma_intra
 
+    @log_method_call
     def build_neighbor_list(self):
         """
         Returns the list asu_neighbors[i_asu][i_cell][j_asu]
@@ -540,7 +544,6 @@ class GaussianNetworkModel:
         For each atom i in the ASU i_asu in the reference cell,
         asu_neighbors[i_asu][i_cell][j_asu][i] returns the indices of
         its neighbors, if any, in the ASU j_asu in cell i_cell.
-        """
         self.asu_neighbors = []
 
         for i_asu in range(self.n_asu):
@@ -556,6 +559,7 @@ class GaussianNetworkModel:
 
                     self.asu_neighbors[i_asu][i_cell][j_asu] = kd_tree1.query_ball_tree(kd_tree2, r=self.enm_cutoff)
 
+    @log_method_call
     def compute_hessian(self):
         """
         For a pair of atoms the Hessian in a GNM is defined as:

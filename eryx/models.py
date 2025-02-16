@@ -904,6 +904,7 @@ class OnePhonon:
     approximation (a.k.a small-coupling regime).
     """
 
+    @log_method_call
     def __init__(self, pdb_path, hsampling, ksampling, lsampling,
                  expand_p1=True, group_by='asu',
                  res_limit=0., model='gnm',
