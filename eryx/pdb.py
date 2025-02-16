@@ -1,6 +1,7 @@
 import numpy as np
 import gemmi
 from scipy.spatial import KDTree
+from eryx.logging_utils import log_method_call, TimedOperation, log_property_access, log_array_shape
 
 def sym_str_as_matrix(sym_str):
     """
@@ -120,12 +121,14 @@ def get_unit_cell_axes(cell):
 
 class AtomicModel:
     
+    @log_method_call
     def __init__(self, pdb_file, expand_p1=False, frame=0, clean_pdb=True):
         self._get_gemmi_structure(pdb_file, clean_pdb)
         self._extract_cell()
         self.sym_ops, self.transformations = self._get_sym_ops(pdb_file)
         self.extract_frame(frame=frame, expand_p1=expand_p1)
 
+    @log_method_call
     def _get_gemmi_structure(self, pdb_file, clean_pdb):
         """
         Retrieve Gemmi structure from PDB file.
@@ -142,6 +145,7 @@ class AtomicModel:
                 print(e)
             self.structure.remove_empty_chains()
 
+    @log_method_call
     def _extract_cell(self):
         """
         Extract unit cell information.
@@ -474,6 +478,7 @@ class Crystal:
         return xyz
 
 class GaussianNetworkModel:
+    @log_method_call
     def __init__(self, pdb_path, enm_cutoff, gamma_intra, gamma_inter):
         self._setup_atomic_model(pdb_path)
         self.enm_cutoff = enm_cutoff
@@ -500,6 +505,7 @@ class GaussianNetworkModel:
         self.n_atoms_per_asu = self.crystal.get_asu_xyz().shape[0]
         self.n_dof_per_asu_actual = self.n_atoms_per_asu * 3
 
+    @log_method_call
     def _setup_gaussian_network_model(self):
         """
         Build interaction pair list and spring constant.
@@ -507,6 +513,7 @@ class GaussianNetworkModel:
         self.build_gamma()
         self.build_neighbor_list()
 
+    @log_method_call
     def build_gamma(self):
         """
         The spring constant gamma dictates the interaction strength

@@ -10,6 +10,7 @@ from .map_utils import *
 from .scatter import structure_factors
 from .stats import compute_cc
 from .base import compute_molecular_transform, compute_crystal_transform
+from eryx.logging_utils import log_method_call, TimedOperation, log_array_shape
 
 class RigidBodyTranslations:
     
@@ -917,6 +918,7 @@ class OnePhonon:
         self._setup_phonons(pdb_path, model,
                             gnm_cutoff, gamma_intra, gamma_inter)
 
+    @log_method_call
     def _setup(self, pdb_path, expand_p1, res_limit, group_by):
         """
         Compute q-vectors to evaluate and build the unit cell
@@ -962,6 +964,7 @@ class OnePhonon:
             self.n_dof_per_asu = 6
         self.n_dof_per_cell = self.n_asu * self.n_dof_per_asu
 
+    @log_method_call
     def _setup_phonons(self, pdb_path, model,
                        gnm_cutoff, gamma_intra, gamma_inter):
         """
@@ -1037,6 +1040,7 @@ class OnePhonon:
                                         gamma_intra=gamma_intra,
                                         gamma_inter=gamma_inter)
 
+    @log_method_call
     def _build_A(self):
         """
         Build the matrix A that projects small rigid-body displacements
@@ -1074,6 +1078,7 @@ class OnePhonon:
         else:
             self.Amat = None
 
+    @log_method_call
     def _build_M(self):
         """
         Build the mass matrix M.
@@ -1143,6 +1148,7 @@ class OnePhonon:
         """
         return int(((x - L / 2) % L) - L / 2) / L
 
+    @log_method_call
     def _build_kvec_Brillouin(self):
         """
         Compute all k-vectors and their norm in the first Brillouin zone.
@@ -1328,6 +1334,7 @@ class OnePhonon:
                     self.Winv[dh, dk, dl] = s
                     self.V[dh, dk, dl] = u
 
+    @log_method_call
     def apply_disorder(self, rank=-1, outdir=None, use_data_adp=False):
         """
         Compute the diffuse intensity in the one-phonon scattering
