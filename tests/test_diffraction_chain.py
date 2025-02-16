@@ -46,7 +46,8 @@ def test_diffraction_calculation_chain():
     Id = onephonon.apply_disorder()
     Id = Id.reshape(onephonon.map_shape)
     assert Id.shape == onephonon.map_shape
-    assert not np.all(np.isnan(Id))
+    # Ensure that at least one value is not NaN in the diffuse intensity map
+    assert np.count_nonzero(~np.isnan(Id)) > 0
     
     # 5. Test expected symmetries
     # Get central slice
