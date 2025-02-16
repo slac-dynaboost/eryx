@@ -78,11 +78,22 @@ class RigidBodyTranslations:
         Compute the diffuse map(s) from the molecular transform:
         I_diffuse = I_transform * (1 - q^2 * sigma^2)
         for a single sigma or set of (an)isotropic sigmas.
-
+        
         Parameters
         ----------
         sigma : float or array of shape (n_sigma,) or (n_sigma, 3)
             (an)isotropic displacement parameter for asymmetric unit 
+        """
+        if not hasattr(self, "transform") or self.transform is None:
+            from .base import compute_crystal_transform
+            _, self.transform = compute_crystal_transform(self.pdb_path,
+                                                          self.hsampling,
+                                                          self.ksampling,
+                                                          self.lsampling,
+                                                          expand_p1=self.expand_p1,
+                                                          res_limit=self.res_limit,
+                                                          batch_size=self.batch_size,
+                                                          n_processes=self.n_processes)
 
         Returns
         -------
