@@ -6,7 +6,7 @@ from eryx.scatter import compute_form_factors, structure_factors
 def test_diffraction_calculation_chain():
     """Test the full chain of diffraction intensity calculation"""
     # 1. Setup minimal test case
-    pdb_path = "tests/pdbs/5zck.pdb"
+    pdb_path = "tests/pdbs/5zck_p1.pdb"
     sampling = [-2, 2, 1]  # Small grid for quick testing
     
     onephonon = OnePhonon(
