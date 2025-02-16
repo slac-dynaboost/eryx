@@ -22,7 +22,7 @@ class ModelRunner:
         start_time = time.time()
         try:
             cfg = self.config
-            model = OnePhonon(cfg.setup.pdb_path, cfg.setup.hsampling, cfg.setup.ksampling, cfg.setup.lsampling, **cfg.OnePhonon)
+            model = OnePhonon(cfg["setup"]["pdb_path"], cfg["setup"]["hsampling"], cfg["setup"]["ksampling"], cfg["setup"]["lsampling"], **cfg["OnePhonon"])
             # Assuming the OnePhonon model has a compute_gnm_phonons method
             result = model.compute_gnm_phonons()
             status = "success"
