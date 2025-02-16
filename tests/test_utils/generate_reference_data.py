@@ -11,11 +11,13 @@ def generate_reference_data():
 
     # 1. Setup test case with small grid
     pdb_path = "tests/pdbs/5zck.pdb"
-    sampling = [-2, 2, 1]
+    hsampling = [-4, 4, 1]
+    ksampling = [-17, 17, 1]
+    lsampling = [-29, 29, 1]
     
     onephonon = OnePhonon(
         pdb_path, 
-        sampling, sampling, sampling,
+        hsampling, ksampling, lsampling,
         expand_p1=True,
         res_limit=100.0,
         gnm_cutoff=4.0,
