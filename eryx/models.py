@@ -254,9 +254,9 @@ class LiquidLikeMotions:
 
         Parameters
         ----------
-        transform : numpy.ndarray, 3d
+        transform : numpy.ndarray, shape (n_x, n_y, n_z)
             crystal or molecular transform map
-        kernel : numpy.ndarray, 3d
+        kernel : numpy.ndarray, shape (n_x, n_y, n_z) 
             disorder kernel, same shape as transform
 
         Returns
@@ -1241,7 +1241,7 @@ class OnePhonon:
 
         Returns
         -------
-        map : numpy.ndarray, shape (npoints, 1_
+        map : numpy.ndarray, shape (npoints, 1)
         """
         map = np.zeros((self.q_grid.shape[0]))
         for dh in tqdm(range(self.hsampling[2])):
