@@ -44,6 +44,12 @@ def log_method_call(func):
         result = func(*args, **kwargs)
         duration = time.time() - start_time
         logging.debug(f"[{class_name}.{method_name}] Exit. Duration={duration:.2f}s")
+        if result is not None:
+            import numpy as np
+            if isinstance(result, np.ndarray):
+                logging.debug(f"[{class_name}.{method_name}] Return array shape: {result.shape}")
+            else:
+                logging.debug(f"[{class_name}.{method_name}] Return value: {result}")
         return result
     return wrapper
 
