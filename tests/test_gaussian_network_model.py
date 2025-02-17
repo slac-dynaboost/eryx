@@ -12,7 +12,7 @@ def gnm_base_log_file() -> str:
 @pytest.fixture
 def gnm_edge_log_file() -> str:
     # Path to an edge-case log file (e.g. a system with a small cutoff or large system, choose one)
-    return os.path.join("tests", "test_data", "logs", "gnm_edge", "edge_run_0.log")
+    return os.path.join("tests", "test_data", "logs", "edge_cases", "edge_run_1.log")
 
 @pytest.fixture
 def gnm_model() -> GaussianNetworkModel:
@@ -80,8 +80,9 @@ class TestGaussianNetworkModel:
             for j in range(gnm_model.n_atoms_per_asu):
                 block = identity_approx[i, j, :, :]
                 # Create an identity of proper size
-                identity = np.eye(gnm_model.n_asu * gnm_model.n_atoms_per_asu).reshape(expected_shape[2:])
-                assert np.allclose(block, identity, rtol=1e-7), "K-matrix inversion does not yield an identity matrix."
+                expected_block = np.zeros((gnm_model.n_asu, gnm_model.n_atoms_per_asu))
+                expected_block[i, j] = 1.0
+                assert np.allclose(block, expected_block, rtol=1e-7), "K-matrix inversion does not yield an identity matrix."
 
     def test_phase_factors(self, gnm_model):
         """Test that phase factors are correctly computed in the dynamical matrix."""
