@@ -86,7 +86,8 @@ class TestOnePhonon:
         print("AGGRESSIVE DEBUG: globals_dict =", globals_dict)
         print("AGGRESSIVE DEBUG: type(ret_val_str_mod) =", type(ret_val_str_mod))
         try:
-        except Exception as e:
+            ret_val = eval(ret_val_str_mod, globals_dict)
+            print("AGGRESSIVE DEBUG: eval() succeeded, ret_val =", ret_val)
             print("AGGRESSIVE DEBUG: FAILED to eval string:")
             print("AGGRESSIVE DEBUG: ret_val_str_mod =", ret_val_str_mod)
             print("AGGRESSIVE DEBUG: Exception:", e)
