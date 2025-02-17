@@ -76,12 +76,12 @@ class GaussianNetworkModelTorch:
                             gamma_val = self.gamma[i_cell, i_asu, j_asu]
                             # Set off-diagonal entries (neighbors may be a list of indices)
                             idxs = torch.tensor(neigh_indices, device=self.device)
-                            hessian[i_asu, i_at, i_cell, j_asu, idxs] = -gamma_val.to(torch.complex64())
-                            hessian_diag[i_asu, i_at] -= gamma_val.to(torch.complex64()) * float(len(neigh_indices))
+                            hessian[i_asu, i_at, i_cell, j_asu, idxs] = -gamma_val.to(torch.complex64)
+                            hessian_diag[i_asu, i_at] -= gamma_val.to(torch.complex64) * float(len(neigh_indices))
         # Set the diagonal (reference cell)
         for i_asu in range(self.n_asu):
             for i_at in range(self.n_atoms_per_asu):
-                hessian[i_asu, i_at, self.id_cell_ref, i_asu, i_at] = -hessian_diag[i_asu, i_at] - self.gamma[self.id_cell_ref, i_asu, i_asu].to(torch.complex64())
+                hessian[i_asu, i_at, self.id_cell_ref, i_asu, i_at] = -hessian_diag[i_asu, i_at] - self.gamma[self.id_cell_ref, i_asu, i_asu].to(torch.complex64)
         logging.debug(f"Hessian shape: {hessian.shape}")
         return hessian
 
