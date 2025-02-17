@@ -64,6 +64,7 @@ class TestOnePhonon:
         # Replace 'array(' with 'np.array(' to allow eval
         import re
         ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str)
+        ret_val_str_mod = ret_val_str_mod.replace("}){", "}), {")
         ret_val = eval(ret_val_str_mod, {"np": np})
         # Expected value tuple for the log
         expected_sym_ops = (

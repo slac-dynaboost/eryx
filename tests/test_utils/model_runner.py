@@ -14,6 +14,7 @@ class ModelRunner:
         self.logger = logging.getLogger()
         self.logger.addHandler(self.log_capture)
         
+    @log_method_call
     def run_model(self):
         """
         Execute the OnePhonon model.
