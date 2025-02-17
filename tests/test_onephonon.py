@@ -149,7 +149,10 @@ class TestOnePhonon:
         from eryx.models import OnePhonon
         onephonon = OnePhonon("tests/pdbs/5zck_p1.pdb", [-4,4,3], [-17,17,3], [-29,29,3],
                                expand_p1=True, gnm_cutoff=4.0, gamma_intra=1.0, gamma_inter=1.0)
-        computed = onephonon.apply_disorder().flatten()
+        computed = onephonon.apply_disorder()
+        if isinstance(computed, torch.Tensor):
+            computed = computed.detach().cpu().numpy()
+        computed = computed.flatten()
         ref = np.load("tests/test_data/reference/diffraction_pattern.npy")
         valid = ~np.isnan(ref)
         import numpy as np
