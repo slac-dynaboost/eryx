@@ -910,7 +910,31 @@ class NonInteractingDeformableMolecules:
         Id[~self.res_mask] = np.nan
         return Id
 
-class OnePhonon:
+class ModelRunner:
+    """Base class for handling model execution and error formatting"""
+    
+    def run_model(self, func, *args, **kwargs):
+        """
+        Executes a model function with proper error handling and logging
+        
+        Parameters
+        ----------
+        func : callable
+            The model function to execute
+        args, kwargs : 
+            Arguments to pass to the function
+            
+        Returns
+        -------
+        The result of func(*args, **kwargs)
+        """
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logging.error(f"[ModelRunner.run_model] Model run failed: {repr(e)}")
+            raise
+
+class OnePhonon(ModelRunner):
 
     """
     Lattice of interacting rigid bodies in the one-phonon
