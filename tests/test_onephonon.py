@@ -61,11 +61,9 @@ class TestOnePhonon:
         assert ret_lines, "No return value entry found in log"
         # Join the lines and clean up for eval
         ret_val_str = ' '.join(ret_lines)
-        # Replace 'array(' with 'np.array(' and fix tuple formatting
+        # Replace 'array(' with 'np.array('
         import re
         ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str)
-        # Add parentheses around the entire expression to make it a proper tuple
-        ret_val_str_mod = f"({ret_val_str_mod})"
         ret_val_str_mod = ret_val_str_mod.replace("\n", " ")   # Remove newlines for safe eval
         
         # Create globals dict with numpy
