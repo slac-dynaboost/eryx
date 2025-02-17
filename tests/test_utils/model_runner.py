@@ -1,6 +1,7 @@
 import time
 import logging
 from eryx.models import OnePhonon
+from eryx.logging_utils import log_method_call
 from tests.test_utils.log_capture import LogCapture
 
 class ModelRunner:
