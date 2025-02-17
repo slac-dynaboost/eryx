@@ -45,18 +45,15 @@ class TestOnePhonon:
         log_file = os.path.join("tests", "test_data", "logs", "base_run", "base_run.log")
         with open(log_file, "r") as f:
             lines = f.readlines()
-        # Find the return value entry and capture all lines until the next log entry
+        # Find the return value entry and capture the first matching line
         ret_lines = []
-        capture = False
         for line in lines:
             if line.startswith("[AtomicModel._get_sym_ops] Return value:"):
-                capture = True
                 _, val = line.split("Return value:", 1)
                 ret_lines.append(val.strip())
-            elif capture and line.startswith("["):
-                capture = False
-            elif capture:
-                ret_lines.append(line.strip())
+                break
+                _, val = line.split("Return value:", 1)
+                ret_lines.append(val.strip())
         
         assert ret_lines, "No return value entry found in log"
         # Join the captured lines preserving newlines and extract the complete tuple string
