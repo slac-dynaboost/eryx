@@ -65,6 +65,9 @@ class TestOnePhonon:
         import re
         ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str)
         ret_val_str_mod = ret_val_str_mod.replace("\n", " ")   # Remove newlines for safe eval
+        print("DEBUG: ret_lines =", ret_lines)
+        print("DEBUG: ret_val_str =", ret_val_str)
+        print("DEBUG: ret_val_str_mod =", ret_val_str_mod)
         
         # Create globals dict with numpy
         globals_dict = {"np": np}
