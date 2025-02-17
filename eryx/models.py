@@ -176,7 +176,6 @@ class LiquidLikeMotions:
         transform for the classic and asu-confined variants of the LLM,
         respectively. The transform is evaluated to a higher resolution 
         to reduce convolution artifacts at the map's boundary.
-        """
         
         Parameters
         ----------
