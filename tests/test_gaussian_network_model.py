@@ -75,6 +75,7 @@ class TestGaussianNetworkModel:
         # Compute an approximate identity via contraction
         identity_approx = np.einsum('ijkl,klmn->ijmn', Kmat, Kinv)
         # For each ASU and atom, verify the corresponding block is approximately the identity matrix.
+        expected_shape = (gnm_model.n_asu, gnm_model.n_atoms_per_asu, gnm_model.n_asu, gnm_model.n_atoms_per_asu)
         for i in range(gnm_model.n_asu):
             for j in range(gnm_model.n_atoms_per_asu):
                 block = identity_approx[i, j, :, :]
