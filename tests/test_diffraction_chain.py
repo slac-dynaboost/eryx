@@ -44,7 +44,7 @@ def test_diffraction_calculation_chain():
     assert not np.any(np.isnan(F))
     
     # 4. Test final diffuse intensity
-    Id = onephonon.apply_disorder()
+    Id = onephonon.apply_disorder(use_data_adp=True)
     Id = Id.reshape(onephonon.map_shape)
     assert Id.shape == onephonon.map_shape
     # Ensure that at least one value is not NaN in the diffuse intensity map
