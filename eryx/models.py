@@ -288,8 +288,8 @@ class LiquidLikeMotions:
         zi = scipy.interpolate.griddata((sigmas, gammas), ccs, (xi[None,:], yi[:,None]), method='cubic')
 
         plt.contourf(xi,yi,zi,25,linewidths=0.5)
-        plt.xlabel("$\sigma$ ($\mathrm{\AA}$)", fontsize=14)
-        plt.ylabel("$\gamma$ ($\mathrm{\AA}$)", fontsize=14)
+        plt.xlabel(r"$\sigma$ ($\mathrm{\AA}$)", fontsize=14)
+        plt.ylabel(r"$\gamma$ ($\mathrm{\AA}$)", fontsize=14)
         cb = plt.colorbar()
         cb.ax.set_ylabel("CC", fontsize=14)
 

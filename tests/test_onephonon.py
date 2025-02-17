@@ -132,6 +132,7 @@ class TestOnePhonon:
 
     def test_computation_validation(self):
         """Test that computed diffraction pattern matches reference data"""
+        import numpy as np
         from eryx.models import OnePhonon
         onephonon = OnePhonon("tests/pdbs/5zck_p1.pdb", [-4,4,1], [-17,17,1], [-29,29,1],
                                expand_p1=True, gnm_cutoff=4.0, gamma_intra=1.0, gamma_inter=1.0)
