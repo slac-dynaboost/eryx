@@ -1,28 +1,4 @@
-[OnePhonon.__init__] Enter with args=('tests/pdbs/5zck.pdb', [-4, 4, 1], [-17, 17, 1], [-29, 29, 1]), kwargs={'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': -1.0, 'expand_p1': True}
-[OnePhonon._setup] Enter with args=('tests/pdbs/5zck.pdb', True, 0.0, 'asu'), kwargs={}
-[AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}
-[AtomicModel._get_gemmi_structure] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}
-[AtomicModel._get_gemmi_structure] Exit. Duration=0.00s
-[AtomicModel._extract_cell] Enter with args=(), kwargs={}
-[AtomicModel._extract_cell] Exit. Duration=0.00s
-[AtomicModel._get_sym_ops] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={}
-[AtomicModel._get_sym_ops] Exit. Duration=0.00s
-[AtomicModel._get_sym_ops] Return value: ({0: array([[1., 0., 0.],
-       [0., 1., 0.],
-       [0., 0., 1.]]), 1: array([[-1.,  0.,  0.],
-       [ 0., -1.,  0.],
-       [ 0.,  0.,  1.]]), 2: array([[-1.,  0.,  0.],
-       [ 0.,  1.,  0.],
-       [ 0.,  0., -1.]]), 3: array([[ 1.,  0.,  0.],
-       [ 0., -1.,  0.],
-       [ 0.,  0., -1.]])}, {0: array([[1., 0., 0., 0.],
-       [0., 1., 0., 0.],
-       [0., 0., 1., 0.]]), 1: array([[-1.    ,  0.    ,  0.    ,  2.4065],
-       [ 0.    , -1.    ,  0.    ,  0.    ],
-       [ 0.    ,  0.    ,  1.    , 14.782 ]]), 2: array([[-1.    ,  0.    ,  0.    ,  0.    ],
-       [ 0.    ,  1.    ,  0.    ,  8.5755],
-       [ 0.    ,  0.    , -1.    , 14.782 ]]), 3: array([[ 1.    ,  0.    ,  0.    ,  2.4065],
-       [ 0.    , -1.    ,  0.    ,  8.5755],
-       [ 0.    ,  0.    , -1.    ,  0.    ]])})
-[AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': 0, 'expand_p1': True}
-Model run failed: 'NoneType' object has no attribute 'shape'
+[ModelRunner.run_model] Enter with args=(), kwargs={}
+[ModelRunner.run_model] Model run failed: ValueError('Invalid gamma_inter: must be non-negative')
+[ModelRunner.run_model] Exit. Duration=0.00s
+[ModelRunner.run_model] Return value: (None, {'status': 'failed', 'run_time': 3.695487976074219e-05, 'config': {'setup': {'pdb_path': 'tests/pdbs/5zck.pdb', 'root_dir': 'test_output', 'hsampling': [-4, 4, 1], 'ksampling': [-17, 17, 1], 'lsampling': [-29, 29, 1], 'res_limit': 0, 'batch_size': 10000, 'n_processes': 8}, 'OnePhonon': {'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': -1.0, 'expand_p1': True}}})

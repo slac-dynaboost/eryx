@@ -1,3 +1,4 @@
+[ModelRunner.run_model] Enter with args=(), kwargs={}
 [OnePhonon.__init__] Enter with args=('tests/pdbs/5zck.pdb', [-4, 4, 1], [-17, 17, 1], [-29, 29, 1]), kwargs={'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': 1.0, 'expand_p1': True}
 [OnePhonon._setup] Enter with args=('tests/pdbs/5zck.pdb', True, 0.0, 'asu'), kwargs={}
 [AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}
@@ -25,4 +26,102 @@
        [ 0.    , -1.    ,  0.    ,  8.5755],
        [ 0.    ,  0.    , -1.    ,  0.    ]])})
 [AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': 0, 'expand_p1': True}
-Model run failed: 'NoneType' object has no attribute 'shape'
+[Array Shape] xyz initial is None
+[AtomicModel.extract_frame] Exit. Duration=0.00s
+[AtomicModel.__init__] Exit. Duration=0.00s
+[Array Shape] hkl_grid.shape=(18585, 3)
+[Array Shape] q_grid.shape=(18585, 3)
+[OnePhonon._setup] Exit. Duration=0.00s
+[OnePhonon._setup_phonons] Enter with args=('tests/pdbs/5zck.pdb', 'gnm', 4.0, 1.0, 1.0), kwargs={}
+[OnePhonon._build_A] Enter with args=(), kwargs={}
+[Array Shape] Amat.shape=(4, 28, 3, 6)
+[OnePhonon._build_A] Exit. Duration=0.00s
+[OnePhonon._build_M] Enter with args=(), kwargs={}
+[OnePhonon._build_M] Exit. Duration=0.00s
+[OnePhonon._build_kvec_Brillouin] Enter with args=(), kwargs={}
+[OnePhonon._build_kvec_Brillouin] Exit. Duration=0.00s
+[GaussianNetworkModel.__init__] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={'enm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': 1.0}
+[GaussianNetworkModel._setup_atomic_model] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={}
+[AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={'expand_p1': True}
+[AtomicModel._get_gemmi_structure] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}
+[AtomicModel._get_gemmi_structure] Exit. Duration=0.00s
+[AtomicModel._extract_cell] Enter with args=(), kwargs={}
+[AtomicModel._extract_cell] Exit. Duration=0.00s
+[AtomicModel._get_sym_ops] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={}
+[AtomicModel._get_sym_ops] Exit. Duration=0.00s
+[AtomicModel._get_sym_ops] Return value: ({0: array([[1., 0., 0.],
+       [0., 1., 0.],
+       [0., 0., 1.]]), 1: array([[-1.,  0.,  0.],
+       [ 0., -1.,  0.],
+       [ 0.,  0.,  1.]]), 2: array([[-1.,  0.,  0.],
+       [ 0.,  1.,  0.],
+       [ 0.,  0., -1.]]), 3: array([[ 1.,  0.,  0.],
+       [ 0., -1.,  0.],
+       [ 0.,  0., -1.]])}, {0: array([[1., 0., 0., 0.],
+       [0., 1., 0., 0.],
+       [0., 0., 1., 0.]]), 1: array([[-1.    ,  0.    ,  0.    ,  2.4065],
+       [ 0.    , -1.    ,  0.    ,  0.    ],
+       [ 0.    ,  0.    ,  1.    , 14.782 ]]), 2: array([[-1.    ,  0.    ,  0.    ,  0.    ],
+       [ 0.    ,  1.    ,  0.    ,  8.5755],
+       [ 0.    ,  0.    , -1.    , 14.782 ]]), 3: array([[ 1.    ,  0.    ,  0.    ,  2.4065],
+       [ 0.    , -1.    ,  0.    ,  8.5755],
+       [ 0.    ,  0.    , -1.    ,  0.    ]])})
+[AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': 0, 'expand_p1': True}
+[Array Shape] xyz initial is None
+[AtomicModel.extract_frame] Exit. Duration=0.00s
+[AtomicModel.__init__] Exit. Duration=0.00s
+[GaussianNetworkModel._setup_atomic_model] Exit. Duration=0.00s
+[GaussianNetworkModel._setup_gaussian_network_model] Enter with args=(), kwargs={}
+[GaussianNetworkModel.build_gamma] Enter with args=(), kwargs={}
+[GaussianNetworkModel.build_gamma] Exit. Duration=0.00s
+[GaussianNetworkModel.build_neighbor_list] Enter with args=(), kwargs={}
+[GaussianNetworkModel.build_neighbor_list] Exit. Duration=0.09s
+[GaussianNetworkModel._setup_gaussian_network_model] Exit. Duration=0.09s
+[GaussianNetworkModel.__init__] Exit. Duration=0.09s
+[Array Shape] hessian.shape=(4, 6, 27, 4, 6)
+[GaussianNetworkModel.compute_hessian] Enter with args=(), kwargs={}
+[GaussianNetworkModel.compute_hessian] Exit. Duration=0.00s
+[GaussianNetworkModel.compute_hessian] Return array shape: (4, 28, 27, 4, 28), first few values: [0.+0.j 0.+0.j 0.+0.j 0.+0.j 0.+0.j]
+[Array Shape] Kmat.shape=(4, 6, 4, 6)
+[Array Shape] hessian.shape=(4, 6, 27, 4, 6)
+[GaussianNetworkModel.compute_hessian] Enter with args=(), kwargs={}
+[GaussianNetworkModel.compute_hessian] Exit. Duration=0.00s
+[GaussianNetworkModel.compute_hessian] Return array shape: (4, 28, 27, 4, 28), first few values: [0.+0.j 0.+0.j 0.+0.j 0.+0.j 0.+0.j]
+[Array Shape] Kmat.shape=(4, 6, 4, 6)
+[OnePhonon._setup_phonons] Exit. Duration=0.17s
+[OnePhonon.__init__] Exit. Duration=0.17s
+[AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={'expand_p1': True, 'frame': -1}
+[AtomicModel._get_gemmi_structure] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}
+[AtomicModel._get_gemmi_structure] Exit. Duration=0.00s
+[AtomicModel._extract_cell] Enter with args=(), kwargs={}
+[AtomicModel._extract_cell] Exit. Duration=0.00s
+[AtomicModel._get_sym_ops] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={}
+[AtomicModel._get_sym_ops] Exit. Duration=0.00s
+[AtomicModel._get_sym_ops] Return value: ({0: array([[1., 0., 0.],
+       [0., 1., 0.],
+       [0., 0., 1.]]), 1: array([[-1.,  0.,  0.],
+       [ 0., -1.,  0.],
+       [ 0.,  0.,  1.]]), 2: array([[-1.,  0.,  0.],
+       [ 0.,  1.,  0.],
+       [ 0.,  0., -1.]]), 3: array([[ 1.,  0.,  0.],
+       [ 0., -1.,  0.],
+       [ 0.,  0., -1.]])}, {0: array([[1., 0., 0., 0.],
+       [0., 1., 0., 0.],
+       [0., 0., 1., 0.]]), 1: array([[-1.    ,  0.    ,  0.    ,  2.4065],
+       [ 0.    , -1.    ,  0.    ,  0.    ],
+       [ 0.    ,  0.    ,  1.    , 14.782 ]]), 2: array([[-1.    ,  0.    ,  0.    ,  0.    ],
+       [ 0.    ,  1.    ,  0.    ,  8.5755],
+       [ 0.    ,  0.    , -1.    , 14.782 ]]), 3: array([[ 1.    ,  0.    ,  0.    ,  2.4065],
+       [ 0.    , -1.    ,  0.    ,  8.5755],
+       [ 0.    ,  0.    , -1.    ,  0.    ]])})
+[AtomicModel.extract_frame] Enter with args=(), kwargs={'frame': -1, 'expand_p1': True}
+[Array Shape] xyz initial is None
+[AtomicModel.extract_frame] Exit. Duration=0.00s
+[AtomicModel.__init__] Exit. Duration=0.00s
+[Array Shape] hessian.shape=(4, 6, 27, 4, 6)
+[GaussianNetworkModel.compute_hessian] Enter with args=(), kwargs={}
+[GaussianNetworkModel.compute_hessian] Exit. Duration=0.00s
+[GaussianNetworkModel.compute_hessian] Return array shape: (4, 28, 27, 4, 28), first few values: [0.+0.j 0.+0.j 0.+0.j 0.+0.j 0.+0.j]
+[Array Shape] Kmat.shape=(4, 6, 4, 6)
+[ModelRunner.run_model] Exit. Duration=0.21s
+[ModelRunner.run_model] Return value: (None, {'status': 'success', 'run_time': 0.21165728569030762, 'config': {'setup': {'pdb_path': 'tests/pdbs/5zck.pdb', 'root_dir': 'test_output', 'hsampling': [-4, 4, 1], 'ksampling': [-17, 17, 1], 'lsampling': [-29, 29, 1], 'res_limit': 0, 'batch_size': 10000, 'n_processes': 8}, 'OnePhonon': {'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': 1.0, 'expand_p1': True}}})
