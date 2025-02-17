@@ -70,6 +70,6 @@ class OnePhononTorch(ModelRunner):
         Id = torch.zeros((self.q_grid.shape[0]), device=self.device, dtype=torch.float32)
         for idx in range(self.q_grid.shape[0]):
             # Here you would compute structure factors etc.; below is a placeholder.
-            Id[idx] = torch.norm(Kmat_torch.view(-1))[0]  # dummy operation
+            Id[idx] = torch.norm(Kmat_torch.view(-1)).item()  # dummy operation
         logging.debug(f"Id (diffuse intensity) shape: {Id.shape}, device: {Id.device}")
         return Id
