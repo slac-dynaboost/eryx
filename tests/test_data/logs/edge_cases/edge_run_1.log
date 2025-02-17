@@ -75,9 +75,9 @@
 [GaussianNetworkModel.build_gamma] Enter with args=(), kwargs={}
 [GaussianNetworkModel.build_gamma] Exit. Duration=0.00s
 [GaussianNetworkModel.build_neighbor_list] Enter with args=(), kwargs={}
-[GaussianNetworkModel.build_neighbor_list] Exit. Duration=0.09s
-[GaussianNetworkModel._setup_gaussian_network_model] Exit. Duration=0.09s
-[GaussianNetworkModel.__init__] Exit. Duration=0.09s
+[GaussianNetworkModel.build_neighbor_list] Exit. Duration=0.06s
+[GaussianNetworkModel._setup_gaussian_network_model] Exit. Duration=0.06s
+[GaussianNetworkModel.__init__] Exit. Duration=0.06s
 [Array Shape] hessian.shape=(4, 6, 27, 4, 6)
 [GaussianNetworkModel.compute_hessian] Enter with args=(), kwargs={}
 [GaussianNetworkModel.compute_hessian] Exit. Duration=0.00s
@@ -88,8 +88,8 @@
 [GaussianNetworkModel.compute_hessian] Exit. Duration=0.00s
 [GaussianNetworkModel.compute_hessian] Return array shape: (4, 28, 27, 4, 28), first few values: [0.+0.j 0.+0.j 0.+0.j 0.+0.j 0.+0.j]
 [Array Shape] Kmat.shape=(4, 6, 4, 6)
-[OnePhonon._setup_phonons] Exit. Duration=0.20s
-[OnePhonon.__init__] Exit. Duration=0.20s
+[OnePhonon._setup_phonons] Exit. Duration=0.14s
+[OnePhonon.__init__] Exit. Duration=0.14s
 [AtomicModel.__init__] Enter with args=('tests/pdbs/5zck.pdb',), kwargs={'expand_p1': True, 'frame': -1}
 [AtomicModel._get_gemmi_structure] Enter with args=('tests/pdbs/5zck.pdb', True), kwargs={}
 [AtomicModel._get_gemmi_structure] Exit. Duration=0.00s
@@ -123,5 +123,5 @@
 [GaussianNetworkModel.compute_hessian] Exit. Duration=0.00s
 [GaussianNetworkModel.compute_hessian] Return array shape: (4, 28, 27, 4, 28), first few values: [0.+0.j 0.+0.j 0.+0.j 0.+0.j 0.+0.j]
 [Array Shape] Kmat.shape=(4, 6, 4, 6)
-[ModelRunner.run_model] Exit. Duration=0.24s
-[ModelRunner.run_model] Return value: (None, {'status': 'success', 'run_time': 0.24023771286010742, 'config': {'setup': {'pdb_path': 'tests/pdbs/5zck.pdb', 'root_dir': 'test_output', 'hsampling': [-4, 4, 1], 'ksampling': [-17, 17, 1], 'lsampling': [-29, 29, 1], 'res_limit': 0, 'batch_size': 20000, 'n_processes': 16}, 'OnePhonon': {'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': 1.0, 'expand_p1': True}}})
+[ModelRunner.run_model] Exit. Duration=0.18s
+[ModelRunner.run_model] Return value: (None, {'status': 'success', 'run_time': 0.17780232429504395, 'config': {'setup': {'pdb_path': 'tests/pdbs/5zck.pdb', 'root_dir': 'test_output', 'hsampling': [-4, 4, 1], 'ksampling': [-17, 17, 1], 'lsampling': [-29, 29, 1], 'res_limit': 0, 'batch_size': 20000, 'n_processes': 16}, 'OnePhonon': {'gnm_cutoff': 4.0, 'gamma_intra': 1.0, 'gamma_inter': 1.0, 'expand_p1': True}}})
