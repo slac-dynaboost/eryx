@@ -83,6 +83,11 @@ class RigidBodyTranslations:
         ----------
         sigma : float or array of shape (n_sigma,) or (n_sigma, 3)
             (an)isotropic displacement parameter for asymmetric unit 
+            
+        Returns
+        -------
+        Id : numpy.ndarray, (n_sigma, q_grid.shape[0])
+            diffuse intensity maps for the corresponding sigma(s)
         """
         if not hasattr(self, "transform") or self.transform is None:
             from .base import compute_crystal_transform
@@ -94,12 +99,6 @@ class RigidBodyTranslations:
                                                           res_limit=self.res_limit,
                                                           batch_size=self.batch_size,
                                                           n_processes=self.n_processes)
-
-        Returns
-        -------
-        Id : numpy.ndarray, (n_sigma, q_grid.shape[0])
-            diffuse intensity maps for the corresponding sigma(s)
-        """
         if type(sigmas) == float:
             sigmas = np.array([sigmas])
 
