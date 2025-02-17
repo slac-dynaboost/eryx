@@ -62,7 +62,7 @@ def generate_reference_data():
 
     # 5. Generate and save GNM neighbor lists
     gnm = GaussianNetworkModel(pdb_path, enm_cutoff=4.0, gamma_intra=1.0, gamma_inter=1.0)
-    np.save(os.path.join(out_dir, "gnm_neighbor_lists.npy"), gnm.asu_neighbors)
+    np.save(os.path.join(out_dir, "gnm_neighbor_lists.npy"), np.array(gnm.asu_neighbors, dtype=object))
     
     # 6. Generate and save GNM K-matrix reference data using a test k-vector
     hessian = gnm.compute_hessian()
