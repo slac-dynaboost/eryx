@@ -67,7 +67,7 @@ class RigidBodyTranslations:
         ccs = np.array(self.scan_ccs)
         plt.scatter(sigmas, ccs, c='black')
         plt.plot(sigmas, ccs, c='black')
-        plt.xlabel("$\sigma$ ($\mathrm{\AA}$)", fontsize=14)
+        plt.xlabel(r"$\sigma$ ($\mathrm{\AA}$)", fontsize=14)
         plt.ylabel("CC", fontsize=14)
 
         if output is not None:
@@ -176,6 +176,7 @@ class LiquidLikeMotions:
         transform for the classic and asu-confined variants of the LLM,
         respectively. The transform is evaluated to a higher resolution 
         to reduce convolution artifacts at the map's boundary.
+        """
         
         Parameters
         ----------
