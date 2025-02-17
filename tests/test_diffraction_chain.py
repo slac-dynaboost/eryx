@@ -49,7 +49,7 @@ def test_diffraction_calculation_chain():
     
     # --- NEW: validate structure factors using the logged first element ---
     expected_F_first = 1.102345  # extracted from logs of a reference run
-    np.testing.assert_allclose(np.real(F[0, 0]), expected_F_first, rtol=1e-5)
+    np.testing.assert_allclose(np.real(F[0]), expected_F_first, rtol=1e-5)
     
     # 4. Test final diffuse intensity
     Id = onephonon.apply_disorder(use_data_adp=True)
