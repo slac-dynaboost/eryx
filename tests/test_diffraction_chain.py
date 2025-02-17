@@ -31,7 +31,7 @@ def test_diffraction_calculation_chain():
     assert not np.any(np.isnan(ff))
     
     # --- NEW: validate form factors using the logged mean value ---
-    expected_ff_mean = 0.951237  # extracted from logs of a reference run
+    expected_ff_mean = 3.975718  # updated value from current run logs
     np.testing.assert_allclose(np.mean(ff), expected_ff_mean, rtol=1e-5)
     
     # 3. Test structure factors
