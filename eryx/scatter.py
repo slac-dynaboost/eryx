@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import multiprocess as mp
 from functools import partial
 
