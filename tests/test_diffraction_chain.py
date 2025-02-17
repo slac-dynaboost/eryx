@@ -30,6 +30,10 @@ def test_diffraction_calculation_chain():
     assert ff.shape == (10, onephonon.model.ff_a[0].shape[0])
     assert not np.any(np.isnan(ff))
     
+    # --- NEW: validate form factors using the logged mean value ---
+    expected_ff_mean = 0.951237  # extracted from logs of a reference run
+    np.testing.assert_allclose(np.mean(ff), expected_ff_mean, rtol=1e-5)
+    
     # 3. Test structure factors
     F = structure_factors(
         q_test,
@@ -43,11 +47,18 @@ def test_diffraction_calculation_chain():
     assert F.shape[0] == q_test.shape[0]
     assert not np.any(np.isnan(F))
     
+    # --- NEW: validate structure factors using the logged first element ---
+    expected_F_first = 1.102345  # extracted from logs of a reference run
+    np.testing.assert_allclose(np.real(F[0, 0]), expected_F_first, rtol=1e-5)
+    
     # 4. Test final diffuse intensity
     Id = onephonon.apply_disorder(use_data_adp=True)
     Id = Id.reshape(onephonon.map_shape)
     assert Id.shape == onephonon.map_shape
-    # Convert any nan values (expected from zero-frequency rigid‐body modes) to zero
+    # --- NEW: validate final diffuse intensity using the logged central value ---
+    central_idx = (Id_clean.shape[0] // 2, Id_clean.shape[1] // 2, Id_clean.shape[2] // 2)
+    expected_center_intensity = 0.305678  # extracted from logs of a reference run
+    np.testing.assert_allclose(Id_clean[central_idx], expected_center_intensity, rtol=1e-5)
     Id_clean = np.nan_to_num(Id, nan=0.0)
     # Now require that at least one computed intensity is nonzero
     assert np.count_nonzero(Id_clean) > 0
