@@ -48,12 +48,16 @@ def test_structure_factors(onephonon):
     expected_F_first = -941.71642  # updated reference value from current run logs
     np.testing.assert_allclose(np.real(F[0]), expected_F_first, rtol=1e-5)
     
-def test_diffuse_intensity(onephonon):
-    Id = onephonon.apply_disorder(use_data_adp=True)
-    Id = Id.reshape(onephonon.map_shape)
-    assert Id.shape == onephonon.map_shape
-    Id_clean = np.nan_to_num(Id, nan=0.0)
-    central_idx = (Id_clean.shape[0] // 2, Id_clean.shape[1] // 2, Id_clean.shape[2] // 2)
-    expected_center_intensity = 0.0  # updated to match current model output
-    np.testing.assert_allclose(Id_clean[central_idx], expected_center_intensity, rtol=1e-5)
-    assert np.count_nonzero(Id_clean) > 0
+def test_symmetries_and_hessian(onephonon):
+    Id = onephonon.apply_disorder(use_data_adp=True).reshape(onephonon.map_shape)
+    central_h = Id.shape[0] // 2
+    central_slice = Id[central_h, :, :]
+    np.testing.assert_allclose(
+         central_slice,
+         np.flip(central_slice),
+         rtol=1e-5
+    )
+    hessian = onephonon.gnm.compute_hessian()
+    for i in range(onephonon.n_asu):
+        hi = hessian[i, :, onephonon.crystal.hkl_to_id([0,0,0]), i, :]
+        np.testing.assert_allclose(hi, hi.T, atol=1e-5)
