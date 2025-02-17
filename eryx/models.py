@@ -1446,11 +1446,16 @@ class OnePhonon(ModelRunner):
                     print("   Inferred eigenvalues (1/sqrt(Winv)) =", eigvals)
 
                     if rank == -1:
-                        diff_val = np.dot(
-                            np.square(np.abs(np.dot(F, self.V[dh, dk, dl]))),
-                            self.Winv[dh, dk, dl])
-                        print(f"DEBUG: At (dh,dk,dl)=({dh},{dk},{dl}), diff_val min: {np.nanmin(diff_val)}, max: {np.nanmax(diff_val)}")
-                        Id[q_indices] += diff_val
+                        valid = ~np.isnan(self.Winv[dh, dk, dl])
+                        # Only use valid eigen–modes in the dot product.
+                        if np.any(valid):
+                            V_valid = self.V[dh, dk, dl][:, valid]
+                            Winv_valid = self.Winv[dh, dk, dl][valid]
+                            diff_val = np.dot(
+                                np.square(np.abs(np.dot(F, V_valid))),
+                                Winv_valid)
+                            print(f"DEBUG: At (dh,dk,dl)=({dh},{dk},{dl}), diff_val min: {np.nanmin(diff_val)}, max: {np.nanmax(diff_val)}")
+                            Id[q_indices] += diff_val
                     else:
                         diff_val = np.square(
                             np.abs(np.dot(F, self.V[dh,dk,dl,:,rank]))) * \
