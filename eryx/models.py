@@ -1437,6 +1437,13 @@ class OnePhonon(ModelRunner):
                               f"max(abs): {np.nanmax(np.abs(F[:, i_asu, :]))}")
                     F = F.reshape((q_indices.shape[0],
                                    self.n_asu * self.n_dof_per_asu))
+                    # Add aggressive debug prints here:
+                    print(f"DEBUG: For cell (dh,dk,dl)=({dh},{dk},{dl}):")
+                    print("   V[dh,dk,dl] =", self.V[dh, dk, dl])
+                    print("   Winv[dh,dk,dl] =", self.Winv[dh, dk, dl])
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        eigvals = np.sqrt(1.0 / self.Winv[dh, dk, dl])
+                    print("   Inferred eigenvalues (1/sqrt(Winv)) =", eigvals)
 
                     if rank == -1:
                         diff_val = np.dot(
