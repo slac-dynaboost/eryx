@@ -47,8 +47,10 @@ def test_diffraction_calculation_chain():
     Id = onephonon.apply_disorder(use_data_adp=True)
     Id = Id.reshape(onephonon.map_shape)
     assert Id.shape == onephonon.map_shape
-    # Ensure that at least one value is not NaN in the diffuse intensity map
-    assert np.count_nonzero(~np.isnan(Id)) > 0
+    # Convert any nan values (expected from zero-frequency rigid‐body modes) to zero
+    Id_clean = np.nan_to_num(Id, nan=0.0)
+    # Now require that at least one computed intensity is nonzero
+    assert np.count_nonzero(Id_clean) > 0
     
     # 5. Test expected symmetries
     # Get central slice
