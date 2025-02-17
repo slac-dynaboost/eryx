@@ -33,7 +33,7 @@ class ModelRunner:
         except Exception as e:
             result = None
             status = "failed"
-            self.logger.error(f"Model run failed: {e}")
+            self.logger.error(f"[ModelRunner.run_model] Model run failed: {e}")
         end_time = time.time()
         run_time = end_time - start_time
         metadata = {
