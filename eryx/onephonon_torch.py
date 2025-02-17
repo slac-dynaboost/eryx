@@ -56,20 +56,47 @@ class OnePhononTorch(ModelRunner):
     def apply_disorder(self) -> torch.Tensor:
         """
         Apply disorder computation using torch operations.
-        (This is a simplified placeholder that shows conversion and torch arithmetic.)
         """
-        # Compute the Hessian using our torch-based GNM
-        hessian_torch = self.gnm_torch.compute_hessian()  # tensor on device
-        # For this example, we assume kvec = 0 (you can extend to sample over q-vectors)
-        kvec = torch.zeros(3, device=self.device, dtype=torch.float32)
-        # Compute the dynamical matrix and its inverse using torch
-        Kmat_torch = self.gnm_torch.compute_K(hessian_torch, kvec)
-        Kinv_torch = self.gnm_torch.compute_Kinv(hessian_torch, kvec)
-
-        # Dummy disorder computation – replace with the real formula
-        Id = torch.zeros((self.q_grid.shape[0]), device=self.device, dtype=torch.float32)
-        for idx in range(self.q_grid.shape[0]):
-            # Here you would compute structure factors etc.; below is a placeholder.
-            Id[idx] = torch.norm(Kmat_torch.view(-1)).item()  # dummy operation
+        hessian_torch = self.gnm_torch.compute_hessian()  # already on device
+        q_grid_torch = torch.tensor(self.q_grid, device=self.device, dtype=torch.float32)
+        crystal_transform = self._compute_crystal_transform_torch(q_grid_torch)
+        Id = self._incoherent_sum_torch(crystal_transform)
         logging.debug(f"Id (diffuse intensity) shape: {Id.shape}, device: {Id.device}")
         return Id
+    def _compute_crystal_transform_torch(self, q_grid_torch: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the crystal transform in torch in an equivalent way to the NP version.
+        """
+        mask_np, res_map_np = get_resolution_mask(self.gnm_torch.atomic_model.cell, self.q_grid, self.res_limit)
+        dq_map_np = np.around(get_dq_map(self.gnm_torch.atomic_model.A_inv, self.q_grid), 5)
+        mask = torch.tensor(mask_np, device=self.device, dtype=torch.bool)
+        dq_mask = torch.tensor(np.equal(dq_map_np, 0), device=self.device)
+        xyz = torch.tensor(self.gnm_torch.atomic_model.xyz, device=self.device, dtype=torch.float32)
+        phi = torch.matmul(q_grid_torch, xyz.T)
+        A_real = torch.cos(phi)
+        A_imag = torch.sin(phi)
+        A = A_real + 1j * A_imag
+        I = torch.zeros(q_grid_torch.shape[0], device=self.device, dtype=torch.float32)
+        valid = mask & dq_mask
+        I[valid] = torch.square(torch.abs(A[valid])).sum(dim=1)
+        return I
+
+    def _incoherent_sum_torch(self, transform: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the diffuse intensity by incoherently summing the contributions
+        from each asymmetric unit in a manner equivalent to NP’s incoherent_sum_real().
+        """
+        sym_ops = expand_sym_ops(self.gnm_torch.atomic_model.sym_ops)
+        hkl_sym = get_symmetry_equivalents(self.hkl_grid, sym_ops)
+        ravel_np, map_shape_ravel = get_ravel_indices(hkl_sym, (self.hsampling[2], self.ksampling[2], self.lsampling[2]))
+        I_np = transform.detach().cpu().numpy()
+        I_full = np.zeros(map_shape_ravel).flatten()
+        for i in range(ravel_np.shape[0]):
+            I_full[ravel_np[i]] += I_np.copy()
+        _, mult = compute_multiplicity(self.gnm_torch.atomic_model, 
+                                       (-self.hsampling[1], self.hsampling[1], self.hsampling[2]),
+                                       (-self.ksampling[1], self.ksampling[1], self.ksampling[2]),
+                                       (-self.lsampling[1], self.lsampling[1], self.lsampling[2]))
+        I_full = I_full / (mult.max() / mult)
+        I_torch = torch.tensor(I_full, device=self.device, dtype=torch.float32)
+        return I_torch.flatten()
