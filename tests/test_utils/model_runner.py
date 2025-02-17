@@ -23,6 +23,8 @@ class ModelRunner:
         try:
             cfg = self.config
             params = cfg["OnePhonon"].copy()
+            if params.get("gamma_inter", 1.0) < 0:
+                raise ValueError("Invalid gamma_inter: must be non-negative")
             # Remove frame parameter since OnePhonon doesn't accept it; set frame on AtomicModel instead
             model = OnePhonon(cfg["setup"]["pdb_path"], cfg["setup"]["hsampling"], cfg["setup"]["ksampling"], cfg["setup"]["lsampling"], **params)
             from eryx.pdb import AtomicModel
