@@ -61,11 +61,11 @@ class TestOnePhonon:
         assert ret_lines, "No return value entry found in log"
         # Join the lines and clean up for eval
         ret_val_str = ' '.join(ret_lines)
-        # Replace 'array(' with 'np.array(' to allow eval
+        # Replace 'array(' with 'np.array(' and ensure proper chaining of substitutions
         import re
         ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str)
-        ret_val_str_mod = re.sub(r"\}\s*\{", "}), ({", ret_val_str)
-        ret_val = eval(ret_val_str_mod, {"np": np})
+        ret_val_str_mod = re.sub(r"\}\s*\{", "}), ({", ret_val_str_mod)
+        ret_val = eval(ret_val_str_mod, {"np": np, "array": np.array})
         # Expected value tuple for the log
         expected_sym_ops = (
             {
