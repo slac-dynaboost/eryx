@@ -59,19 +59,24 @@ class TestOnePhonon:
                 ret_lines.append(line.strip())
         
         assert ret_lines, "No return value entry found in log"
-        # Join the lines and clean up for eval
-        ret_val_str = ' '.join(ret_lines)
-        # Replace 'array(' with 'np.array('
+        # Join the captured lines preserving newlines and extract the complete tuple string
+        ret_val_str = "\n".join(ret_lines)
         import re
-        ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str)
-        ret_val_str_mod = ret_val_str_mod.replace("\n", " ")   # Remove newlines for safe eval
+        # Use regex to match the outermost parentheses of the tuple
+        m = re.search(r'^\((.*\}\))\)$', ret_val_str, re.DOTALL)
+        if m:
+            ret_val_str_clean = m.group(0)
+        else:
+            ret_val_str_clean = ret_val_str
+        # Replace 'array(' with 'np.array(' in the cleaned string
+        ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str_clean)
+        # Remove any stray newlines
+        ret_val_str_mod = ret_val_str_mod.replace("\n", " ")
         print("DEBUG: ret_lines =", ret_lines)
         print("DEBUG: ret_val_str =", ret_val_str)
         print("DEBUG: ret_val_str_mod =", ret_val_str_mod)
-        
-        # Create globals dict with numpy
+    
         globals_dict = {"np": np}
-        
         try:
             ret_val = eval(ret_val_str_mod, globals_dict)
         except Exception as e:
