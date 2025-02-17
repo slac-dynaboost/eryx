@@ -61,11 +61,10 @@ class TestOnePhonon:
         assert ret_lines, "No return value entry found in log"
         # Join the captured lines preserving newlines and extract the complete tuple string
         print("AGGRESSIVE DEBUG: ret_lines (list) =", ret_lines)
-        print("AGGRESSIVE DEBUG: ret_val_str (raw) =", ret_val_str)
         ret_val_str = "\n".join(ret_lines)
+        print("AGGRESSIVE DEBUG: ret_val_str (raw) =", ret_val_str)
         import re
         # Use regex to match the outermost parentheses of the tuple
-        print("AGGRESSIVE DEBUG: ret_val_str_clean =", ret_val_str_clean)
         m = re.search(r'^\((.*\}\))\)$', ret_val_str, re.DOTALL)
         if m:
             ret_val_str_clean = m.group(0)
@@ -86,12 +85,6 @@ class TestOnePhonon:
         print("AGGRESSIVE DEBUG: globals_dict =", globals_dict)
         print("AGGRESSIVE DEBUG: type(ret_val_str_mod) =", type(ret_val_str_mod))
         try:
-            ret_val = eval(ret_val_str_mod, globals_dict)
-            print("AGGRESSIVE DEBUG: eval() succeeded, ret_val =", ret_val)
-            print("AGGRESSIVE DEBUG: FAILED to eval string:")
-            print("AGGRESSIVE DEBUG: ret_val_str_mod =", ret_val_str_mod)
-            print("AGGRESSIVE DEBUG: Exception:", e)
-            print("AGGRESSIVE DEBUG: eval() succeeded, ret_val =", ret_val)
             ret_val = eval(ret_val_str_mod, globals_dict)
         except Exception as e:
             print(f"Failed to eval string: {ret_val_str_mod}")
