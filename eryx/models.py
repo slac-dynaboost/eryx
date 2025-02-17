@@ -1445,9 +1445,11 @@ class OnePhonon(ModelRunner):
                         print(f"DEBUG: At (dh,dk,dl)=({dh},{dk},{dl}), diff_val min: {np.nanmin(diff_val)}, max: {np.nanmax(diff_val)}")
                         Id[q_indices] += diff_val
                     else:
-                        Id[q_indices] += np.square(
+                        diff_val = np.square(
                             np.abs(np.dot(F, self.V[dh,dk,dl,:,rank]))) * \
                                          self.Winv[dh,dk,dl,rank]
+                        print(f"DEBUG: At (dh,dk,dl)=({dh},{dk},{dl}), rank {rank}, diff_val min: {np.nanmin(diff_val)}, max: {np.nanmax(diff_val)}")
+                        Id[q_indices] += diff_val
         Id[~self.res_mask] = np.nan
         Id = np.real(Id)
         if outdir is not None:
