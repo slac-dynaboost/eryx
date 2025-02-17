@@ -65,9 +65,10 @@ class TestOnePhonon:
         # Use regex to match the outermost parentheses of the tuple
         m = re.search(r'^\((.*\}\))\)$', ret_val_str, re.DOTALL)
         if m:
-            ret_val_str_clean = m.group(0)
+            ret_val_str_clean = m.group(1)
         else:
             ret_val_str_clean = ret_val_str
+        print("DEBUG (modified):", ret_val_str_clean)
         # Replace 'array(' with 'np.array(' in the cleaned string
         ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str_clean)
         # Remove any stray newlines
