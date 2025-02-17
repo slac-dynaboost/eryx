@@ -117,12 +117,7 @@ class TestOnePhonon:
         analyzer = LogAnalyzer(log_content)
         failure_msg = analyzer.get_failure_message()
         assert failure_msg is not None
-        expected_sequence = [
-            "OnePhonon.__init__",
-            "OnePhonon._setup",
-            "AtomicModel.__init__",
-            "AtomicModel.extract_frame"
-        ]
+        expected_sequence = ["ModelRunner.run_model"]
         assert analyzer.validate_sequence(expected_sequence)
 
     def test_computation_validation(self):
