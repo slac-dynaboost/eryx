@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 from tests.test_utils.log_analysis import LogAnalyzer
+import torch
 
 class TestOnePhonon:
 
