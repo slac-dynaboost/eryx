@@ -60,9 +60,12 @@ class TestOnePhonon:
         
         assert ret_lines, "No return value entry found in log"
         # Join the captured lines preserving newlines and extract the complete tuple string
+        print("AGGRESSIVE DEBUG: ret_lines (list) =", ret_lines)
+        print("AGGRESSIVE DEBUG: ret_val_str (raw) =", ret_val_str)
         ret_val_str = "\n".join(ret_lines)
         import re
         # Use regex to match the outermost parentheses of the tuple
+        print("AGGRESSIVE DEBUG: ret_val_str_clean =", ret_val_str_clean)
         m = re.search(r'^\((.*\}\))\)$', ret_val_str, re.DOTALL)
         if m:
             ret_val_str_clean = m.group(0)
@@ -72,13 +75,22 @@ class TestOnePhonon:
         # Replace 'array(' with 'np.array(' in the cleaned string
         ret_val_str_mod = re.sub(r'\barray\(', 'np.array(', ret_val_str_clean)
         # Remove any stray newlines
+        print("AGGRESSIVE DEBUG: ret_val_str_mod =", ret_val_str_mod)
+        print("AGGRESSIVE DEBUG: repr(ret_val_str_mod) =", repr(ret_val_str_mod))
         ret_val_str_mod = ret_val_str_mod.replace("\n", " ")
         print("DEBUG: ret_lines =", ret_lines)
         print("DEBUG: ret_val_str =", ret_val_str)
         print("DEBUG: ret_val_str_mod =", ret_val_str_mod)
     
         globals_dict = {"np": np}
+        print("AGGRESSIVE DEBUG: globals_dict =", globals_dict)
+        print("AGGRESSIVE DEBUG: type(ret_val_str_mod) =", type(ret_val_str_mod))
         try:
+        except Exception as e:
+            print("AGGRESSIVE DEBUG: FAILED to eval string:")
+            print("AGGRESSIVE DEBUG: ret_val_str_mod =", ret_val_str_mod)
+            print("AGGRESSIVE DEBUG: Exception:", e)
+            print("AGGRESSIVE DEBUG: eval() succeeded, ret_val =", ret_val)
             ret_val = eval(ret_val_str_mod, globals_dict)
         except Exception as e:
             print(f"Failed to eval string: {ret_val_str_mod}")
