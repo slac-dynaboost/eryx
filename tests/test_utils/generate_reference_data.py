@@ -2,6 +2,7 @@ import os
 import numpy as np
 from eryx.models import OnePhonon
 from eryx.scatter import compute_form_factors, structure_factors
+from eryx.pdb import GaussianNetworkModel
 
 def generate_reference_data():
     """Generate reference data for testing diffraction calculations"""
@@ -59,7 +60,17 @@ def generate_reference_data():
     print("First 5 non nan values of Id:", first_5_values)
     print("Corresponding indices:", first_5_indices)
 
-    # 5. Save test parameters
+    # 5. Generate and save GNM neighbor lists
+    gnm = GaussianNetworkModel(pdb_path, enm_cutoff=4.0, gamma_intra=1.0, gamma_inter=1.0)
+    np.save(os.path.join(out_dir, "gnm_neighbor_lists.npy"), gnm.asu_neighbors)
+    
+    # 6. Generate and save GNM K-matrix reference data using a test k-vector
+    hessian = gnm.compute_hessian()
+    kvec = np.array([1.0, 0.0, 0.0])
+    Kmat = gnm.compute_K(hessian, kvec=kvec)
+    np.save(os.path.join(out_dir, "gnm_k_matrices.npy"), Kmat)
+
+    # 7. Save test parameters
     np.savez(os.path.join(out_dir, "test_params.npz"),
              q_test=q_test,
              sampling={"hsampling": hsampling, "ksampling": ksampling, "lsampling": lsampling})
