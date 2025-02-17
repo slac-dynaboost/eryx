@@ -1,7 +1,5 @@
-                                                                                                                                                                                                            
- # Spec Prompt: Parallel Test Suite for PyTorch Implementation                                                                                                                                              
-                                                                                                                                                                                                            
- ## High-Level Objective                                                                                                                                                                                    
+# Spec Prompt: Parallel Test Suite for PyTorch Implementation
+## High-Level Objective
  - Create a parallel set of tests that will validate the functional correctness of the soon-to-be-developed PyTorch-based OnePhonon model and its supporting GaussianNetworkModel. The new tests should     
  mirror our existing NumPy-based tests (found in files such as `tests/test_gaussian_network_model.py` and `tests/test_onephonon.py`) but will import and verify outputs from the Torch implementations.     
                                                                                                                                                                                                             
