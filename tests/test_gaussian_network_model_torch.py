@@ -1,0 +1,2 @@
+from eryx.gaussian_network_torch import GaussianNetworkModel
+import torch
