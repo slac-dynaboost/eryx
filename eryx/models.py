@@ -108,6 +108,7 @@ class RigidBodyTranslations:
             wilson = np.sum(self.q_grid.T * np.dot(np.square(sigmas)[:,np.newaxis] * np.eye(3), self.q_grid.T), axis=1)
 
         Id = self.transform.flatten() * (1 - np.exp(-1 * wilson))
+        print("DEBUG: Finished loops. Id stats after computation:", "min =", np.nanmin(Id), "max =", np.nanmax(Id))
         return Id
     
     def optimize(self, target, sigmas_min, sigmas_max, n_search=20):
@@ -813,7 +814,9 @@ class NonInteractingDeformableMolecules:
         """
         Id = np.zeros((self.q_grid.shape[0]))
         for i_asu in range(self.model.n_asu):
-            if rank == -1:
+            print("DEBUG: Reshaped F shape:", F.shape)
+            if F.shape[0] == 0:
+                print(f"WARNING: No valid q_indices for dh,dk,dl=({dh},{dk},{dl})")
                 Id[self.res_mask] += np.dot(np.square(np.abs(structure_factors(self.q_grid[self.res_mask],
                                                                                self.model.xyz[i_asu],
                                                                                self.model.ff_a[i_asu],
@@ -855,6 +858,7 @@ class NonInteractingDeformableMolecules:
         I(q) = \sum_ij F_i(q) (T_ij(q) - 1.) F_j(q)
         The diffuse intensity is an incoherent sum over ASUs.
         """
+        print("DEBUG: ADP value =", ADP)
         Id = np.zeros((self.q_grid.shape[0]), dtype='complex')
 
         self.compute_covariance_matrix()
@@ -1409,6 +1413,7 @@ class OnePhonon(ModelRunner):
 
                     q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
                     q_indices = q_indices[self.res_mask[q_indices]]
+                    print(f"DEBUG: dh,dk,dl=({dh},{dk},{dl}), q_indices count: {len(q_indices)}")
 
                     F = np.zeros((q_indices.shape[0],
                                   self.n_asu,
@@ -1427,13 +1432,18 @@ class OnePhonon(ModelRunner):
                             compute_qF=True,
                             project_on_components=self.Amat[i_asu],
                             sum_over_atoms=False)
+                        print(f"DEBUG: For asu {i_asu}, F shape: {F[:, i_asu, :].shape}, "
+                              f"min(abs): {np.nanmin(np.abs(F[:, i_asu, :]))}, "
+                              f"max(abs): {np.nanmax(np.abs(F[:, i_asu, :]))}")
                     F = F.reshape((q_indices.shape[0],
                                    self.n_asu * self.n_dof_per_asu))
 
                     if rank == -1:
-                        Id[q_indices] += np.dot(
+                        diff_val = np.dot(
                             np.square(np.abs(np.dot(F, self.V[dh, dk, dl]))),
                             self.Winv[dh, dk, dl])
+                        print(f"DEBUG: At (dh,dk,dl)=({dh},{dk},{dl}), diff_val min: {np.nanmin(diff_val)}, max: {np.nanmax(diff_val)}")
+                        Id[q_indices] += diff_val
                     else:
                         Id[q_indices] += np.square(
                             np.abs(np.dot(F, self.V[dh,dk,dl,:,rank]))) * \
