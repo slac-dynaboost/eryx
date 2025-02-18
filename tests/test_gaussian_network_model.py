@@ -49,8 +49,7 @@ class TestGaussianNetworkModel:
     def test_hessian_symmetry(self, gnm_model):
         """Test that the computed Hessian matrix is symmetric in its diagonal blocks."""
         hessian = gnm_model.compute_hessian()
-        if isinstance(hessian, torch.Tensor):
-            hessian = hessian.detach().cpu().numpy()
+        # Remove torch check; hessian is expected to be a numpy array
         # Check symmetry for each ASU within the reference cell (diagonal block)
         for i_asu in range(gnm_model.n_asu):
             diag_block = hessian[i_asu, :, gnm_model.id_cell_ref, i_asu, :]
@@ -62,8 +61,7 @@ class TestGaussianNetworkModel:
         hessian = gnm_model.compute_hessian()
         kvec = np.array([1.0, 0.0, 0.0])
         Kmat = gnm_model.compute_K(hessian, kvec=kvec)
-        if isinstance(Kmat, torch.Tensor):
-            Kmat = Kmat.detach().cpu().numpy()
+        # Remove torch check; Kmat is expected to be a numpy array
         expected_shape = (gnm_model.n_asu, gnm_model.n_atoms_per_asu, gnm_model.n_asu, gnm_model.n_atoms_per_asu)
         assert Kmat.shape == expected_shape, f"Unexpected K-matrix shape: {Kmat.shape}"
         # Optionally, compare a block against a pre-generated reference
