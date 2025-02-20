@@ -1,6 +1,19 @@
 import numpy as np
 import logging
 import multiprocess as mp
+
+logging.debug("AGGRESSIVE_HELLO_SCATTER_NP")
+
+def setup_logging_worker():
+    import logging
+    # Only configure logging if no handlers have been set up yet.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s: %(message)s",
+            filename="debug_output.log",
+            filemode="a"  # append so worker messages join the same log
+        )
 from functools import partial
 
 def compute_form_factors(q_grid, ff_a, ff_b, ff_c):
@@ -28,6 +41,15 @@ def compute_form_factors(q_grid, ff_a, ff_b, ff_c):
     fj = np.sum(fj, axis=1) + ff_c[:,np.newaxis]
     mean_fj = np.mean(fj)
     logging.debug(f"[TestReference] Mean of form factors: {mean_fj:.8f}")
+    print("DEBUG_HYP_NP: In compute_form_factors()")
+    print("DEBUG_HYP_NP:   q_grid shape:", q_grid.shape, "\n   first 10 q_vectors:", q_grid[:10])
+    print("DEBUG_HYP_NP:   ff_a shape:", ff_a.shape, "ff_b shape:", ff_b.shape, "ff_c shape:", ff_c.shape)
+    print("DEBUG_HYP_NP:   Q (first 10):", Q[:10])
+    print("DEBUG_HYP_NP:   fj stats: shape =", fj.shape,
+          ", min =", np.nanmin(fj),
+          ", max =", np.nanmax(fj),
+          ", mean =", mean_fj,
+          ", first 10 elements =", fj.flatten()[:10])
     return fj.T
 
 def structure_factors_batch(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
@@ -65,6 +87,8 @@ def structure_factors_batch(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
         structure factors at q-vectors.
         If compute_qF, return [q_x A(q), q_y A(q), q_z A(q)] instead of A(q)
     """
+    print("DEBUG_HYP_NP: Entering structure_factors_batch()")
+    print("DEBUG_HYP_NP:   q_grid shape =", q_grid.shape)
     if U is None:
         U = np.zeros(xyz.shape[0])
     
@@ -81,6 +105,12 @@ def structure_factors_batch(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
         A = np.matmul(A, project_on_components)
     if sum_over_atoms:
         A = np.sum(A, axis=1)
+    print("DEBUG_HYP_NP: structure_factors_batch() computed A shape =", A.shape)
+    if A.size > 0:
+        print("DEBUG_HYP_NP:   A stats: min =", np.nanmin(np.abs(A)),
+              ", max =", np.nanmax(np.abs(A)),
+              ", mean =", np.nanmean(np.abs(A)),
+              ", first 10 elements =", A.flatten()[:10])
     return A 
 
 def structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
@@ -94,6 +124,12 @@ def structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
     to the number of processors available. If greater than 1,
     multiprocessing will be used.
     """
+    import os
+    DEBUG_MODE = os.environ.get("DEBUG_MODE", "0") == "1"
+    if DEBUG_MODE:
+        logging.debug("Debug mode ON: overriding n_processes to 1 (disabling multithreading).")
+        n_processes = 1
+
     n_batches = q_grid.shape[0] // batch_size
     if n_batches == 0:
         n_batches = 1
@@ -116,7 +152,7 @@ def structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
                                                                         project_on_components=project_on_components, sum_over_atoms=sum_over_atoms)
     else:
         q_sel = [q_grid[splits[batch]: splits[batch+1]] for batch in range(n_batches)]
-        pool = mp.Pool(processes=n_processes)
+        pool = mp.Pool(processes=n_processes, initializer=setup_logging_worker)
         sf_partial = partial(structure_factors_batch, xyz=xyz, ff_a=ff_a, ff_b=ff_b, ff_c=ff_c, U=U,
                              compute_qF=compute_qF,
                              project_on_components=project_on_components, sum_over_atoms=sum_over_atoms)

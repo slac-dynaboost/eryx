@@ -15,11 +15,12 @@ from contextlib import contextmanager
 DEFAULT_FORMAT = '[%(levelname)s] [%(asctime)s] [%(name)s] %(message)s'
 DEFAULT_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format=DEFAULT_FORMAT,
-    datefmt=DEFAULT_DATE_FORMAT,
-)
+# Removed basicConfig call here.
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format=DEFAULT_FORMAT,
+#     datefmt=DEFAULT_DATE_FORMAT,
+# )
 
 def log_method_call(func):
     """Decorator to log method entry/exit with timing.
@@ -39,11 +40,12 @@ def log_method_call(func):
     def wrapper(*args, **kwargs):
         class_name = args[0].__class__.__name__ if args else ''
         method_name = func.__name__
-        logging.debug(f"[{class_name}.{method_name}] Enter with args={args[1:]}, kwargs={kwargs}")
+        # Disabled debug logging to reduce clutter:
+        # logging.debug(f"[{class_name}.{method_name}] Enter with args={args[1:]}, kwargs={kwargs}")
         start_time = time.time()
         result = func(*args, **kwargs)
         duration = time.time() - start_time
-        logging.debug(f"[{class_name}.{method_name}] Exit. Duration={duration:.2f}s")
+        # logging.debug(f"[{class_name}.{method_name}] Exit. Duration={duration:.2f}s")
         if result is not None:
             import numpy as np
             if isinstance(result, np.ndarray):

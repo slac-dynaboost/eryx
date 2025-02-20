@@ -171,16 +171,17 @@ class AtomicModel:
         sym_ops = extract_sym_ops(pdb_file)
         transformations = extract_transformations(pdb_file)
         
-        if len(sym_ops) == 0:
-            print(""""Warning: gathering symmetry operations from
-            Gemmi rather than the PDB header. This may be incorrect
-            for non-orthogonal unit cells.""")
+        if len(sym_ops) < 4:
+            print("Warning: falling back to Gemmi for symmetry operations.")
+            from gemmi import SpaceGroup
+            sg = SpaceGroup(self.space_group)
             sym_ops = {}
-            sg = gemmi.SpaceGroup(self.space_group) 
-            for i,op in enumerate(sg.operations()):
-                r = np.array(op.rot) / op.DEN 
-                t = np.array(op.tran) / op.DEN
-                sym_ops[i] = np.hstack((r, t[:,np.newaxis]))
+            transformations = {}
+            for i, op in enumerate(sg.operations()):
+                r = np.array(op.rot, dtype=float).reshape(3,3) / op.DEN
+                t = np.array(op.tran, dtype=float) / op.DEN
+                sym_ops[i] = r  # only rotation part
+                transformations[i] = np.hstack((r, t.reshape(3,1)))
 
         if len(transformations) == 0:
             transformations = sym_ops

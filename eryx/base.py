@@ -2,6 +2,7 @@ import numpy as np
 import glob
 import re
 import os
+import logging
 from .pdb import AtomicModel
 from .map_utils import *
 from .scatter import structure_factors
@@ -111,6 +112,10 @@ def compute_crystal_transform(pdb_path, hsampling, ksampling, lsampling, U=None,
                                         lsampling, 
                                         return_hkl=True)
     q_grid = 2*np.pi*np.inner(model.A_inv.T, hkl_grid).T
+    logging.debug("DEBUG_HYP_NP-1: hkl_grid shape = %s", hkl_grid.shape)
+    logging.debug("DEBUG_HYP_NP-1: q_grid (NP) shape = %s", q_grid.shape)
+    logging.debug("DEBUG_HYP_NP-1: q_grid min = %s, max = %s", q_grid.min(), q_grid.max())
+    logging.debug("DEBUG_HYP_NP-1: hkl_grid shape = %s", hkl_grid.shape)
     mask, res_map = get_resolution_mask(model.cell, hkl_grid, res_limit)
     dq_map = np.around(get_dq_map(model.A_inv, hkl_grid), 5)
     dq_map[~mask] = -1
@@ -201,6 +206,10 @@ def compute_molecular_transform(pdb_path, hsampling, ksampling, lsampling, U=Non
             I = I.reshape(map_shape)
             I[~mask.reshape(map_shape)] = 0
 
+    logging.debug("AGGRESSIVE_DEBUG_HYP_NP: multiplicity tensor stats: min = %s, max = %s, mean = %s, unique = %s", mult.min(), mult.max(), np.mean(mult), np.unique(mult))
+    print("AGGRESSIVE_DEBUG_HYP_NP: I BEFORE scaling (first 10 elems):", I.flatten()[:10])
+    I /= (mult.max() / mult)
+    print("AGGRESSIVE_DEBUG_HYP_NP: I AFTER scaling (first 10 elems):", I.flatten()[:10])
     return q_grid, I
 
 def incoherent_sum_real(model, hkl_grid, sampling, U=None, mask=None, batch_size=10000, n_processes=8):
@@ -243,19 +252,33 @@ def incoherent_sum_real(model, hkl_grid, sampling, U=None, mask=None, batch_size
     q_grid = 2*np.pi*np.inner(model.A_inv.T, hkl_grid).T
     I_asu = np.zeros(q_grid.shape[0])
     for asu in range(model.xyz.shape[0]):
-        I_asu[mask] += np.square(np.abs(structure_factors(q_grid[mask],
-                                                          model.xyz[asu],
-                                                          model.ff_a[asu], 
-                                                          model.ff_b[asu], 
-                                                          model.ff_c[asu], 
-                                                          U=U, 
-                                                          batch_size=batch_size,
-                                                          n_processes=n_processes)))
+        A = structure_factors(q_grid[mask],
+                              model.xyz[asu],
+                              model.ff_a[asu], 
+                              model.ff_b[asu], 
+                              model.ff_c[asu], 
+                              U=U, 
+                              batch_size=batch_size,
+                              n_processes=n_processes)
+        print("AGGRESSIVE_DEBUG_HYP_NP: asu", asu, "structure_factors: min =", np.nanmin(A), "max =", np.nanmax(A), "mean =", np.nanmean(np.abs(A)))
+        I_asu[mask] += np.square(np.abs(A))
         
     # get symmetry information for expanded map
     sym_ops = expand_sym_ops(model.sym_ops)
     hkl_sym = get_symmetry_equivalents(hkl_grid, sym_ops)
+    logging.debug("DEBUG_HYP_NP-2: ravel_np (first 2 groups): %s", ravel[:2])
+    logging.debug("DEBUG_HYP_NP-2: map_shape_ravel = %s", map_shape_ravel)
+    logging.debug("AGGRESSIVE_DEBUG_HYP_NP: multiplicity stats: min = %s, max = %s, mean = %s, unique = %s", 
+                  mult.min(), mult.max(), np.mean(mult), np.unique(mult))
+    logging.debug("AGGRESSIVE_DEBUG_HYP_NP: I BEFORE scaling (first 10 elems): %s", I.flatten()[:10])
+    logging.debug("AGGRESSIVE_DEBUG_HYP_NP: I AFTER scaling (first 10 elems): %s", I.flatten()[:10])
+    logging.debug("DEBUG_HYP_NP-7: Total indices in primary group = %s, Total indices after symmetry expansion = %s, Unique indices = %s", 
+                  primary_indices.size, all_indices.size, unique_indices.size)
+    logging.debug("DEBUG_HYP_NP-7: Sum over unique indices = %s, vs. total sum = %s", I_sum_unique, I_sum_total)
+
     ravel, map_shape_ravel = get_ravel_indices(hkl_sym, sampling)
+    print("NP DEBUG (real): ravel indices (first few groups):", ravel[:2])
+    print("NP DEBUG (real): map_shape_ravel:", map_shape_ravel)
     sampling_ravel = get_centered_sampling(map_shape_ravel, sampling)
     hkl_grid_mult, mult = compute_multiplicity(model, 
                                                sampling_ravel[0], 
@@ -268,12 +291,7 @@ def incoherent_sum_real(model, hkl_grid, sampling, U=None, mask=None, batch_size
     for asu in range(1, ravel.shape[0]):
         I[ravel[asu]] += I_asu.copy()
     I = I.reshape(map_shape_ravel)
-    I /= (mult.max() / mult) 
-    
-    sampling_original = [(int(hkl_grid[:,i].min()),int(hkl_grid[:,i].max()),sampling[i]) for i in range(3)]
-    I = resize_map(I, sampling_original, sampling_ravel)
-    
-    return I
+    return I_resized
     
 def incoherent_sum_reciprocal(model, hkl_grid, sampling, U=None, batch_size=10000, n_processes=8):
     """
@@ -306,7 +324,12 @@ def incoherent_sum_reciprocal(model, hkl_grid, sampling, U=None, batch_size=1000
         intensity map of the molecular transform
     """
     hkl_grid_sym = get_symmetry_equivalents(hkl_grid, model.sym_ops)
+    print("NP DEBUG: hkl_grid_sym shape after symmetry expansion: %s", np.array(hkl_grid_sym).shape)
+    print("NP DEBUG: hkl_grid_sym (first 2 groups): %s", np.array(hkl_grid_sym)[:2])
+
     ravel, map_shape_ravel = get_ravel_indices(hkl_grid_sym, sampling)
+    print("DEBUG_HYP_NP-2: ravel_np (first 2 groups): %s", ravel[:2])
+    print("DEBUG_HYP_NP-2: map_shape_ravel = %s", map_shape_ravel)
     
     I_sym = np.zeros(ravel.shape)
     for asu in range(I_sym.shape[0]):
@@ -332,5 +355,11 @@ def incoherent_sum_reciprocal(model, hkl_grid, sampling, U=None, batch_size=1000
                                                                    U=U,
                                                                    batch_size=batch_size)))
     I = np.sum(I_sym, axis=0)
+    print("DEBUG_HYP_NP-4: I BEFORE scaling (first 10 elems): %s", I.flatten()[:10])
+    I_before = I.copy()
+    I /= (mult.max() / mult)
+    print("DEBUG_HYP_NP-4: I AFTER scaling (first 10 elems): %s", I.flatten()[:10])
+    print("DEBUG_HYP_NP-5: Global I BEFORE scaling: sum = %s, percentiles = %s", I_before.sum(), np.percentile(I_before.flatten(), [1, 25, 50, 75, 99]))
+    print("DEBUG_HYP_NP-5: Global I AFTER scaling: sum = %s, percentiles = %s", I.sum(), np.percentile(I.flatten(), [1, 25, 50, 75, 99]))
     return I
 

@@ -109,6 +109,8 @@ class RigidBodyTranslations:
 
         Id = self.transform.flatten() * (1 - np.exp(-1 * wilson))
         print("DEBUG: Finished loops. Id stats after computation:", "min =", np.nanmin(Id), "max =", np.nanmax(Id))
+        print("DEBUG_HYP_NP: I_full AFTER scaling: sum =", np.nansum(Id), 
+              ", first 10 elements =", Id.flatten()[:10])
         return Id
     
     def optimize(self, target, sigmas_min, sigmas_max, n_search=20):
@@ -1001,6 +1003,11 @@ class OnePhonon(ModelRunner):
                                                          res_limit)
         self.q_grid = 2 * np.pi * np.inner(self.model.A_inv.T, self.hkl_grid).T
         log_array_shape(self.q_grid, "q_grid")
+        print("DEBUG_HYP_NP: In OnePhonon._setup() (NP)")
+        print("DEBUG_HYP_NP:   hkl_grid shape =", self.hkl_grid.shape,
+              ", first 10 rows =", self.hkl_grid[:10])
+        print("DEBUG_HYP_NP:   q_grid shape =", self.q_grid.shape,
+              ", first 10 q_vectors =", self.q_grid[:10])
 
         self.crystal = Crystal(self.model)
         self.crystal.supercell_extent(nx=1, ny=1, nz=1)
@@ -1399,8 +1406,21 @@ class OnePhonon(ModelRunner):
         """
         import time
         import logging
+
+        def test_validate_physics_computation(device):
+            pdb_path = "tests/pdbs/5zck.pdb"
+            hsampling = [-1, 2, 10]
+            ksampling = [-1, 2, 10]
+            lsampling = [-1, 2, 10]
+    
+            from eryx.onephonon_torch import OnePhononTorch
+            model_torch = OnePhononTorch(pdb_path, hsampling, ksampling, lsampling, device=device)
+            # This should pass without raising an AssertionError if validation is successful.
+            model_torch.validate_physics_computation()
         start_time = time.time()
         logging.debug("[OnePhonon.apply_disorder] Starting disorder computation with rank=%s", rank)
+        print("DEBUG_HYP_NP: In OnePhonon.apply_disorder() (NP)")
+        print("DEBUG_HYP_NP:   q_grid shape =", self.q_grid.shape)
         if use_data_adp:
             ADP = self.model.adp[0] / (8 * np.pi * np.pi)
         else:
@@ -1414,11 +1434,19 @@ class OnePhonon(ModelRunner):
                     q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
                     q_indices = q_indices[self.res_mask[q_indices]]
                     print(f"DEBUG: dh,dk,dl=({dh},{dk},{dl}), q_indices count: {len(q_indices)}")
+                    print("DEBUG_HYP_NP: For cell (dh,dk,dl)=({},{},{}):".format(dh, dk, dl))
+                    print("DEBUG_HYP_NP:   q_indices shape =", q_indices.shape, 
+                          "first 10 indices =", q_indices[:10])
 
                     F = np.zeros((q_indices.shape[0],
                                   self.n_asu,
                                   self.n_dof_per_asu),
                                  dtype='complex')
+                    for i_asu in range(self.n_asu):
+                        F_shape = F[:, i_asu, :].shape
+                        F_abs = np.nanmin(np.abs(F[:, i_asu, :])), np.nanmax(np.abs(F[:, i_asu, :])), np.nanmean(np.abs(F[:, i_asu, :]))
+                        print("DEBUG_HYP_NP:   asu {}: F shape = {}, abs stats (min,max,mean) = {}, first 10 =", 
+                              i_asu, F_shape, F_abs, F[:, i_asu, :].flatten()[:10])
                     for i_asu in range(self.n_asu):
                         F[:, i_asu, :] = structure_factors(
                             self.q_grid[q_indices],
@@ -1463,6 +1491,16 @@ class OnePhonon(ModelRunner):
                         print(f"DEBUG: At (dh,dk,dl)=({dh},{dk},{dl}), rank {rank}, diff_val min: {np.nanmin(diff_val)}, max: {np.nanmax(diff_val)}")
                         Id[q_indices] += diff_val
         Id[~self.res_mask] = np.nan
+        print("DEBUG_HYP_NP: I_full BEFORE scaling: sum =", np.nansum(Id), 
+              ", first 10 elements =", Id.flatten()[:10])
+        _, mult = compute_multiplicity(self.crystal.model, 
+                                       self.hsampling, 
+                                       self.ksampling, 
+                                       self.lsampling)
+        print("DEBUG_HYP_NP: multiplicity stats: shape =", mult.shape, 
+              ", min =", np.nanmin(mult), 
+              ", max =", np.nanmax(mult), 
+              ", first 10 elements =", mult.flatten()[:10])
         Id = np.real(Id)
         if outdir is not None:
             np.save(os.path.join(outdir, f"rank_{rank:05}.npy"), Id)
