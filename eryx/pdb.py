@@ -1,7 +1,17 @@
 import numpy as np
 import gemmi
 from scipy.spatial import KDTree
+import os
 
+# Import debug conditionally to avoid circular imports
+if os.environ.get("DEBUG_MODE") == "1":
+    from eryx.autotest.debug import debug
+else:
+    # Provide a no-op decorator when debugging is disabled
+    def debug(func):
+        return func
+
+@debug
 def sym_str_as_matrix(sym_str):
     """
     Comvert a symmetry operation from string to matrix format,
@@ -120,6 +130,7 @@ def get_unit_cell_axes(cell):
 
 class AtomicModel:
     
+    @debug
     def __init__(self, pdb_file, expand_p1=False, frame=0, clean_pdb=True):
         self._get_gemmi_structure(pdb_file, clean_pdb)
         self._extract_cell()
@@ -218,6 +229,7 @@ class AtomicModel:
             self._extract_adp(residues, expand_p1)
             self._extract_ff_coefs(residues, expand_p1)
         
+    @debug
     def _get_xyz_asus(self, xyz):
         """
         Apply symmetry operations to get xyz coordinates of all 
@@ -325,6 +337,7 @@ class AtomicModel:
         if expand_p1:
             self._tile_form_factors()
     
+    @debug
     def flatten_model(self):
         """
         Set self variables to correspond to the given frame,
@@ -352,6 +365,8 @@ class AtomicModel:
 
 class Crystal:
 
+
+    @debug
     def __init__(self, atomic_model):
         """
         Parameters
@@ -451,6 +466,7 @@ class Crystal:
                     icell += 1
         return unit_cell
 
+    @debug
     def get_asu_xyz(self, asu_id=0, unit_cell=None):
         """
 
@@ -474,6 +490,7 @@ class Crystal:
         return xyz
 
 class GaussianNetworkModel:
+    @debug
     def __init__(self, pdb_path, enm_cutoff, gamma_intra, gamma_inter):
         self._setup_atomic_model(pdb_path)
         self.enm_cutoff = enm_cutoff
@@ -481,6 +498,7 @@ class GaussianNetworkModel:
         self.gamma_intra = gamma_intra
         self._setup_gaussian_network_model()
 
+    @debug
     def _setup_atomic_model(self, pdb_path):
         """
         Build unit cell and its nearest neighbors while
@@ -500,6 +518,7 @@ class GaussianNetworkModel:
         self.n_atoms_per_asu = self.crystal.get_asu_xyz().shape[0]
         self.n_dof_per_asu_actual = self.n_atoms_per_asu * 3
 
+    @debug
     def _setup_gaussian_network_model(self):
         """
         Build interaction pair list and spring constant.
@@ -507,6 +526,7 @@ class GaussianNetworkModel:
         self.build_gamma()
         self.build_neighbor_list()
 
+    @debug
     def build_gamma(self):
         """
         The spring constant gamma dictates the interaction strength
@@ -524,6 +544,7 @@ class GaussianNetworkModel:
                     if (i_cell == self.id_cell_ref) and (j_asu == i_asu):
                         self.gamma[i_cell, i_asu, j_asu] = self.gamma_intra
 
+    @debug
     def build_neighbor_list(self):
         """
         Returns the list asu_neighbors[i_asu][i_cell][j_asu]
@@ -549,6 +570,7 @@ class GaussianNetworkModel:
 
                     self.asu_neighbors[i_asu][i_cell][j_asu] = kd_tree1.query_ball_tree(kd_tree2, r=self.enm_cutoff)
 
+    @debug
     def compute_hessian(self):
         """
         For a pair of atoms the Hessian in a GNM is defined as:
@@ -592,6 +614,7 @@ class GaussianNetworkModel:
 
         return hessian
 
+    @debug
     def compute_K(self, hessian, kvec=None):
         """
         Noting H(d) the block of the hessian matrix
@@ -627,6 +650,7 @@ class GaussianNetworkModel:
                     Kmat[i_asu, :, j_asu, :] += hessian[i_asu, :, j_cell, j_asu, :] * eikr
         return Kmat
 
+    @debug
     def compute_Kinv(self, hessian, kvec=None, reshape=True):
         """
         Compute the inverse of K(kvec)

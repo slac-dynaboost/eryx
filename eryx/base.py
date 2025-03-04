@@ -5,6 +5,7 @@ import os
 from .pdb import AtomicModel
 from .map_utils import *
 from .scatter import structure_factors
+from eryx.autotest.debug import debug
 
 def natural_sort(l): 
     """
@@ -65,6 +66,7 @@ def guinier_reconstruct(ensemble_dir, n_grid_points, res_mask, n_asu, weights=No
     Id[~res_mask] = np.nan
     return Id
 
+@debug
 def compute_crystal_transform(pdb_path, hsampling, ksampling, lsampling, U=None, expand_p1=True, 
                               res_limit=0, batch_size=5000, n_processes=8):
     """
@@ -126,6 +128,7 @@ def compute_crystal_transform(pdb_path, hsampling, ksampling, lsampling, U=None,
                                                       n_processes=n_processes)))
     return q_grid, I.reshape(map_shape)
 
+@debug
 def compute_molecular_transform(pdb_path, hsampling, ksampling, lsampling, U=None, expand_p1=True,
                                 expand_friedel=True, res_limit=0, batch_size=10000, n_processes=8):
     """
@@ -203,6 +206,7 @@ def compute_molecular_transform(pdb_path, hsampling, ksampling, lsampling, U=Non
 
     return q_grid, I
 
+@debug
 def incoherent_sum_real(model, hkl_grid, sampling, U=None, mask=None, batch_size=10000, n_processes=8):
     """
     Compute the incoherent sum of the scattering from all asus.
@@ -275,6 +279,7 @@ def incoherent_sum_real(model, hkl_grid, sampling, U=None, mask=None, batch_size
     
     return I
     
+@debug
 def incoherent_sum_reciprocal(model, hkl_grid, sampling, U=None, batch_size=10000, n_processes=8):
     """
     Compute the incoherent sum of the scattering from all asus.
@@ -334,3 +339,164 @@ def incoherent_sum_reciprocal(model, hkl_grid, sampling, U=None, batch_size=1000
     I = np.sum(I_sym, axis=0)
     return I
 
+"""
+PyTorch implementation of transform calculations for diffuse scattering.
+
+This module contains PyTorch versions of the transform calculation functions defined
+in eryx/base.py. All implementations maintain the same API as the NumPy versions
+but use PyTorch tensors and operations to enable gradient flow.
+
+References:
+    - Original NumPy implementation in eryx/base.py
+"""
+
+import numpy as np
+import torch
+from typing import Tuple, List, Dict, Optional, Union, Any
+
+def compute_molecular_transform(pdb_path: str, 
+                              hsampling: Tuple[float, float, float], 
+                              ksampling: Tuple[float, float, float], 
+                              lsampling: Tuple[float, float, float], 
+                              U: Optional[torch.Tensor] = None, 
+                              expand_p1: bool = True,
+                              expand_friedel: bool = True, 
+                              res_limit: float = 0, 
+                              batch_size: int = 10000, 
+                              n_processes: int = 8) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute the molecular transform as the incoherent sum of asymmetric units using PyTorch.
+    
+    Args:
+        pdb_path: Path to coordinates file
+        hsampling: Tuple (hmin, hmax, oversampling) for h dimension
+        ksampling: Tuple (kmin, kmax, oversampling) for k dimension
+        lsampling: Tuple (lmin, lmax, oversampling) for l dimension
+        U: Optional tensor with isotropic displacement parameters
+        expand_p1: If True, expand PDB to unit cell
+        expand_friedel: If True, expand to full sphere in reciprocal space
+        res_limit: High resolution limit in Angstrom
+        batch_size: Number of q-vectors per batch
+        n_processes: Number of processes (ignored in PyTorch implementation)
+        
+    Returns:
+        Tuple containing:
+            - PyTorch tensor of shape (n_points, 3) with q-vectors
+            - PyTorch tensor of shape (dim_h, dim_k, dim_l) with intensity map
+            
+    References:
+        - Original implementation: eryx/base.py:compute_molecular_transform
+    """
+    # TODO: Load model with adapter to convert to PyTorch tensors
+    # TODO: Generate grid using map_utils_torch.generate_grid
+    # TODO: Apply resolution mask
+    # TODO: Choose calculation approach based on space group and expand_friedel
+    # TODO: Call appropriate summation function
+    
+    raise NotImplementedError("compute_molecular_transform not implemented")
+
+def compute_crystal_transform(pdb_path: str, 
+                             hsampling: Tuple[float, float, float], 
+                             ksampling: Tuple[float, float, float], 
+                             lsampling: Tuple[float, float, float], 
+                             U: Optional[torch.Tensor] = None, 
+                             expand_p1: bool = True, 
+                             res_limit: float = 0, 
+                             batch_size: int = 5000, 
+                             n_processes: int = 8) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute crystal transform as coherent sum of asymmetric units using PyTorch.
+    
+    Args:
+        pdb_path: Path to coordinates file
+        hsampling: Tuple (hmin, hmax, oversampling) for h dimension
+        ksampling: Tuple (kmin, kmax, oversampling) for k dimension
+        lsampling: Tuple (lmin, lmax, oversampling) for l dimension
+        U: Optional tensor with isotropic displacement parameters
+        expand_p1: If True, expand PDB to unit cell
+        res_limit: High resolution limit in Angstrom
+        batch_size: Number of q-vectors per batch
+        n_processes: Number of processes (ignored in PyTorch implementation)
+        
+    Returns:
+        Tuple containing:
+            - PyTorch tensor of shape (n_points, 3) with q-vectors
+            - PyTorch tensor of shape (dim_h, dim_k, dim_l) with intensity map
+            
+    References:
+        - Original implementation: eryx/base.py:compute_crystal_transform
+    """
+    # TODO: Load model with adapter
+    # TODO: Generate grid and q-vectors
+    # TODO: Apply resolution and dq masks
+    # TODO: Compute structure factors for Bragg reflections
+    # TODO: Reshape results to 3D map
+    
+    raise NotImplementedError("compute_crystal_transform not implemented")
+
+def incoherent_sum_real(model: Any, 
+                       hkl_grid: torch.Tensor, 
+                       sampling: Tuple[float, float, float], 
+                       U: Optional[torch.Tensor] = None, 
+                       mask: Optional[torch.Tensor] = None, 
+                       batch_size: int = 10000, 
+                       n_processes: int = 8) -> torch.Tensor:
+    """
+    Compute incoherent sum of scattering from all ASUs in real space using PyTorch.
+    
+    Args:
+        model: AtomicModel instance (converted to use PyTorch)
+        hkl_grid: PyTorch tensor of shape (n_points, 3) with hkl indices
+        sampling: Tuple with sampling rates
+        U: Optional tensor with displacement parameters
+        mask: Optional tensor with boolean mask
+        batch_size: Number of q-vectors per batch
+        n_processes: Number of processes (ignored in PyTorch implementation)
+        
+    Returns:
+        PyTorch tensor of shape (dim_h, dim_k, dim_l) with intensity map
+        
+    References:
+        - Original implementation: eryx/base.py:incoherent_sum_real
+    """
+    # TODO: Generate ASU mask and combine with resolution mask
+    # TODO: Compute scattering for unique reciprocal wedge
+    # TODO: Expand symmetry operations and hkl indices
+    # TODO: Get raveled indices
+    # TODO: Perform symmetrization using PyTorch operations
+    # TODO: Account for multiplicity
+    # TODO: Resize map if needed
+    
+    raise NotImplementedError("incoherent_sum_real not implemented")
+
+def incoherent_sum_reciprocal(model: Any, 
+                            hkl_grid: torch.Tensor, 
+                            sampling: Tuple[float, float, float], 
+                            U: Optional[torch.Tensor] = None, 
+                            batch_size: int = 10000, 
+                            n_processes: int = 8) -> torch.Tensor:
+    """
+    Compute incoherent sum of scattering in reciprocal space using PyTorch.
+    
+    Args:
+        model: AtomicModel instance (converted to use PyTorch)
+        hkl_grid: PyTorch tensor of shape (n_points, 3) with hkl indices
+        sampling: Tuple with sampling rates
+        U: Optional tensor with displacement parameters
+        batch_size: Number of q-vectors per batch
+        n_processes: Number of processes (ignored in PyTorch implementation)
+        
+    Returns:
+        PyTorch tensor of shape (n_points,) with intensity values
+        
+    References:
+        - Original implementation: eryx/base.py:incoherent_sum_reciprocal
+    """
+    # TODO: Get symmetry equivalents of hkl indices
+    # TODO: Compute raveled indices
+    # TODO: Initialize tensors for symmetry-equivalent structure factors
+    # TODO: Compute structure factors for the first ASU
+    # TODO: Map to other ASUs and compute additional structure factors
+    # TODO: Sum intensities over all symmetry-equivalents
+    
+    raise NotImplementedError("incoherent_sum_reciprocal not implemented")
