@@ -174,8 +174,8 @@ No performance metrics available yet. This section will be updated once the impl
 | 2025-03-04 | Completed implementation of OnePhonon.compute_covariance_matrix (CP8) |
 | 2025-03-04 | Updated Phase 4 completion from 60% to 67% |
 | 2025-03-04 | Updated overall completion from 62% to 65% |
-| 2025-03-12 | Completed implementation of OnePhonon.apply_disorder (CP9) |
-| 2025-03-12 | Updated Phase 4 completion from 67% to 73% |
-| 2025-03-12 | Updated overall completion from 65% to 69% |
+| 2025-03-04 | Completed implementation of OnePhonon.apply_disorder (CP9) |
+| 2025-03-04 | Updated Phase 4 completion from 67% to 73% |
+| 2025-03-04 | Updated overall completion from 65% to 69% |
 | 2025-03-04 | Fixed type mismatch issues in OnePhonon.apply_disorder implementation |
 | 2025-03-04 | Added debug_log.md documenting the debugging process for apply_disorder |
