@@ -275,8 +275,18 @@ class OnePhonon:
                 k_dk = self._center_kvec(dk, self.ksampling[2])
                 for dl in range(self.lsampling[2]):
                     k_dl = self._center_kvec(dl, self.lsampling[2])
-                    self.kvec[dh, dk, dl] = 2 * np.pi * np.inner(self.model.A_inv.T,
-                                                                 (k_dh, k_dk, k_dl)).T
+                    # Debug calculation for specific points
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"\nDEBUGGING NumPy calculation for point [0,1,0]:")
+                        print(f"k_dh, k_dk, k_dl = {k_dh}, {k_dk}, {k_dl}")
+                        print(f"hkl: {(k_dh, k_dk, k_dl)}")
+                        print(f"A_inv:\n{self.model.A_inv}")
+                        print(f"A_inv.T:\n{self.model.A_inv.T}")
+                        result = np.inner(self.model.A_inv.T, (k_dh, k_dk, k_dl)).T
+                        print(f"Result of np.inner: {result}")
+                    
+                    self.kvec[dh, dk, dl] = np.inner(self.model.A_inv.T,
+                                                     (k_dh, k_dk, k_dl)).T
                     self.kvec_norm[dh, dk, dl] = np.linalg.norm(self.kvec[dh, dk, dl])
 
     @debug

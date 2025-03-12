@@ -56,6 +56,25 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
                            compute_qF: bool = False, 
                            project_on_components: Optional[torch.Tensor] = None,
                            sum_over_atoms: bool = True) -> torch.Tensor:
+    # Determine the primary dtype to use (prefer float64 if any input is float64)
+    dtype = torch.float32
+    for tensor in [q_grid, xyz, ff_a, ff_b, ff_c]:
+        if tensor.dtype == torch.float64:
+            dtype = torch.float64
+            break
+    
+    # Ensure all input tensors have consistent dtype
+    q_grid = q_grid.to(dtype=dtype)
+    xyz = xyz.to(dtype=dtype)
+    ff_a = ff_a.to(dtype=dtype)
+    ff_b = ff_b.to(dtype=dtype)
+    ff_c = ff_c.to(dtype=dtype)
+    
+    if U is not None:
+        U = U.to(dtype=dtype)
+    
+    if project_on_components is not None:
+        project_on_components = project_on_components.to(dtype=dtype)
     """
     Compute structure factors for an atomic model at the given q-vectors using PyTorch.
     
@@ -128,8 +147,9 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
     # Handle optional projection onto components
     if project_on_components is not None:
         # Matricial product: (n_points, n_atoms) × (n_atoms, n_components)
-        A_real = torch.matmul(A_real, project_on_components)
-        A_imag = torch.matmul(A_imag, project_on_components)
+        # Ensure consistent dtype before matrix multiplication
+        A_real = torch.matmul(A_real, project_on_components.to(dtype=A_real.dtype))
+        A_imag = torch.matmul(A_imag, project_on_components.to(dtype=A_imag.dtype))
     
     # Handle atom summation option
     if sum_over_atoms:

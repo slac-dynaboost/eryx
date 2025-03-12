@@ -8,10 +8,12 @@ PyTorch-NumPy conversion for testing.
 
 import numpy as np
 import torch
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+import inspect
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Type, Set
 from .testing import Testing
 from .logger import Logger
 from .functionmapping import FunctionMapping
+from eryx.autotest.state_builder import StateBuilder
 
 class TorchTesting(Testing):
     """
@@ -35,6 +37,7 @@ class TorchTesting(Testing):
         super().__init__(logger, function_mapping)
         self.rtol = rtol
         self.atol = atol
+        self.default_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     def testTorchCallable(self, log_path_prefix: str, torch_func: Callable) -> bool:
         """
@@ -74,6 +77,218 @@ class TorchTesting(Testing):
                     print(f"Error testing PyTorch function: {e}")
                     return False
         return True
+    
+    def testTorchCallableWithState(self, log_path_prefix: str, torch_class: Type, 
+                                 method_name: str, *args, **kwargs) -> bool:
+        """
+        Test a PyTorch method using state-based testing.
+        
+        Args:
+            log_path_prefix: Path prefix for state log files
+            torch_class: PyTorch class to test
+            method_name: Name of the method to test
+            *args: Additional arguments to pass to the method
+            **kwargs: Additional keyword arguments to pass to the method
+            
+        Returns:
+            True if test passes, False otherwise
+        """
+        # Find before/after state log files
+        before_log = f"{log_path_prefix}._state_before_{method_name}.log"
+        after_log = f"{log_path_prefix}._state_after_{method_name}.log"
+        
+        try:
+            # Load before state
+            before_state = self.logger.loadStateLog(before_log)
+            if not before_state:
+                print(f"Before state log not found or empty: {before_log}")
+                return False
+            
+            # Load expected after state
+            expected_after_state = self.logger.loadStateLog(after_log)
+            if not expected_after_state:
+                print(f"After state log not found or empty: {after_log}")
+                return False
+            
+            # Initialize object from before state
+            obj = self.initializeFromState(torch_class, before_state)
+            
+            # Get the method to call
+            method = getattr(obj, method_name)
+            
+            # Call the method
+            method(*args, **kwargs)
+            
+            # Capture current state
+            current_state = {}
+            for key, value in obj.__dict__.items():
+                current_state[key] = value
+            
+            # Compare resulting state with expected after state
+            result = self.compareStates(expected_after_state, current_state)
+            
+            if not result:
+                print(f"State mismatch after calling {method_name}")
+                return False
+                
+            return True
+        except Exception as e:
+            print(f"Error in state-based testing: {e}")
+            return False
+    
+    def initializeFromState(self, torch_class: Type, state_data: Dict[str, Any], device=None) -> Any:
+        """
+        Initialize a PyTorch object from state data with proper object structure.
+        
+        Args:
+            torch_class: PyTorch class to instantiate
+            state_data: State dictionary loaded from log file
+            device: Optional device override
+            
+        Returns:
+            Initialized instance with proper structure
+        """
+        # Use StateBuilder for proper object construction
+        from eryx.autotest.state_builder import StateBuilder
+        builder = StateBuilder(device=device or self.device)
+        return builder.build(torch_class, state_data)
+    
+    def compareStates(self, expected_state, actual_state, tolerances=None):
+        """
+        Compare expected and actual states with better handling for object hierarchies.
+        
+        Args:
+            expected_state: Expected state dictionary
+            actual_state: Actual state dictionary
+            tolerances: Dictionary of tolerances by attribute name
+            
+        Returns:
+            Boolean indicating if states match within tolerances
+        """
+        # Default tolerances
+        tolerances = tolerances or {'default': {'rtol': self.rtol, 'atol': self.atol}}
+        
+        # Special handling for model attribute
+        if 'model' in expected_state and hasattr(actual_state, 'model'):
+            # Extract model attributes from actual object
+            actual_model = {}
+            model_obj = actual_state.model
+            for attr in dir(model_obj):
+                if not attr.startswith('_') and not callable(getattr(model_obj, attr)):
+                    actual_model[attr] = getattr(model_obj, attr)
+            
+            # Get expected model attributes
+            expected_model = expected_state['model']
+            if isinstance(expected_model, bytes):
+                try:
+                    from eryx.autotest.serializer import Serializer
+                    serializer = Serializer()
+                    expected_model = serializer.deserialize(expected_model)
+                except Exception as e:
+                    print(f"Warning: Could not deserialize model: {e}")
+                    expected_model = {}
+            
+            # Compare key attributes like A_inv
+            if 'A_inv' in expected_model and 'A_inv' in actual_model:
+                expected_A_inv = expected_model['A_inv']
+                actual_A_inv = actual_model['A_inv']
+                
+                # Convert tensor to numpy if needed
+                if isinstance(actual_A_inv, torch.Tensor):
+                    actual_A_inv = actual_A_inv.detach().cpu().numpy()
+                
+                # Compare with tolerance
+                if not np.allclose(expected_A_inv, actual_A_inv,
+                                 rtol=tolerances.get('A_inv', tolerances['default'])['rtol'],
+                                 atol=tolerances.get('A_inv', tolerances['default'])['atol']):
+                    print("A_inv mismatch")
+                    return False
+        
+        # Rest of comparison logic (for other attributes)
+        for key in expected_state:
+            if key == 'model':  # Already handled
+                continue
+                
+            if key not in actual_state:
+                print(f"Missing attribute in actual state: {key}")
+                return False
+            
+            expected = expected_state[key]
+            actual = actual_state[key]
+            
+            # Handle serialized values
+            if isinstance(expected, bytes):
+                try:
+                    from eryx.autotest.serializer import Serializer
+                    serializer = Serializer()
+                    expected = serializer.deserialize(expected)
+                except Exception:
+                    print(f"Could not deserialize {key}")
+                    continue
+            
+            # Get tolerance for this attribute
+            tol = tolerances.get(key, tolerances['default'])
+            
+            # Compare values with proper handling for tensors
+            if isinstance(expected, np.ndarray):
+                if isinstance(actual, torch.Tensor):
+                    actual = actual.detach().cpu().numpy()
+                
+                if not np.allclose(expected, actual, rtol=tol['rtol'], atol=tol['atol']):
+                    print(f"Array mismatch for {key}")
+                    return False
+            elif expected != actual:
+                if isinstance(actual, torch.Tensor) and torch.numel(actual) == 1:
+                    # For scalar tensors, compare values
+                    if not np.isclose(expected, actual.item(), rtol=tol['rtol'], atol=tol['atol']):
+                        print(f"Value mismatch for {key}")
+                        return False
+                else:
+                    print(f"Value mismatch for {key}")
+                    return False
+        
+        return True
+    
+    def check_state_gradients(self, obj: Any, attr_names: Optional[List[str]] = None) -> Dict[str, bool]:
+        """
+        Check gradient flow through object state attributes.
+        
+        Args:
+            obj: Object to check gradients for
+            attr_names: List of attribute names to check, or None to check all tensor attributes
+            
+        Returns:
+            Dictionary mapping attribute names to gradient status
+        """
+        result = {}
+        
+        # If no specific attributes provided, check all tensor attributes
+        if attr_names is None:
+            attr_names = [attr for attr in dir(obj) 
+                        if not attr.startswith('_') and 
+                        hasattr(getattr(obj, attr), 'requires_grad')]
+        
+        for attr_name in attr_names:
+            if hasattr(obj, attr_name):
+                attr = getattr(obj, attr_name)
+                
+                # Check if attribute is a tensor with requires_grad
+                if hasattr(attr, 'requires_grad'):
+                    result[attr_name] = attr.requires_grad
+                
+                # Check if attribute is a dictionary of tensors
+                elif isinstance(attr, dict):
+                    for k, v in attr.items():
+                        if hasattr(v, 'requires_grad'):
+                            result[f"{attr_name}.{k}"] = v.requires_grad
+                
+                # Check if attribute is a list of tensors
+                elif isinstance(attr, list):
+                    for i, v in enumerate(attr):
+                        if hasattr(v, 'requires_grad'):
+                            result[f"{attr_name}[{i}]"] = v.requires_grad
+        
+        return result
     
     def _numpy_to_torch(self, obj: Any) -> Any:
         """

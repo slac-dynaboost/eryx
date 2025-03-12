@@ -24,6 +24,52 @@ class TestPDBToTensor(unittest.TestCase):
         # Create a device that's guaranteed to work for testing
         self.device = torch.device('cpu')
         self.adapter_with_device = PDBToTensor(device=self.device)
+        
+    def test_state_dict_conversion(self):
+        """Test full state dictionary conversion."""
+        # Create a complex nested state dictionary similar to what Logger.loadStateLog returns
+        nested_state = {
+            'simple_array': np.random.rand(10, 3),
+            'nested': {
+                'array1': np.random.rand(5, 2),
+                'array2': np.random.rand(3, 4)
+            },
+            'scalar': 42.0,
+            'string': 'test',
+            'array_list': [np.random.rand(2, 2), np.random.rand(3, 3)],
+            'complex_value': np.complex128(1+2j),
+            'boolean_array': np.array([True, False, True])
+        }
+        
+        # Convert to tensors
+        tensor_state = self.adapter.convert_state_dict(nested_state)
+        
+        # Verify structure preservation
+        self.assertIsInstance(tensor_state['simple_array'], torch.Tensor)
+        self.assertIsInstance(tensor_state['nested'], dict)
+        self.assertIsInstance(tensor_state['nested']['array1'], torch.Tensor)
+        self.assertIsInstance(tensor_state['array_list'], list)
+        self.assertIsInstance(tensor_state['array_list'][0], torch.Tensor)
+        self.assertEqual(tensor_state['scalar'], 42.0)
+        self.assertEqual(tensor_state['string'], 'test')
+        
+        # Verify special type handling
+        self.assertTrue(torch.is_complex(tensor_state['complex_value']))
+        self.assertEqual(tensor_state['boolean_array'].dtype, torch.bool)
+        
+        # Convert back to NumPy
+        numpy_adapter = TensorToNumpy()
+        numpy_state = numpy_adapter.convert_state_to_numpy(tensor_state)
+        
+        # Verify round-trip conversion
+        self.assertIsInstance(numpy_state['simple_array'], np.ndarray)
+        self.assertTrue(np.allclose(numpy_state['simple_array'], nested_state['simple_array']))
+        self.assertTrue(np.allclose(numpy_state['nested']['array1'], nested_state['nested']['array1']))
+        self.assertTrue(np.allclose(numpy_state['array_list'][0], nested_state['array_list'][0]))
+        self.assertEqual(numpy_state['scalar'], 42.0)
+        self.assertEqual(numpy_state['string'], 'test')
+        self.assertEqual(numpy_state['complex_value'], nested_state['complex_value'])
+        self.assertTrue(np.array_equal(numpy_state['boolean_array'], nested_state['boolean_array']))
     
     def test_array_to_tensor_conversion(self):
         """Test basic NumPy array to tensor conversion functionality."""
@@ -34,7 +80,7 @@ class TestPDBToTensor(unittest.TestCase):
         self.assertIsInstance(tensor_2d, torch.Tensor)
         self.assertEqual(tensor_2d.shape, torch.Size([2, 2]))
         self.assertTrue(tensor_2d.requires_grad)
-        self.assertTrue(torch.allclose(tensor_2d.cpu(), torch.tensor(array_2d)))
+        self.assertTrue(torch.allclose(tensor_2d.cpu(), torch.tensor(array_2d, dtype=torch.float32)))
         
         # Test with a 3D array
         array_3d = np.random.rand(2, 3, 4)
@@ -43,7 +89,7 @@ class TestPDBToTensor(unittest.TestCase):
         self.assertIsInstance(tensor_3d, torch.Tensor)
         self.assertEqual(tensor_3d.shape, torch.Size([2, 3, 4]))
         self.assertTrue(tensor_3d.requires_grad)
-        self.assertTrue(torch.allclose(tensor_3d.cpu(), torch.tensor(array_3d)))
+        self.assertTrue(torch.allclose(tensor_3d.cpu(), torch.tensor(array_3d, dtype=torch.float32)))
         
         # Test with requires_grad=False
         tensor_no_grad = self.adapter.array_to_tensor(array_2d, requires_grad=False)
@@ -139,7 +185,7 @@ class TestGridToTensor(unittest.TestCase):
         self.assertIsInstance(q_grid_tensor, torch.Tensor)
         self.assertEqual(q_grid_tensor.shape, torch.Size([100, 3]))
         self.assertTrue(q_grid_tensor.requires_grad)
-        self.assertTrue(torch.allclose(q_grid_tensor.cpu().detach(), torch.tensor(q_grid)))
+        self.assertTrue(torch.allclose(q_grid_tensor.cpu().detach(), torch.tensor(q_grid, dtype=torch.float32)))
         
         # Verify map_shape is unchanged
         self.assertEqual(returned_map_shape, map_shape)
@@ -203,6 +249,45 @@ class TestTensorToNumpy(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.adapter = TensorToNumpy()
+        
+    def test_state_dict_conversion(self):
+        """Test full state dictionary conversion."""
+        # Create a complex nested state dictionary with tensors
+        nested_state = {
+            'simple_tensor': torch.rand(10, 3),
+            'nested': {
+                'tensor1': torch.rand(5, 2),
+                'tensor2': torch.rand(3, 4)
+            },
+            'scalar': 42.0,
+            'string': 'test',
+            'tensor_list': [torch.rand(2, 2), torch.rand(3, 3)],
+            'complex_value': torch.complex(torch.tensor(1.0), torch.tensor(2.0)),
+            'boolean_tensor': torch.tensor([True, False, True])
+        }
+        
+        # Convert to NumPy
+        numpy_state = self.adapter.convert_state_to_numpy(nested_state)
+        
+        # Verify structure preservation
+        self.assertIsInstance(numpy_state['simple_tensor'], np.ndarray)
+        self.assertIsInstance(numpy_state['nested'], dict)
+        self.assertIsInstance(numpy_state['nested']['tensor1'], np.ndarray)
+        self.assertIsInstance(numpy_state['tensor_list'], list)
+        self.assertIsInstance(numpy_state['tensor_list'][0], np.ndarray)
+        self.assertEqual(numpy_state['scalar'], 42.0)
+        self.assertEqual(numpy_state['string'], 'test')
+        
+        # Verify special type handling
+        self.assertTrue(isinstance(numpy_state['complex_value'], np.complex64) or 
+                       isinstance(numpy_state['complex_value'], np.complex128))
+        self.assertEqual(numpy_state['boolean_tensor'].dtype, np.bool_)
+        
+        # Verify tensor values were correctly converted
+        self.assertTrue(np.allclose(numpy_state['simple_tensor'], 
+                                   nested_state['simple_tensor'].numpy()))
+        self.assertTrue(np.allclose(numpy_state['nested']['tensor1'], 
+                                   nested_state['nested']['tensor1'].numpy()))
     
     def test_tensor_to_array_conversion(self):
         """Test conversion of PyTorch tensors back to NumPy arrays."""
@@ -354,7 +439,7 @@ class TestDictConversion(unittest.TestCase):
             self.assertIsInstance(tensor, torch.Tensor)
             self.assertTrue(tensor.requires_grad)
             self.assertTrue(torch.allclose(tensor.cpu().detach(), 
-                                          torch.tensor(arrays_dict[key])))
+                                          torch.tensor(arrays_dict[key], dtype=torch.float32)))
         
         # Test with requires_grad=False
         tensors_dict = self.pdb_adapter.convert_dict_of_arrays(arrays_dict, requires_grad=False)
@@ -376,6 +461,127 @@ class TestModelAdapters(unittest.TestCase):
         # Create a device that's guaranteed to work for testing
         self.device = torch.device('cpu')
         self.adapter_with_device = ModelAdapters(device=self.device)
+        
+    def test_initialize_from_state(self):
+        """Test initializing a model from state dictionary."""
+        # Create a mock state dictionary for a simple model
+        mock_state = {
+            'scalar_param': 5.0,
+            'tensor_attr': np.random.rand(10, 3),
+            'complex_attr': np.array([1+2j, 3+4j]),
+            'nested_dict': {'values': np.random.rand(5)}
+        }
+        
+        # Define a simple model class
+        class MockModel:
+            def __init__(self):
+                pass
+        
+        # Initialize model from state
+        model = self.adapter.initialize_from_state(MockModel, mock_state)
+        
+        # Verify attribute setting
+        self.assertEqual(model.scalar_param, 5.0)
+        self.assertIsInstance(model.tensor_attr, torch.Tensor)
+        self.assertTrue(model.tensor_attr.requires_grad)
+        self.assertIsInstance(model.nested_dict, dict)
+        self.assertIsInstance(model.nested_dict['values'], torch.Tensor)
+        
+        # Verify gradients work
+        output = model.tensor_attr.sum()
+        output.backward()
+        self.assertIsNotNone(model.tensor_attr.grad)
+        
+    def test_initialize_one_phonon_from_state(self):
+        """Test initializing a OnePhonon model from state dictionary."""
+        # Create a mock state dictionary mimicking OnePhonon structure
+        mock_phonon_state = {
+            'kvec': np.random.rand(2, 2, 2, 3),
+            'kvec_norm': np.random.rand(2, 2, 2, 1),
+            'V': np.random.rand(2, 2, 2, 6, 6),  # Real part only initially
+            'Winv': np.random.rand(2, 2, 2, 6),  # Real part only initially
+            'n_asu': 2,
+            'n_dof_per_asu': 3
+        }
+        
+        # Define a mock OnePhonon class
+        class MockOnePhonon:
+            def __init__(self):
+                pass
+        
+        # Initialize model from state
+        model = self.adapter.initialize_one_phonon_from_state(MockOnePhonon, mock_phonon_state)
+        
+        # Verify attribute setting
+        self.assertEqual(model.n_asu, 2)
+        self.assertEqual(model.n_dof_per_asu, 3)
+        
+        # Verify complex tensor handling
+        self.assertTrue(torch.is_complex(model.V))
+        self.assertTrue(torch.is_complex(model.Winv))
+        
+        # Verify gradients work
+        output = torch.real(model.V).sum()
+        output.backward()
+        self.assertIsNotNone(model.V.grad)
+        
+        # Verify the real part matches the input data
+        v_real = torch.real(model.V).detach().cpu().numpy()
+        self.assertTrue(np.allclose(v_real, mock_phonon_state['V']))
+        
+        # Verify the imaginary part is zero
+        v_imag = torch.imag(model.V).detach().cpu().numpy()
+        self.assertTrue(np.allclose(v_imag, np.zeros_like(v_imag)))
+        
+    def test_compatibility_with_logger(self):
+        """Test compatibility with Logger's state format."""
+        # Create a mock Logger
+        from eryx.autotest.logger import Logger
+        logger = Logger()
+        
+        # Create a simple object with NumPy arrays
+        class SimpleObject:
+            def __init__(self):
+                self.data = np.random.rand(5, 3)
+                self.values = np.random.rand(10)
+                self.name = "test_object"
+        
+        # Create object and capture state
+        obj = SimpleObject()
+        state = logger.captureState(obj)
+        
+        # Mock saving and loading the state
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.log', delete=False) as temp_file:
+            temp_path = temp_file.name
+        
+        try:
+            # Save and load the state
+            logger.saveStateLog(temp_path, state)
+            loaded_state = logger.loadStateLog(temp_path)
+            
+            # Test conversion of loaded state
+            tensor_state = self.adapter.pdb_to_tensor.convert_state_dict(loaded_state)
+            
+            # Verify conversion worked correctly
+            self.assertIsInstance(tensor_state['data'], torch.Tensor)
+            self.assertIsInstance(tensor_state['values'], torch.Tensor)
+            self.assertEqual(tensor_state['name'], "test_object")
+            
+            # Test model initialization from loaded state
+            class MockModel:
+                def __init__(self):
+                    pass
+            
+            model = self.adapter.initialize_from_state(MockModel, loaded_state)
+            self.assertIsInstance(model.data, torch.Tensor)
+            self.assertIsInstance(model.values, torch.Tensor)
+            
+        finally:
+            # Clean up temp file
+            import os
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
     
     def test_model_adapters_initialization(self):
         """Test initialization of ModelAdapters."""

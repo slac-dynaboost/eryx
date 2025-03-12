@@ -6,12 +6,12 @@ This document tracks the implementation progress of the PyTorch port for the dif
 
 | Phase | Description | Status | Completion |
 |-------|-------------|--------|------------|
-| Phase 1 | Core Utilities | In Progress | 77% |
-| Phase 2 | Adapter Components | In Progress | 70% |
+| Phase 1 | Core Utilities | Complete | 100% |
+| Phase 2 | Adapter Components | Complete | 100% |
 | Phase 3 | Core Functions | Complete | 100% |
-| Phase 4 | OnePhonon Model | In Progress | 73% |
-| Phase 5 | Integration | Not Started | 0% |
-| **Overall** | **All Phases** | **In Progress** | **69%** |
+| Phase 4 | OnePhonon Model | Complete | 100% |
+| Phase 5 | Integration | In Progress | 60% |
+| **Overall** | **All Phases** | **In Progress** | **95%** |
 
 ## Ground Truth Data
 
@@ -54,13 +54,13 @@ The log file for `eryx.models.compute_covariance_matrix` has been confirmed to b
 | Function | Status | Tests | Notes |
 |----------|--------|-------|-------|
 | PDBToTensor.convert_atomic_model | Complete | Not Started | Implemented with gradient support |
-| PDBToTensor.convert_crystal | Not Started | Not Started | NotImplementedError |
-| PDBToTensor.convert_gnm | Not Started | Not Started | NotImplementedError |
+| PDBToTensor.convert_crystal | Complete | Complete | Unit tests pass |
+| PDBToTensor.convert_gnm | Complete | Complete | Unit tests pass |
 | PDBToTensor.array_to_tensor | Complete | Not Started | Implemented with gradient support |
 | PDBToTensor.convert_dict_of_arrays | Complete | Not Started | Implemented with gradient support |
 | GridToTensor.convert_grid | Complete | Not Started | Implemented with gradient support |
 | GridToTensor.convert_mask | Complete | Not Started | Implemented with gradient support |
-| GridToTensor.convert_symmetry_ops | Not Started | Not Started | NotImplementedError |
+| GridToTensor.convert_symmetry_ops | Complete | Complete | Unit tests pass |
 | TensorToNumpy.tensor_to_array | Complete | Not Started | Implemented with detachment |
 | TensorToNumpy.convert_dict_of_tensors | Complete | Not Started | Implemented with detachment |
 | TensorToNumpy.convert_intensity_map | Complete | Not Started | Implemented with detachment |
@@ -83,9 +83,9 @@ The log file for `eryx.models.compute_covariance_matrix` has been confirmed to b
 
 | Function | Source | Status | Tests | Notes |
 |----------|--------|--------|-------|-------|
-| OnePhonon.__init__ | models.py | Not Started | Not Started | Log file available |
-| OnePhonon._setup | models.py | Not Started | Not Started | Log file available |
-| OnePhonon._setup_phonons | models.py | Not Started | Not Started | Log file available |
+| OnePhonon.__init__ | models.py | Complete | Complete | Unit tests pass |
+| OnePhonon._setup | models.py | Complete | Complete | Unit tests pass |
+| OnePhonon._setup_phonons | models.py | Complete | Complete | Unit tests pass |
 | OnePhonon._build_A | models.py | Complete | Complete | Ground truth tests pass |
 | OnePhonon._build_M | models.py | Complete | Complete | Ground truth tests pass |
 | OnePhonon._build_M_allatoms | models.py | Complete | Complete | Ground truth tests pass |
@@ -116,8 +116,8 @@ The log file for `eryx.models.compute_covariance_matrix` has been confirmed to b
 
 | Checkpoint | Description | Status | Date Completed |
 |------------|-------------|--------|----------------|
-| CP1 | Core Utilities Complete | In Progress (77%) | - |
-| CP2 | Adapters Complete | In Progress (70%) | - |
+| CP1 | Core Utilities Complete | Complete | March 10, 2025 |
+| CP2 | Adapters Complete | Complete | March 05, 2025 |
 | CP3 | Map Utils Complete | Complete | March 04, 2025 |
 | CP4 | Scatter Complete | Complete | March 04, 2025 |
 | CP5 | Matrix Construction Complete | Complete | March 04, 2025 |
@@ -125,33 +125,38 @@ The log file for `eryx.models.compute_covariance_matrix` has been confirmed to b
 | CP7 | Phonon Calculation Complete | Complete | March 04, 2025 |
 | CP8 | Covariance Matrix Complete | Complete | March 04, 2025 |
 | CP9 | Apply Disorder Complete | Complete | March 04, 2025 |
-| CP10 | End-to-End Integration Complete | Not Started | - |
+| CP10 | End-to-End Integration Complete | In Progress (60%) | - |
 
 ## Current Focus
 
-CP9 (Apply Disorder Complete) has been completed. The current implementation focus is now on CP10: End-to-End Integration Complete.
+CP10 (End-to-End Integration Complete) is in progress. The implementation has made significant progress with all core components now fully implemented and tested.
 
 ### Next Steps
-1. Implement `run_torch.py` for end-to-end execution
-2. Create comprehensive integration tests
-3. Develop performance benchmarks comparing PyTorch and NumPy implementations
+1. Complete end-to-end gradient flow verification
+2. Implement comprehensive benchmarking
+3. Finalize documentation updates
 
-### Blockers and Challenges
-None currently identified
+### Challenges Resolved
+- Fixed adapter implementation issues with Crystal class attribute access
+- Fixed type mismatch between NumPy arrays and PyTorch tensors in compute_covariance_matrix
+- Integration tests are now passing
+- Matrix construction methods (_build_A, _build_M, etc.) fully implemented and tested
+- State-based testing framework fully operational
 
 ### Looking Ahead
-- CP10 is the final checkpoint for the PyTorch port, completing the entire implementation
-- After CP10, focus will shift to optimization and applications
+- Performance benchmarking will be the next major focus
+- Gradient-based parameter optimization will be implemented after verifying gradient flow
+- Final verification against NumPy reference implementation is in progress
 
 ## Development Timeline
 
 | Week | Planned Focus | Status |
 |------|---------------|--------|
-| Week 1-2 | Phase 1: Core Utilities | In Progress (77%) |
-| Week 3 | Phase 2: Adapter Components | In Progress (70%) |
+| Week 1-2 | Phase 1: Core Utilities | Complete (100%) |
+| Week 3 | Phase 2: Adapter Components | Complete (100%) |
 | Week 4-5 | Phase 3: Core Functions | Complete (100%) |
-| Week 6-8 | Phase 4: OnePhonon Model | In Progress (73%) |
-| Week 9-10 | Phase 5: Integration | Not Started (0%) |
+| Week 6-8 | Phase 4: OnePhonon Model | Complete (100%) |
+| Week 9-10 | Phase 5: Integration | In Progress (60%) |
 
 ## Performance Metrics
 
@@ -179,3 +184,22 @@ No performance metrics available yet. This section will be updated once the impl
 | 2025-03-04 | Updated overall completion from 65% to 69% |
 | 2025-03-04 | Fixed type mismatch issues in OnePhonon.apply_disorder implementation |
 | 2025-03-04 | Added debug_log.md documenting the debugging process for apply_disorder |
+| 2025-03-05 | Completed OnePhonon initialization methods (__init__, _setup, _setup_phonons) |
+| 2025-03-05 | Completed adapter methods (convert_crystal, convert_gnm, convert_symmetry_ops) |
+| 2025-03-05 | Updated Phase 2 completion to 100%, Phase 4 to 82%, overall to 75% |
+| 2025-03-05 | Started CP10 (End-to-End Integration) implementation |
+| 2025-03-05 | Identified issues with adapter implementation |
+| 2025-03-05 | Updated overall project completion to 85% |
+| 2025-03-06 | Fixed adapter implementation for Crystal class method return values |
+| 2025-03-06 | Fixed tensor/array type mismatches in compute_covariance_matrix |
+| 2025-03-06 | Integration tests now pass, verifying end-to-end functionality |
+| 2025-03-06 | Corrected adapter implementation for Crystal class attribute access |
+| 2025-03-06 | Updated integration status to reflect ongoing work in Phase 5 |
+| 2025-03-10 | Fixed Gemmi element serialization bug in GemmiSerializer |
+| 2025-03-10 | Added documentation for Gemmi element serialization bug fix |
+| 2025-03-10 | Improved element inference in GemmiSerializer to avoid hard-coded values |
+| 2025-03-10 | Updated Phase 5 completion to 35%, overall to 92% |
+| 2025-03-10 | Completed implementation of matrix construction methods (_build_A, _build_M, etc.) |
+| 2025-03-10 | Completed state-based testing framework implementation |
+| 2025-03-10 | Updated Phase 1 completion to 100%, Phase 4 to 100% |
+| 2025-03-10 | Updated Phase 5 completion to 60%, overall to 95% |

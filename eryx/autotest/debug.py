@@ -2,6 +2,8 @@ import os
 import time
 import pickle
 import json
+import functools
+import logging
 from typing import Callable, Any, List, Union, Optional
 import re
 
@@ -35,12 +37,16 @@ import re
 #        Callable decorate(Callable func);
 #    };
 
+# Import StateCapture
+from eryx.autotest.state_capture import StateCapture
+
 ## implementation
 import time
 import os
 import pickle
 import json
-from typing import Callable, Any, List, Union, Optional
+import inspect
+from typing import Callable, Any, List, Union, Optional, Dict, Set
 import re
 from .configuration import Configuration
 from .serializer import Serializer
@@ -79,6 +85,30 @@ class Debug:
                 log_file_path = self.function_mapping.get_log_file_path(func)
                 os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 
+                # Check if this is a method call (first arg is self)
+                is_method = args and hasattr(args[0], '__dict__') and not isinstance(args[0], type)
+                obj = args[0] if is_method else None
+                
+                # Capture object state before method execution if this is a method
+                if is_method:
+                    class_name = obj.__class__.__name__
+                    before_state_log_path = os.path.join(
+                        os.path.dirname(log_file_path),
+                        f"{module_path}.{class_name}._state_before_{function_name}.log"
+                    )
+                    try:
+                        # Initialize state capturer
+                        state_capturer = StateCapture(
+                            max_depth=10,
+                            exclude_attrs=[]
+                        )
+                        
+                        # Capture pre-execution state
+                        before_state = state_capturer.capture_state(obj)
+                        self.logger.saveStateLog(before_state_log_path, before_state)
+                    except Exception as e:
+                        print(f"Error capturing before state: {e}")
+
                 try:
                     serialized_args = self.serializer.serialize(args)
                     serialized_kwargs = self.serializer.serialize(kwargs)
@@ -96,6 +126,21 @@ class Debug:
                 start_time = time.time()
 
                 result = func(*args, **kwargs)
+                
+                # Capture object state after method execution if this is a method
+                if is_method:
+                    class_name = obj.__class__.__name__
+                    after_state_log_path = os.path.join(
+                        os.path.dirname(log_file_path),
+                        f"{module_path}.{class_name}._state_after_{function_name}.log"
+                    )
+                    try:
+                        # Capture post-execution state using the same state capturer
+                        after_state = state_capturer.capture_state(obj)
+                        self.logger.saveStateLog(after_state_log_path, after_state)
+                    except Exception as e:
+                        print(f"Error capturing after state: {e}")
+                
                 try:
                     serialized_result = self.serializer.serialize(result)
                     self.logger.logReturn(serialized_result, time.time() - start_time, log_file_path)
@@ -184,10 +229,121 @@ def _create_debug_decorator():
 
 # Create the decorator based on the configuration
 if config.getDebugFlag():
-    debug = _create_debug_decorator()
+    # Create the enhanced debug decorator with state capture support
+    def debug(func: Optional[Callable] = None, 
+              capture_state: bool = True,
+              max_depth: int = 10,
+              exclude_attrs: Optional[List[str]] = None) -> Callable:
+        """
+        Enhanced debug decorator with state capture support.
+        
+        Args:
+            func: Function to decorate
+            capture_state: Whether to capture object state for methods
+            max_depth: Maximum recursion depth for state capture
+            exclude_attrs: List of attribute patterns to exclude from capture
+            
+        Returns:
+            Decorated function with debug and state capture functionality
+        """
+        debug_obj = Debug()
+        debug_obj.configuration = config
+        
+        def decorator(func: Callable) -> Callable:
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                # Get logger and function mapping
+                logger = Logger()
+                function_mapping = FunctionMapping()
+                
+                # Determine module path and function name
+                module_path = function_mapping.get_module_path(func)
+                function_name = func.__name__
+                
+                # Check if this is a method call (first arg is self/cls)
+                is_method = False
+                obj = None
+                class_name = None
+                if args and hasattr(args[0], '__dict__') and not isinstance(args[0], type):
+                    is_method = True
+                    obj = args[0]
+                    class_name = obj.__class__.__name__
+                
+                # Create log paths
+                log_file_path = function_mapping.get_log_file_path(func)
+                os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+                
+                # Create consistent state log paths - IMPORTANT CHANGE
+                # Use format: {module_path}.{class_name}._state_{before/after}_{function_name}.log
+                state_capturer = None
+                if capture_state and is_method:
+                    before_state_path = os.path.join(
+                        os.path.dirname(log_file_path),
+                        f"{module_path}.{class_name}._state_before_{function_name}.log"
+                    )
+                    
+                    try:
+                        # Initialize state capturer with enhanced serializer
+                        state_capturer = StateCapture(
+                            max_depth=max_depth,
+                            exclude_attrs=exclude_attrs
+                        )
+                        
+                        # Capture and save before state
+                        before_state = state_capturer.capture_state(obj)
+                        logger.saveStateLog(before_state_path, before_state)
+                        print(f"Captured before state: {before_state_path}")
+                    except Exception as e:
+                        print(f"Error capturing before state: {str(e)}")
+                
+                # Log function call
+                try:
+                    serialized_args = logger.serializer.serialize(args)
+                    serialized_kwargs = logger.serializer.serialize(kwargs)
+                    logger.logCall(serialized_args, serialized_kwargs, log_file_path)
+                except Exception as e:
+                    print(f"Error logging function call: {str(e)}")
+                
+                # Call original function
+                start_time = time.time()
+                result = func(*args, **kwargs)
+                execution_time = time.time() - start_time
+                
+                # Log function return
+                try:
+                    serialized_result = logger.serializer.serialize(result)
+                    logger.logReturn(serialized_result, execution_time, log_file_path)
+                except Exception as e:
+                    print(f"Error logging function return: {str(e)}")
+                
+                # Capture state after method execution
+                if capture_state and is_method and state_capturer:
+                    after_state_path = os.path.join(
+                        os.path.dirname(log_file_path),
+                        f"{module_path}.{class_name}._state_after_{function_name}.log"
+                    )
+                    
+                    try:
+                        # Capture and save after state
+                        after_state = state_capturer.capture_state(obj)
+                        logger.saveStateLog(after_state_path, after_state)
+                        print(f"Captured after state: {after_state_path}")
+                    except Exception as e:
+                        print(f"Error capturing after state: {str(e)}")
+                
+                return result
+            
+            return wrapper
+        
+        # Handle both @debug and @debug(config)
+        if func is None:
+            return decorator
+        return decorator(func)
 else:
     # Provide a no-op decorator when debugging is disabled
-    def debug(func):
+    def debug(func=None, **kwargs):
+        if func is None:
+            return lambda f: f
         return func
 
 if __name__ == '__main__':

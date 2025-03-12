@@ -153,6 +153,7 @@ class AtomicModel:
                 print(e)
             self.structure.remove_empty_chains()
 
+    @debug
     def _extract_cell(self):
         """
         Extract unit cell information.

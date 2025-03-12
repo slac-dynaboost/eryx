@@ -4,21 +4,87 @@
 
 This table explicitly maps architectural components to functions specified in `to_convert.json` with their execution paths documented in `call_chains.json`:
 
-| Component | Functions | Source File | Implementation Phase | Call Path |
-|-----------|-----------|-------------|---------------------|-----------|
-| **ComplexTensorOps** | N/A (utility) | N/A | Phase 1 | N/A |
-| **EigenOps** | N/A (utility) | N/A | Phase 1 | N/A |
-| **GradientUtils** | N/A (utility) | N/A | Phase 1 | N/A |
-| **map_utils_torch** | generate_grid | map_utils.py | Phase 3 | run_np() → OnePhonon.__init__() → self._setup() → generate_grid() |
-| **map_utils_torch** | compute_resolution | map_utils.py | Phase 3 | run_np() → OnePhonon.__init__() → self._setup() → get_resolution_mask() → compute_resolution() |
-| **map_utils_torch** | get_resolution_mask | map_utils.py | Phase 3 | run_np() → OnePhonon.__init__() → self._setup() → get_resolution_mask() |
-| **scatter_torch** | compute_form_factors | scatter.py | Phase 3 | run_np() → onephonon_np.apply_disorder() → structure_factors() → structure_factors_batch() → compute_form_factors() |
-| **scatter_torch** | structure_factors_batch | scatter.py | Phase 3 | run_np() → onephonon_np.apply_disorder() → structure_factors() → structure_factors_batch() |
-| **scatter_torch** | structure_factors | scatter.py | Phase 3 | run_np() → onephonon_np.apply_disorder() → structure_factors() |
-| **OnePhonon** | All OnePhonon methods | models.py | Phase 4 | Various paths as detailed in call_chains.json |
-| **GaussianNetworkModel (partial)** | compute_hessian, compute_K, compute_Kinv | pdb.py | Phase 4 | Various paths as detailed in call_chains.json |
-| **Adapters for AtomicModel** | _get_xyz_asus, flatten_model | pdb.py | Phase 2 | run_np() → OnePhonon.__init__() → self._setup() → Various paths |
-| **Adapters for Crystal** | get_asu_xyz | pdb.py | Phase 2 | run_np() → onephonon_np.apply_disorder() → Various indirect paths |
+| Component | Functions | Source File | Implementation Phase | Call Path | Testing Approach |
+|-----------|-----------|-------------|---------------------|-----------|------------------|
+| **ComplexTensorOps** | N/A (utility) | N/A | Phase 1 | N/A | Function-based |
+| **EigenOps** | N/A (utility) | N/A | Phase 1 | N/A | Function-based |
+| **GradientUtils** | N/A (utility) | N/A | Phase 1 | N/A | Function-based |
+| **map_utils_torch** | generate_grid | map_utils.py | Phase 3 | run_np() → OnePhonon.__init__() → self._setup() → generate_grid() | Function-based |
+| **map_utils_torch** | compute_resolution | map_utils.py | Phase 3 | run_np() → OnePhonon.__init__() → self._setup() → get_resolution_mask() → compute_resolution() | Function-based |
+| **map_utils_torch** | get_resolution_mask | map_utils.py | Phase 3 | run_np() → OnePhonon.__init__() → self._setup() → get_resolution_mask() | Function-based |
+| **scatter_torch** | compute_form_factors | scatter.py | Phase 3 | run_np() → onephonon_np.apply_disorder() → structure_factors() → structure_factors_batch() → compute_form_factors() | Function-based |
+| **scatter_torch** | structure_factors_batch | scatter.py | Phase 3 | run_np() → onephonon_np.apply_disorder() → structure_factors() → structure_factors_batch() | Function-based |
+| **scatter_torch** | structure_factors | scatter.py | Phase 3 | run_np() → onephonon_np.apply_disorder() → structure_factors() | Function-based |
+| **OnePhonon** | All OnePhonon methods | models.py | Phase 4 | Various paths as detailed in call_chains.json | State-based |
+| **GaussianNetworkModel (partial)** | compute_hessian, compute_K, compute_Kinv | pdb.py | Phase 4 | Various paths as detailed in call_chains.json | State-based |
+| **Adapters for AtomicModel** | _get_xyz_asus, flatten_model | pdb.py | Phase 2 | run_np() → OnePhonon.__init__() → self._setup() → Various paths | Function-based |
+| **Adapters for Crystal** | get_asu_xyz | pdb.py | Phase 2 | run_np() → onephonon_np.apply_disorder() → Various indirect paths | Function-based |
+
+## Adapter Usage Pattern
+
+This project uses an adapter-based approach for bridging NumPy and PyTorch implementations. This approach was chosen to minimize code duplication while enabling gradient-based optimization.
+
+### Import and Initialization Pattern
+
+PyTorch implementation files import original NumPy classes directly:
+
+```python
+# In models_torch.py
+from eryx.pdb import AtomicModel, Crystal, GaussianNetworkModel
+```
+
+But they use adapters to convert data between representations:
+
+```python
+# Adapter initialization
+pdb_adapter = PDBToTensor(device=self.device)
+
+# Convert NumPy model to PyTorch tensors
+model_data = pdb_adapter.convert_atomic_model(atomic_model)
+```
+
+### Object State Management
+
+For stateful objects like OnePhonon, we use dictionaries of tensor attributes rather than direct subclassing:
+
+```python
+class OnePhonon:
+    def __init__(self, pdb_path, ..., device=None):
+        # Initialize NumPy model for data loading
+        np_model = AtomicModel(pdb_path, expand_p1)
+        
+        # Convert to tensor dictionary
+        self.model_data = pdb_adapter.convert_atomic_model(np_model)
+        
+        # Access tensor attributes
+        self.xyz = self.model_data['xyz']  # PyTorch tensor
+```
+
+### Method Call Patterns
+
+Methods are reimplemented using PyTorch operations, but may use original method results for validation:
+
+```python
+def compute_resolution(cell: torch.Tensor, hkl: torch.Tensor) -> torch.Tensor:
+    """PyTorch implementation of compute_resolution."""
+    # Pure PyTorch implementation
+    # ...
+```
+
+For complex stateful methods, we use state-based testing to ensure consistent behavior between implementations.
+
+### Data Flow Across Component Boundaries
+
+The following diagram illustrates how data flows between NumPy and PyTorch components through adapters:
+
+```
+NumPy Component → Adapter → PyTorch Component → Computation → Adapter → NumPy Result
+```
+
+Example:
+```
+AtomicModel → PDBToTensor → OnePhonon.__init__ → apply_disorder → TensorToNumpy → Visualization
+```
 
 ## Component Interaction Diagram
 
@@ -27,7 +93,7 @@ graph TD
     %% Data Sources
     PDB[PDB Files] --> AtomModel[AtomicModel]
     Config[Simulation Parameters] --> RunTorch
-
+    
     %% Adapter Layer
     AtomModel --> PDBAdapter[PDBToTensor]
     PDBAdapter --> |Atom coordinates, form factors as tensors| TorchModel[PyTorch Models]
@@ -47,7 +113,8 @@ graph TD
     ScatterCalc --> |Structure factors| OnePhonon[OnePhonon Model]
     
     %% Phonon Subsystem
-    GNM[GaussianNetworkModel] --> |Hessian matrix| GNMTorch[GNM Methods in OnePhonon]
+    GNM[GaussianNetworkModel] --> |Hessian matrix| AdapterGNM[GNM Adapter]
+    AdapterGNM --> |Tensor representation| GNMTorch[GNM Methods in OnePhonon]
     GNMTorch --> |Differentiable matrices| PhononCalc
     PhononCalc --> |Phonon modes, frequencies| OnePhonon
     
@@ -76,6 +143,7 @@ graph TD
         PDBAdapter
         GridAdapter
         ResultsAdapter
+        AdapterGNM
     end
     
     subgraph "Physics Calculations - Phase 3"
@@ -89,13 +157,21 @@ graph TD
         PhononCalc
     end
     
-    %% Test Framework
+    %% Test Framework with State-Based Testing
     subgraph "Testing Framework"
         GroundTruth --> |searchLogDirectory| Logger[Logger]
         Logger --> |loadLog| InputOutput[Inputs/Outputs]
-        InputOutput --> TestCase[Test Case]
-        TorchModel --> TestCase
-        TestCase --> |compare| TestResult[Test Result]
+        Logger --> |captureState| ObjectState[Object States]
+        
+        InputOutput --> FunctionTest[Function-Based Test]
+        ObjectState --> StateTest[State-Based Test]
+        
+        TorchModel --> FunctionTest
+        TorchModel --> StateTest
+        
+        FunctionTest --> |compare outputs| OutputResult[Output Validation]
+        StateTest --> |compare states| StateResult[State Validation]
+        
         TorchModel --> GradTest[Gradient Testing]
         GradUtils --> GradTest
         GradTest --> GradResult[Gradient Validation]
@@ -143,7 +219,7 @@ graph TD
   - `gradient_norm(gradient)`: Computes L2 norm of gradients
 - **Used By**: Testing framework for validating gradients
 
-## Adapter Components (`adapters.py`) - Phase 2
+### Adapter Components (`adapters.py`) - Phase 2
 
 #### PDBToTensor
 - **Purpose**: Converts AtomicModel and related data to PyTorch tensors
@@ -158,7 +234,17 @@ graph TD
   - Handles Crystal.get_asu_xyz
 - **Call Paths**:
   - Used in execution path from run_np() → OnePhonon.__init__() → self._setup()
-- **Note**: Sometimes alternatively referred to as `PDBToTensor` (same name)
+- **Example Usage**:
+  ```python
+  # Initialize adapter
+  pdb_adapter = PDBToTensor(device=device)
+  
+  # Convert NumPy model
+  model_data = pdb_adapter.convert_atomic_model(atomic_model)
+  
+  # Access converted data with gradient tracking
+  xyz_tensor = model_data['xyz']  # PyTorch tensor
+  ```
 
 #### GridToTensor
 - **Purpose**: Converts grid data and related structures to PyTorch tensors
@@ -171,7 +257,17 @@ graph TD
   - `convert_mask`: Input (N,) → Output (N,)
 - **Call Paths**:
   - Used in execution path from run_np() → OnePhonon.__init__() → self._setup()
-- **Note**: Sometimes alternatively referred to as `NPGridToTensor`
+- **Example Usage**:
+  ```python
+  # Initialize adapter
+  grid_adapter = GridToTensor(device=device)
+  
+  # Convert grid
+  q_grid_tensor, map_shape = grid_adapter.convert_grid(q_grid, map_shape)
+  
+  # Convert mask
+  mask_tensor = grid_adapter.convert_mask(mask)
+  ```
 
 #### TensorToNumpy
 - **Purpose**: Converts PyTorch tensors back to NumPy arrays
@@ -185,13 +281,35 @@ graph TD
   - Convert to NumPy arrays
 - **Call Paths**:
   - Used after run_np() → onephonon_np.apply_disorder() to convert results
-- **Note**: Sometimes alternatively referred to as `TensorToMap`
+- **Example Usage**:
+  ```python
+  # Initialize adapter
+  numpy_adapter = TensorToNumpy()
+  
+  # Convert tensor to array
+  intensity_array = numpy_adapter.convert_intensity_map(intensity_tensor, map_shape)
+  ```
 
 #### ModelAdapters
 - **Purpose**: Adapts between model representations
 - **Key Methods**:
-  - Various adapter methods for different model types
-- **Note**: Some functionality may overlap with an alternatively named `TensorToCrystal` adapter
+  - `adapt_one_phonon_inputs(np_model)`: Prepares inputs from NumPy OnePhonon
+  - `adapt_one_phonon_outputs(torch_outputs)`: Converts PyTorch outputs to NumPy
+  - `adapt_rigid_body_translations_inputs(np_model)`: Prepares inputs for other models
+- **Example Usage**:
+  ```python
+  # Initialize adapter
+  model_adapter = ModelAdapters(device=device)
+  
+  # Convert inputs
+  torch_inputs = model_adapter.adapt_one_phonon_inputs(np_model)
+  
+  # Run PyTorch model
+  torch_outputs = torch_model(**torch_inputs)
+  
+  # Convert outputs
+  np_result = model_adapter.adapt_one_phonon_outputs(torch_outputs)
+  ```
 
 ### Physics Calculations - Phase 3
 
@@ -245,6 +363,20 @@ graph TD
 - **Call Paths**:
   - run_np() → OnePhonon.__init__() → Multiple execution paths documented in call_chains.json
   - run_np() → onephonon_np.apply_disorder()
+- **Adapter Usage**:
+  ```python
+  def __init__(self, pdb_path, ..., device=None):
+      # Create NumPy model for data loading
+      np_model = AtomicModel(pdb_path, expand_p1)
+      
+      # Convert using adapter
+      pdb_adapter = PDBToTensor(device=device)
+      self.model_data = pdb_adapter.convert_atomic_model(np_model)
+      
+      # Set attributes as tensors
+      self.xyz = self.model_data['xyz']
+      self.cell = self.model_data['cell']
+  ```
 
 #### GaussianNetworkModel Methods
 - **Purpose**: Provides elastic network model functionality
@@ -254,8 +386,8 @@ graph TD
   - `compute_Kinv(hessian, kvec)`: Computes inverse dynamical matrix
 - **Gradient Requirements**: Matrix operations must preserve gradients
 - **Implementation Approach**:
-  - These methods will be implemented within OnePhonon class, not as a separate class
-  - They will use tensor operations for differentiability
+  - These methods are reimplemented in PyTorch using adapter-converted input data
+  - They use tensor operations for differentiability
   - Non-differentiable parts like building neighbor lists remain in NumPy
 - **Call Paths**:
   - run_np() → OnePhonon.__init__() → self._setup_phonons() → self.compute_gnm_phonons() → gnm.compute_hessian()
@@ -271,6 +403,7 @@ graph TD
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
   ```
 - Device should be stored as an instance variable in classes
+- Adapters should place tensors on the specified device when converting
 
 ### Device Handling at Component Boundaries
 1. **Adapter Input Boundaries**:
@@ -395,93 +528,66 @@ To ensure clear communication of tensor shapes at component boundaries, here are
    - **Solution**: Implement ComplexTensorOps with explicit real/imaginary parts 
    - **Components affected**: scatter_torch.py, structure_factors_batch
    - **Implementation approach**: Use separate real and imaginary tensors with PyTorch autograd
-   - **Example**:
-     ```python
-     def complex_exp(phase):
-         return torch.cos(phase), torch.sin(phase)
-     ```
 
 2. **Eigendecomposition in Phonon Calculations**
    - **Challenge**: PyTorch's eigendecomposition has limited gradient support
    - **Solution**: Use SVD-based approach with manual gradient implementation where needed
    - **Components affected**: OnePhonon.compute_gnm_phonons(), EigenOps
    - **Implementation approach**: Leverage torch.svd with careful handling of degenerate eigenvalues
-   - **Example**:
-     ```python
-     def eigen_decomposition(matrix):
-         # Use SVD for better gradient support
-         U, S, V = torch.svd(matrix)
-         return S, U
-     ```
 
 3. **Adapter Conversions**
    - **Challenge**: Preserving gradient information during conversions
    - **Solution**: Careful design of adapter APIs to maintain computational graph
    - **Components affected**: All adapter classes in adapters.py
    - **Implementation approach**: Ensure tensor conversions retain requires_grad and device placement
-   - **Example**:
-     ```python
-     def convert_grid(self, q_grid, requires_grad=True):
-         tensor = torch.tensor(q_grid, dtype=torch.float32, device=self.device)
-         tensor.requires_grad_(requires_grad)
-         return tensor
-     ```
 
 4. **Batching and Memory Management**
    - **Challenge**: Handling large datasets while preserving gradient flow
    - **Solution**: Implement efficient batching strategy with gradient accumulation
    - **Components affected**: structure_factors(), OnePhonon.apply_disorder()
    - **Implementation approach**: Use torch.no_grad() strategically, accumulate gradients across batches
-   - **Example**:
-     ```python
-     def process_large_data(self, data):
-         result = []
-         for batch in self._get_batches(data):
-             batch_result = self._process_batch(batch)
-             result.append(batch_result)
-         return torch.cat(result)
-     ```
 
-## Implementation Guidelines
+5. **State Initialization and Comparison**
+   - **Challenge**: Maintaining gradient flow in state-based testing
+   - **Solution**: Careful state restoration with gradient preservation
+   - **Components affected**: OnePhonon and related classes, TorchTesting
+   - **Implementation approach**: 
+     - Initialize object state with gradient tracking enabled
+     - Convert array attributes to tensors with requires_grad=True
+     - Compare states with specific tolerances for numerical attributes
+     - Trace gradients through the object state graph
 
-1. **Tensor Shape Documentation**
-   - All methods should document input and output tensor shapes
-   - Example: `# Input shape: (N, 3), Output shape: (N, M, 3)`
+## Testing Approaches
 
-2. **Type Annotation**
-   - Use full type hints for all function parameters and return values
-   - Use `torch.Tensor` instead of `np.ndarray` for tensor arguments
-   - Use `Optional[torch.Tensor]` for parameters that can be None
-   - Use `Union[Type1, Type2]` for parameters with multiple possible types
-   - Include shape information in type documentation comments
-   - Example: `def func(x: torch.Tensor, y: Optional[torch.Tensor] = None) -> torch.Tensor:`
+### Function-Based Testing
+- Used for pure functions with well-defined inputs/outputs
+- Loads function arguments and expected outputs from logs
+- Executes PyTorch function with converted inputs
+- Compares outputs within numerical tolerances
 
-3. **Device Placement**
-   - Use consistent device placement across component boundaries
-   - Accept device parameter in all component initializers
-   - Default to CUDA if available, CPU otherwise
-   - Example: `device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')`
+### State-Based Testing
+- Used for methods that primarily mutate object state
+- Loads object state before method execution
+- Initializes PyTorch object with converted state
+- Executes method under test
+- Compares resulting state with expected state
+- Verifies gradient flow through state changes
 
-4. **Gradient Status**
-   - Document which tensors require gradients and which don't
-   - Validate input tensor requires_grad status where appropriate
-   - Use requires_grad=False for constant tensors to optimize memory
-   - Example: `tensor.requires_grad_(True)  # Enable gradients`
+### Testing Framework Extensions
 
-5. **Error Handling**
-   - Error handling should preserve the backpropagation chain
-   - Use appropriate error types for different failure modes
-   - Include tensor shapes in error messages
-   - Example: `raise ValueError(f"Expected shape {expected_shape}, got {tensor.shape}")`
+The testing framework is extended with:
 
-6. **Memory Optimization**
-   - Release intermediate tensors when no longer needed
-   - Use in-place operations where appropriate (when not breaking gradient flow)
-   - Consider checkpoint-based backpropagation for large models
-   - Example: `del intermediate_tensor  # Free memory`
+1. **State Capturing**:
+   - Method to capture complete object state
+   - Serialization of complex nested structures
+   - Filtering for reducing state size when needed
 
-7. **Numerical Stability**
-   - Add small epsilon values to denominators to avoid division by zero
-   - Use logarithmic space for operations prone to overflow/underflow
-   - Handle potential NaN/Inf values gracefully
-   - Example: `result = value / (denominator + 1e-10)  # Avoid division by zero`
+2. **State Restoration**:
+   - Methods to initialize objects from serialized state
+   - Conversion of NumPy arrays to PyTorch tensors
+   - Proper gradient and device configuration
+
+3. **State Comparison**:
+   - Component-by-component state comparison
+   - Tolerance-based comparison for numerical attributes
+   - Detailed reporting of state differences
