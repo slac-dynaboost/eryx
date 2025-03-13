@@ -858,6 +858,8 @@ class OnePhonon:
         """
         import logging
         logging.info(f"apply_disorder: rank={rank}, use_data_adp={use_data_adp}")
+        import time
+        start_time = time.time()
         if use_data_adp:
             ADP = torch.tensor(self.model.adp[0], dtype=torch.float32, device=self.device) / (8 * torch.pi * torch.pi)
         else:
@@ -916,6 +918,9 @@ class OnePhonon:
             os.makedirs(outdir, exist_ok=True)
             torch.save(Id_masked, os.path.join(outdir, f"rank_{rank:05d}_torch.pt"))
             np.save(os.path.join(outdir, f"rank_{rank:05d}.npy"), Id_masked.detach().cpu().numpy())
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        logging.info(f"apply_disorder runtime: {elapsed_time:.6f} seconds")
         return Id_masked
 
     #@debug

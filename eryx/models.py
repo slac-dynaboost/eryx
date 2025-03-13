@@ -15,7 +15,7 @@ class OnePhonon:
     approximation (a.k.a small-coupling regime).
     """
 
-    @debug
+    #@debug
     def __init__(self, pdb_path, hsampling, ksampling, lsampling,
                  expand_p1=True, group_by='asu',
                  res_limit=0., model='gnm',
@@ -30,7 +30,7 @@ class OnePhonon:
         self._setup_phonons(pdb_path, model,
                             gnm_cutoff, gamma_intra, gamma_inter)
 
-    @debug
+    #@debug
     def _setup(self, pdb_path, expand_p1, res_limit, group_by):
         """
         Compute q-vectors to evaluate and build the unit cell
@@ -76,7 +76,7 @@ class OnePhonon:
             self.n_dof_per_asu = 6
         self.n_dof_per_cell = self.n_asu * self.n_dof_per_asu
 
-    @debug
+    #@debug
     def _setup_phonons(self, pdb_path, model,
                        gnm_cutoff, gamma_intra, gamma_inter):
         """
@@ -152,7 +152,7 @@ class OnePhonon:
                                         gamma_intra=gamma_intra,
                                         gamma_inter=gamma_inter)
 
-    @debug
+    #@debug
     def _build_A(self):
         """
         Build the matrix A that projects small rigid-body displacements
@@ -190,7 +190,7 @@ class OnePhonon:
         else:
             self.Amat = None
 
-    @debug
+    #@debug
     def _build_M(self):
         """
         Build the mass matrix M.
@@ -211,7 +211,7 @@ class OnePhonon:
                                  self.n_asu * self.n_dof_per_asu))
             self.Linv = np.linalg.inv(np.linalg.cholesky(Mmat))
 
-    @debug
+    #@debug
     def _project_M(self, M_allatoms):
         """
         Project all-atom mass matrix M_0 using the A matrix: M = A.T M_0 A
@@ -234,7 +234,7 @@ class OnePhonon:
                                         self.Amat[j_asu]))
         return Mmat
 
-    @debug
+    #@debug
     def _build_M_allatoms(self):
         """
         Build all-atom mass matrix M_0
@@ -249,7 +249,7 @@ class OnePhonon:
         return block_diag(*mass_list).reshape((self.n_asu, self.n_dof_per_asu_actual,
                                                self.n_asu, self.n_dof_per_asu_actual))
 
-    @debug
+    #@debug
     def _center_kvec(self, x, L):
         """
         For x and L integers such that 0 < x < L, return -L/2 < x < L/2
@@ -263,7 +263,7 @@ class OnePhonon:
         """
         return int(((x - L / 2) % L) - L / 2) / L
 
-    @debug
+    #@debug
     def _build_kvec_Brillouin(self):
         """
         Compute all k-vectors and their norm in the first Brillouin zone.
@@ -289,7 +289,7 @@ class OnePhonon:
                                                      (k_dh, k_dk, k_dl)).T
                     self.kvec_norm[dh, dk, dl] = np.linalg.norm(self.kvec[dh, dk, dl])
 
-    @debug
+    #@debug
     def _at_kvec_from_miller_points(self, hkl_kvec):
         """
         Return the indices of all q-vector that are k-vector away from any
@@ -350,7 +350,7 @@ class OnePhonon:
                     map[q_indices] = np.linalg.norm(self.q_grid[q_indices], axis=1)
         return map
 
-    @debug
+    #@debug
     def compute_hessian(self):
         """
         Build the projected Hessian matrix for the supercell.
@@ -379,7 +379,7 @@ class OnePhonon:
 
         return hessian
 
-    @debug
+    #@debug
     def compute_covariance_matrix(self):
         """
         Compute covariance matrix for all asymmetric units.
@@ -416,7 +416,7 @@ class OnePhonon:
         self.covar = np.real(self.covar.reshape((self.n_asu, self.n_dof_per_asu,
                                                  self.n_cell, self.n_asu, self.n_dof_per_asu)))
 
-    @debug
+    #@debug
     def compute_gnm_phonons(self):
         """
         Compute the dynamical matrix for each k-vector in the first
@@ -463,7 +463,7 @@ class OnePhonon:
                     self.Winv[dh, dk, dl] = s
                     self.V[dh, dk, dl] = u
 
-    @debug
+    #@debug
     def apply_disorder(self, rank=-1, outdir=None, use_data_adp=False):
         """
         Compute the diffuse intensity in the one-phonon scattering
