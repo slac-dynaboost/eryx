@@ -210,35 +210,24 @@ def structure_factors(q_grid: torch.Tensor, xyz: torch.Tensor,
     Returns:
         Structure factors tensor with shape [n_points] or [n_points, n_dof]
     """
-    try:
-        # Ensure all inputs are PyTorch tensors on the same device
-        device = q_grid.device
-        
-        if not isinstance(xyz, torch.Tensor):
-            xyz = torch.tensor(xyz, dtype=torch.float32, device=device)
-        if not isinstance(ff_a, torch.Tensor):
-            ff_a = torch.tensor(ff_a, dtype=torch.float32, device=device)
-        if not isinstance(ff_b, torch.Tensor):
-            ff_b = torch.tensor(ff_b, dtype=torch.float32, device=device)
-        if not isinstance(ff_c, torch.Tensor):
-            ff_c = torch.tensor(ff_c, dtype=torch.float32, device=device)
-        if U is not None and not isinstance(U, torch.Tensor):
-            U = torch.tensor(U, dtype=torch.float32, device=device)
-        if project_on_components is not None and not isinstance(project_on_components, torch.Tensor):
-            project_on_components = torch.tensor(project_on_components, dtype=torch.float32, device=device)
-        
-        # Process all q-vectors in a single operation
-        return structure_factors_batch(
-            q_grid, xyz, ff_a, ff_b, ff_c, U,
-            compute_qF, project_on_components, sum_over_atoms
-        )
+    # Ensure all inputs are PyTorch tensors on the same device
+    device = q_grid.device
     
-    except RuntimeError as e:
-        if 'CUDA out of memory' in str(e):
-            raise RuntimeError(
-                f"CUDA out of memory in structure_factors. The dataset is too large to process in a single batch. "
-                f"Error: {e}\n"
-                f"Consider using a smaller grid size or a GPU with more memory."
-            ) from e
-        else:
-            raise
+    if not isinstance(xyz, torch.Tensor):
+        xyz = torch.tensor(xyz, dtype=torch.float32, device=device)
+    if not isinstance(ff_a, torch.Tensor):
+        ff_a = torch.tensor(ff_a, dtype=torch.float32, device=device)
+    if not isinstance(ff_b, torch.Tensor):
+        ff_b = torch.tensor(ff_b, dtype=torch.float32, device=device)
+    if not isinstance(ff_c, torch.Tensor):
+        ff_c = torch.tensor(ff_c, dtype=torch.float32, device=device)
+    if U is not None and not isinstance(U, torch.Tensor):
+        U = torch.tensor(U, dtype=torch.float32, device=device)
+    if project_on_components is not None and not isinstance(project_on_components, torch.Tensor):
+        project_on_components = torch.tensor(project_on_components, dtype=torch.float32, device=device)
+    
+    # Process all q-vectors in a single operation
+    return structure_factors_batch(
+        q_grid, xyz, ff_a, ff_b, ff_c, U,
+        compute_qF, project_on_components, sum_over_atoms
+    )

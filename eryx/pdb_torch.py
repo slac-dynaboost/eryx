@@ -155,20 +155,25 @@ class GaussianNetworkModel:
         S_pinv[S_valid] = 1.0 / S[S_valid]
         
         # Create diagonal matrices from singular values for matrix multiplication
+        min_dim = min(m, n)
+        
+        # Process entire batch at once using vectorized operations
+        # Create a batch of diagonal matrices using the reciprocal singular values
+        S_pinv_values = S_pinv[:, :min_dim].to(dtype=batch_matrices.dtype)
+        
+        # Create empty matrices for the batch
         S_pinv_matrix = torch.zeros(batch_size, m, n, device=self.device, dtype=batch_matrices.dtype)
         
-        # Apply reciprocal singular values to appropriate diagonal elements
-        min_dim = min(m, n)
-        batch_indices = torch.arange(batch_size, device=self.device)
-        diag_indices = torch.arange(min_dim, device=self.device)
+        # Create indices for batch diagonal assignment
+        batch_indices = torch.arange(batch_size, device=self.device).repeat_interleave(min_dim)
+        row_indices = torch.arange(min_dim, device=self.device).repeat(batch_size)
+        col_indices = row_indices.clone()
         
-        # Convert S_pinv to the same dtype as S_pinv_matrix to avoid dtype mismatch
-        S_pinv_values = S_pinv[:, :min_dim].to(dtype=S_pinv_matrix.dtype)
+        # Flatten S_pinv_values for assignment
+        flat_values = S_pinv_values.reshape(-1)
         
-        # Use advanced indexing to set diagonal elements
-        for i in range(batch_size):
-            for j in range(min_dim):
-                S_pinv_matrix[i, j, j] = S_pinv_values[i, j]
+        # Set all diagonal elements at once
+        S_pinv_matrix[batch_indices, row_indices, col_indices] = flat_values
         
         # Compute the pseudo-inverse using U, S_pinv, and Vh
         # pinv(A) = V * S_pinv * U^H
@@ -222,29 +227,26 @@ class GaussianNetworkModel:
         try:
             Kinv_batch = self._batched_pinv(Kmat_batch_2d_reg, rcond=eps)
         except RuntimeError as e:
-            # Fallback to loop-based implementation if batched version fails
-            # This is important for backward compatibility and robustness
+            # Fallback to direct pinv if batched version fails
             print(f"WARNING: Batched pseudo-inverse failed with error: {e}")
-            print(f"Falling back to serial implementation for {batch_size} matrices.")
+            print(f"Falling back to direct pinv for all matrices at once.")
             
             # Log more diagnostic information
             print(f"Matrix shape: {Kmat_batch_2d_reg.shape}, dtype: {Kmat_batch_2d_reg.dtype}")
             
-            # Create output tensor with same dtype as input
-            Kinv_batch = torch.zeros_like(Kmat_batch_2d_reg)
-            
-            # Process each matrix individually
-            for i in range(batch_size):
-                try:
-                    Kinv_batch[i] = torch.linalg.pinv(Kmat_batch_2d_reg[i], rcond=eps)
-                except Exception as inner_e:
-                    print(f"WARNING: Individual pinv failed for matrix {i}: {inner_e}")
-                    # Last resort fallback - use identity matrix
-                    Kinv_batch[i] = torch.eye(
-                        Kmat_batch_2d_reg.shape[1], 
-                        device=Kmat_batch_2d_reg.device,
-                        dtype=Kmat_batch_2d_reg.dtype
-                    )
+            # Process all matrices at once using direct pinv
+            try:
+                # Process all matrices at once with direct pinv
+                Kinv_batch = torch.linalg.pinv(Kmat_batch_2d_reg, rcond=eps)
+            except Exception as direct_e:
+                print(f"WARNING: Direct pinv failed: {direct_e}")
+                print("Using identity matrices as last resort")
+                # Last resort fallback - use identity matrices
+                Kinv_batch = torch.eye(
+                    Kmat_batch_2d_reg.shape[1],
+                    device=Kmat_batch_2d_reg.device,
+                    dtype=Kmat_batch_2d_reg.dtype
+                ).unsqueeze(0).expand(batch_size, -1, -1)
         
         # Reshape if requested
         if reshape:
