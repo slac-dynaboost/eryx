@@ -128,6 +128,52 @@ class GaussianNetworkModel:
         
         return Kmat_batch
 
+    def _batched_pinv(self, batch_matrices: torch.Tensor, rcond: float = 1e-10) -> torch.Tensor:
+        """
+        Compute the pseudo-inverse for a batch of matrices using SVD.
+        
+        Args:
+            batch_matrices: Tensor of shape [batch_size, n, m] containing matrices to invert
+            rcond: Cutoff for small singular values (relative to largest singular value)
+            
+        Returns:
+            Tensor of shape [batch_size, m, n] containing pseudo-inverses
+        """
+        # Get batch dimensions and matrix shape
+        batch_size, n, m = batch_matrices.shape
+        
+        # Compute batched SVD
+        U, S, Vh = torch.linalg.svd(batch_matrices, full_matrices=False)
+        
+        # Apply rcond cutoff relative to largest singular value in each matrix
+        S_max, _ = torch.max(S, dim=1, keepdim=True)
+        S_cutoff = rcond * S_max
+        S_valid = S > S_cutoff.expand_as(S)
+        
+        # Create batched reciprocal of singular values with zeros for invalid entries
+        S_pinv = torch.zeros_like(S)
+        S_pinv[S_valid] = 1.0 / S[S_valid]
+        
+        # Create diagonal matrices from singular values for matrix multiplication
+        S_pinv_matrix = torch.zeros(batch_size, m, n, device=self.device, dtype=batch_matrices.dtype)
+        
+        # Apply reciprocal singular values to appropriate diagonal elements
+        min_dim = min(m, n)
+        batch_indices = torch.arange(batch_size, device=self.device)
+        diag_indices = torch.arange(min_dim, device=self.device)
+        
+        # Convert S_pinv to the same dtype as S_pinv_matrix to avoid dtype mismatch
+        S_pinv_values = S_pinv[:, :min_dim].to(dtype=S_pinv_matrix.dtype)
+        
+        # Use advanced indexing to set diagonal elements
+        for i in range(batch_size):
+            for j in range(min_dim):
+                S_pinv_matrix[i, j, j] = S_pinv_values[i, j]
+        
+        # Compute the pseudo-inverse using U, S_pinv, and Vh
+        # pinv(A) = V * S_pinv * U^H
+        return torch.bmm(Vh.transpose(1, 2).conj(), torch.bmm(S_pinv_matrix, U.transpose(1, 2).conj()))
+    
     def compute_Kinv(self, hessian: torch.Tensor, kvec_batch: torch.Tensor, 
                     reshape: bool = True) -> torch.Tensor:
         """
@@ -145,7 +191,7 @@ class GaussianNetworkModel:
                     or [batch_size, n_asu, n_atoms_per_asu, n_asu, n_atoms_per_asu] if reshape=True
             
         Note:
-            This method efficiently processes multiple k-vectors at once.
+            This method efficiently processes multiple k-vectors at once using batched operations.
         """
         # Compute K matrices for the batch
         Kmat_batch = self.compute_K(hessian, kvec_batch)
@@ -172,13 +218,33 @@ class GaussianNetworkModel:
         
         Kmat_batch_2d_reg = Kmat_batch_2d + eps * identity
         
-        # Initialize output tensor
-        Kinv_batch = torch.zeros_like(Kmat_batch_2d_reg)
-        
-        # Compute pseudo-inverse for each matrix in the batch
-        # We process each matrix separately to handle potential singular matrices
-        for i in range(batch_size):
-            Kinv_batch[i] = torch.linalg.pinv(Kmat_batch_2d_reg[i])
+        # Compute pseudo-inverse using batched operation
+        try:
+            Kinv_batch = self._batched_pinv(Kmat_batch_2d_reg, rcond=eps)
+        except RuntimeError as e:
+            # Fallback to loop-based implementation if batched version fails
+            # This is important for backward compatibility and robustness
+            print(f"WARNING: Batched pseudo-inverse failed with error: {e}")
+            print(f"Falling back to serial implementation for {batch_size} matrices.")
+            
+            # Log more diagnostic information
+            print(f"Matrix shape: {Kmat_batch_2d_reg.shape}, dtype: {Kmat_batch_2d_reg.dtype}")
+            
+            # Create output tensor with same dtype as input
+            Kinv_batch = torch.zeros_like(Kmat_batch_2d_reg)
+            
+            # Process each matrix individually
+            for i in range(batch_size):
+                try:
+                    Kinv_batch[i] = torch.linalg.pinv(Kmat_batch_2d_reg[i], rcond=eps)
+                except Exception as inner_e:
+                    print(f"WARNING: Individual pinv failed for matrix {i}: {inner_e}")
+                    # Last resort fallback - use identity matrix
+                    Kinv_batch[i] = torch.eye(
+                        Kmat_batch_2d_reg.shape[1], 
+                        device=Kmat_batch_2d_reg.device,
+                        dtype=Kmat_batch_2d_reg.dtype
+                    )
         
         # Reshape if requested
         if reshape:

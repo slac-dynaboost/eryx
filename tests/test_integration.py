@@ -147,7 +147,10 @@ class TestOnePhononIntegration(unittest.TestCase):
         
         # Create a masked loss that properly handles NaNs
         mask = ~torch.isnan(Id_torch)
+        # Ensure we're working with real tensors for the loss
         valid_intensity = torch.where(mask, Id_torch, torch.zeros_like(Id_torch))
+        # Convert to float32 to ensure consistent gradient flow
+        valid_intensity = valid_intensity.to(dtype=torch.float32)
         loss = torch.sum(valid_intensity)  # Sum of valid intensities
         
         # Backward pass

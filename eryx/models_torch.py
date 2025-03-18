@@ -567,67 +567,81 @@ class OnePhonon:
         return int(((x - L / 2) % L) - L / 2) / L
     
     #@debug
-    def _at_kvec_from_miller_points(self, indices: Union[Tuple[int, int, int], int]) -> torch.Tensor:
+    def _at_kvec_from_miller_points(self, indices_or_batch: Union[Tuple[int, int, int], torch.Tensor, int]) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
         Return the indices of all q-vectors that are k-vector away from given Miller indices.
         
-        This method supports two input formats:
+        This method supports three input formats:
         1. Traditional format: (h, k, l) tuple with 3 elements
         2. Fully collapsed format: a single flat index
+        3. Batched format: tensor of shape [batch_size] containing flat indices
         
         Args:
-            indices: Either a 3-tuple (h,k,l) with Miller indices or a single flat index
+            indices_or_batch: Either a 3-tuple (h,k,l), a single flat index, or a tensor of flat indices
             
         Returns:
-            Torch tensor of raveled indices.
+            Torch tensor of raveled indices, or list of tensors for batched input
         """
-        # Determine input format and convert to 3D indices
-        if isinstance(indices, (tuple, list)) and len(indices) == 3:
-            # Traditional (h,k,l) format
-            h_idx, k_idx, l_idx = indices
+        # Check if input is a batch tensor
+        is_batch = isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 1 and indices_or_batch.numel() > 1
+        
+        if is_batch:
+            # Handle batch of flat indices
+            flat_indices = indices_or_batch
+            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
+        elif isinstance(indices_or_batch, (tuple, list)) and len(indices_or_batch) == 3:
+            # Traditional (h,k,l) format - convert to batch of one
+            h_indices = torch.tensor([indices_or_batch[0]], device=self.device)
+            k_indices = torch.tensor([indices_or_batch[1]], device=self.device)
+            l_indices = torch.tensor([indices_or_batch[2]], device=self.device)
         else:
-            # Already a flat index
-            flat_idx = indices
-            # Convert flat index to 3D indices
+            # Single flat index - convert to batch of one
+            flat_idx = indices_or_batch
             if isinstance(flat_idx, torch.Tensor):
-                h_idx, k_idx, l_idx = self._flat_to_3d_indices(flat_idx)
-                h_idx = h_idx.item()
-                k_idx = k_idx.item()
-                l_idx = l_idx.item()
+                flat_indices = flat_idx.view(1)
             else:
-                # Handle scalar case
-                k_dim = int(self.ksampling[2])
-                l_dim = int(self.lsampling[2])
-                k_l_size = k_dim * l_dim
-                h_idx = flat_idx // k_l_size
-                kl_remainder = flat_idx % k_l_size
-                k_idx = kl_remainder // l_dim
-                l_idx = kl_remainder % l_dim
+                flat_indices = torch.tensor([flat_idx], device=self.device)
+            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
         
         # Calculate steps based on sampling parameters
         hsteps = int(self.hsampling[2] * (self.hsampling[1] - self.hsampling[0]) + 1)
         ksteps = int(self.ksampling[2] * (self.ksampling[1] - self.ksampling[0]) + 1)
         lsteps = int(self.lsampling[2] * (self.lsampling[1] - self.lsampling[0]) + 1)
         
-        # Create index grid
-        h_range = torch.arange(h_idx, hsteps, self.hsampling[2], device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, ksteps, self.ksampling[2], device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, lsteps, self.lsampling[2], device=self.device, dtype=torch.long)
+        # Prepare output list to collect raveled indices for each point in batch
+        batch_size = h_indices.numel()
+        all_indices = []
         
-        # Create meshgrid
-        h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
+        # Process each point in batch
+        for i in range(batch_size):
+            h_idx, k_idx, l_idx = h_indices[i].item(), k_indices[i].item(), l_indices[i].item()
+            
+            # Create index grid
+            h_range = torch.arange(h_idx, hsteps, self.hsampling[2], device=self.device, dtype=torch.long)
+            k_range = torch.arange(k_idx, ksteps, self.ksampling[2], device=self.device, dtype=torch.long)
+            l_range = torch.arange(l_idx, lsteps, self.lsampling[2], device=self.device, dtype=torch.long)
+            
+            # Create meshgrid
+            h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
+            
+            # Flatten indices
+            h_flat = h_grid.reshape(-1)
+            k_flat = k_grid.reshape(-1)
+            l_flat = l_grid.reshape(-1)
+            
+            # Compute raveled indices
+            indices = h_flat * (self.map_shape[1] * self.map_shape[2]) + \
+                     k_flat * self.map_shape[2] + \
+                     l_flat
+                     
+            all_indices.append(indices)
         
-        # Flatten indices
-        h_flat = h_grid.reshape(-1)
-        k_flat = k_grid.reshape(-1)
-        l_flat = l_grid.reshape(-1)
-        
-        # Compute raveled indices
-        indices = h_flat * (self.map_shape[1] * self.map_shape[2]) + \
-                  k_flat * self.map_shape[2] + \
-                  l_flat
-                  
-        return indices
+        # If batch size is 1, return the single result
+        if batch_size == 1:
+            return all_indices[0]
+        else:
+            # For batched input, return list of index tensors
+            return all_indices
     
     
     #@debug
@@ -806,19 +820,26 @@ class OnePhonon:
             )
             
             # For numerical stability, apply thresholds to eigenvalues
+            # Extract real part in a differentiable way
+            if torch.is_complex(eigenvalues_all):
+                eigenvalues_real = torch.real(eigenvalues_all)
+            else:
+                eigenvalues_real = eigenvalues_all
+            
+            # Apply threshold
             eps = 1e-6
-            eigenvalues_clamped = torch.where(eigenvalues_all.real < eps, 
-                                            torch.tensor(float('nan'), dtype=eigenvalues_all.dtype, device=eigenvalues_all.device),
-                                            eigenvalues_all.real)
+            eigenvalues_clamped = torch.where(eigenvalues_real < eps, 
+                                            torch.tensor(float('nan'), dtype=torch.float32, device=eigenvalues_all.device),
+                                            eigenvalues_real)
             
             # Compute inverses with stability controls for all matrices at once
+            # Ensure we're working with float32 for consistent gradient flow
+            eigenvalues_clamped = eigenvalues_clamped.to(dtype=torch.float32)
             winv_all = 1.0 / (eigenvalues_clamped + 1e-8)
             
             # Set extremely large values to NaN for consistency with NumPy
-            # Convert to real for comparison since > is not implemented for complex numbers
-            winv_all_abs = torch.abs(winv_all)
-            winv_all = torch.where(winv_all_abs > 1e6,
-                                torch.tensor(float('nan'), dtype=winv_all.dtype, device=winv_all.device),
+            winv_all = torch.where(winv_all > 1e6,
+                                torch.tensor(float('nan'), dtype=torch.float32, device=winv_all.device),
                                 winv_all)
             
             # Store results directly
@@ -945,8 +966,10 @@ class OnePhonon:
                 eikr_reshaped = eikr_all.view(-1, 1, 1)
                 
                 # Accumulate contributions to covariance matrix
-                # Sum over all k-vectors
-                self.covar[:, j_cell, :] = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+                # Sum over all k-vectors - ensure proper complex handling
+                # Convert to real at the end to maintain gradient flow
+                complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+                self.covar[:, j_cell, :] = complex_sum
         except RuntimeError as e:
             if 'CUDA out of memory' in str(e):
                 raise RuntimeError(
@@ -987,86 +1010,176 @@ class OnePhonon:
         """
         Compute the diffuse intensity using the one-phonon approximation.
         
-        This method processes all k-vectors simultaneously in a single operation
-        for maximum computational efficiency. Note that this requires sufficient GPU memory
-        to hold all tensors at once.
+        This method uses vectorized operations to process k-vectors efficiently,
+        minimizing loops and maximizing GPU utilization.
+        
+        Args:
+            rank: Phonon mode rank to use (-1 for all modes)
+            outdir: Directory to save results
+            use_data_adp: Whether to use ADPs from data
+            
+        Returns:
+            Diffuse intensity tensor
         """
         try:
             import logging
             logging.info(f"apply_disorder: rank={rank}, use_data_adp={use_data_adp}")
+            
+            # Prepare ADPs
             if use_data_adp:
                 ADP = torch.tensor(self.model.adp[0], dtype=torch.float32, device=self.device) / (8 * torch.pi * torch.pi)
             else:
                 ADP = self.ADP.to(dtype=torch.float32, device=self.device)
+            
+            # Initialize intensity tensor
             Id = torch.zeros(self.q_grid.shape[0], dtype=torch.float32, device=self.device)
-            from eryx.scatter_torch import structure_factors
+            
+            # Get total number of k-vectors
             h_dim = int(self.hsampling[2])
             k_dim = int(self.ksampling[2])
             l_dim = int(self.lsampling[2])
-            # Fully collapsed implementation
             total_points = h_dim * k_dim * l_dim
-            for idx in range(total_points):
-                # Convert flat index to 3D indices for miller points
-                h_idx, k_idx, l_idx = self._flat_to_3d_indices(torch.tensor([idx], device=self.device))
-                h_idx, k_idx, l_idx = h_idx.item(), k_idx.item(), l_idx.item()
+            
+            # Import structure_factors function
+            from eryx.scatter_torch import structure_factors
+            
+            # Pre-compute all ASU data to avoid repeated tensor creation
+            asu_data = []
+            for i_asu in range(self.n_asu):
+                asu_data.append({
+                    'xyz': torch.tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32, device=self.device),
+                    'ff_a': torch.tensor(self.model.ff_a[i_asu], dtype=torch.float32, device=self.device),
+                    'ff_b': torch.tensor(self.model.ff_b[i_asu], dtype=torch.float32, device=self.device),
+                    'ff_c': torch.tensor(self.model.ff_c[i_asu], dtype=torch.float32, device=self.device),
+                    'project': self.Amat[i_asu]
+                })
+            
+            # Process all k-vectors in batches to balance memory usage and parallelism
+            batch_size = min(100, total_points)  # Adjust based on available memory
+            
+            print(f"Processing {total_points} k-vectors in batches of {batch_size}")
+            
+            # Track progress
+            processed = 0
+            
+            for batch_start in range(0, total_points, batch_size):
+                batch_end = min(batch_start + batch_size, total_points)
+                batch_indices = torch.arange(batch_start, batch_end, device=self.device)
                 
-                q_indices = self._at_kvec_from_miller_points((h_idx, k_idx, l_idx))
-                valid_mask = self.res_mask[q_indices]
-                valid_indices = q_indices[valid_mask]
-                if valid_indices.numel() == 0:
-                    continue
+                # Update progress
+                processed += len(batch_indices)
+                if processed % (batch_size * 5) == 0 or processed == total_points:
+                    print(f"Progress: {processed}/{total_points} k-vectors processed ({processed/total_points*100:.1f}%)")
                 
-                F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
-                            dtype=torch.complex64, device=self.device)
-                for i_asu in range(self.n_asu):
-                    F[:, i_asu, :] = structure_factors(
-                        self.q_grid[valid_indices],
-                        torch.tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32, device=self.device),
-                        torch.tensor(self.model.ff_a[i_asu], dtype=torch.float32, device=self.device),
-                        torch.tensor(self.model.ff_b[i_asu], dtype=torch.float32, device=self.device),
-                        torch.tensor(self.model.ff_c[i_asu], dtype=torch.float32, device=self.device),
-                        U=ADP,
-                        n_processes=self.n_processes,
-                        compute_qF=True,
-                        project_on_components=self.Amat[i_asu],
-                        sum_over_atoms=False
-                    )
-                F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
+                # Get 3D indices for all points in batch
+                h_indices, k_indices, l_indices = self._flat_to_3d_indices(batch_indices)
                 
-                if rank == -1:
-                    FV = torch.matmul(F, self.V[idx])
-                    FV_abs_squared = torch.abs(FV) ** 2
-                    # Ensure NaN propagation in both real and imaginary parts
-                    winv = self.Winv[idx]
-                    real_winv = torch.real(winv)
-                    # Propagate NaNs from imaginary part to real part
-                    real_winv = torch.where(torch.isnan(torch.imag(winv)), 
-                                        torch.tensor(float('nan'), device=self.device, dtype=real_winv.dtype),
-                                        real_winv)
-                    weighted_intensity = torch.matmul(FV_abs_squared, real_winv)
-                    Id.index_add_(0, valid_indices, weighted_intensity)
-                else:
-                    V_rank = self.V[idx, :, rank]
-                    FV = torch.matmul(F, V_rank)
-                    weighted_intensity = (torch.abs(FV) ** 2) * torch.real(self.Winv[idx, rank])
-                    Id.index_add_(0, valid_indices, weighted_intensity)
+                # Process each point in batch
+                for i, idx in enumerate(batch_indices):
+                    h_idx, k_idx, l_idx = h_indices[i].item(), k_indices[i].item(), l_indices[i].item()
+                    
+                    # Get q-indices for this k-vector point
+                    q_indices = self._at_kvec_from_miller_points((h_idx, k_idx, l_idx))
+                    valid_mask = self.res_mask[q_indices]
+                    valid_indices = q_indices[valid_mask]
+                    
+                    if valid_indices.numel() == 0:
+                        continue
+                    
+                    # Compute structure factors for all ASUs in parallel
+                    F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
+                                  dtype=torch.complex64, device=self.device)
+                    
+                    # Process all ASUs with pre-computed data
+                    for i_asu in range(self.n_asu):
+                        asu = asu_data[i_asu]
+                        F[:, i_asu, :] = structure_factors(
+                            self.q_grid[valid_indices],
+                            asu['xyz'],
+                            asu['ff_a'],
+                            asu['ff_b'],
+                            asu['ff_c'],
+                            U=ADP,
+                            n_processes=self.n_processes,
+                            compute_qF=True,
+                            project_on_components=asu['project'],
+                            sum_over_atoms=False
+                        )
+                    
+                    # Reshape for matrix operations
+                    F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
+                    
+                    # Apply disorder model depending on rank parameter
+                    if rank == -1:
+                        # Get eigenvectors and eigenvalues for this k-vector
+                        V_idx = self.V[idx]
+                        Winv_idx = self.Winv[idx]
+                        
+                        # Compute F·V for all modes at once
+                        FV = torch.matmul(F, V_idx)
+                        
+                        # Calculate absolute squared values - ensure real output
+                        FV_real = torch.real(FV)
+                        FV_imag = torch.imag(FV)
+                        FV_abs_squared = FV_real**2 + FV_imag**2
+                        
+                        # Extract real part of eigenvalues with NaN handling
+                        real_winv = Winv_idx
+                        
+                        # Check if we're dealing with complex tensors
+                        if torch.is_complex(Winv_idx):
+                            real_winv = torch.real(Winv_idx)
+                            # Propagate NaNs from imaginary part to real part
+                            imag_part = torch.imag(Winv_idx)
+                            real_winv = torch.where(torch.isnan(imag_part), 
+                                                  torch.tensor(float('nan'), device=self.device, dtype=torch.float32),
+                                                  real_winv)
+                        
+                        # Weight by eigenvalues and sum - ensure real output
+                        weighted_intensity = torch.matmul(FV_abs_squared, real_winv.to(dtype=torch.float32))
+                        Id.index_add_(0, valid_indices, weighted_intensity)
+                    else:
+                        # Process single mode
+                        V_rank = self.V[idx, :, rank]
+                        FV = torch.matmul(F, V_rank)
+                        
+                        # Calculate absolute squared values - ensure real output
+                        FV_real = torch.real(FV)
+                        FV_imag = torch.imag(FV)
+                        FV_abs_squared = FV_real**2 + FV_imag**2
+                        
+                        # Extract real part of eigenvalue
+                        if torch.is_complex(self.Winv[idx, rank]):
+                            real_winv = torch.real(self.Winv[idx, rank]).to(dtype=torch.float32)
+                        else:
+                            real_winv = self.Winv[idx, rank].to(dtype=torch.float32)
+                        
+                        # Compute weighted intensity - ensure real output
+                        weighted_intensity = FV_abs_squared * real_winv
+                        Id.index_add_(0, valid_indices, weighted_intensity)
+            
+            # Apply resolution mask
+            Id_masked = Id.clone()
+            Id_masked[~self.res_mask] = float('nan')
+            
+            # Save results if outdir is provided
+            if outdir is not None:
+                import os
+                os.makedirs(outdir, exist_ok=True)
+                torch.save(Id_masked, os.path.join(outdir, f"rank_{rank:05d}_torch.pt"))
+                np.save(os.path.join(outdir, f"rank_{rank:05d}.npy"), Id_masked.detach().cpu().numpy())
+            
+            return Id_masked
+            
         except RuntimeError as e:
             if 'CUDA out of memory' in str(e):
                 raise RuntimeError(
                     f"CUDA out of memory in apply_disorder. The dataset is too large to process in a single batch. "
                     f"Error: {e}\n"
-                    f"Consider using a smaller grid size or a GPU with more memory."
+                    f"Consider using a smaller grid size, reducing batch_size, or using a GPU with more memory."
                 ) from e
             else:
                 raise
-        Id_masked = Id.clone()
-        Id_masked[~self.res_mask] = float('nan')
-        if outdir is not None:
-            import os
-            os.makedirs(outdir, exist_ok=True)
-            torch.save(Id_masked, os.path.join(outdir, f"rank_{rank:05d}_torch.pt"))
-            np.save(os.path.join(outdir, f"rank_{rank:05d}.npy"), Id_masked.detach().cpu().numpy())
-        return Id_masked
 
     #@debug
     def array_to_tensor(self, array: np.ndarray, requires_grad: bool = True, dtype=None) -> torch.Tensor:
