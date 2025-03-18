@@ -10,6 +10,7 @@ References:
 """
 
 import torch
+import numpy as np
 from typing import Optional, Tuple, List, Dict, Union, Any
 
 class GaussianNetworkModel:
@@ -60,77 +61,132 @@ class GaussianNetworkModel:
 
         return hessian
 
-    def compute_K(self, hessian: torch.Tensor, kvec: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def compute_K(self, hessian: torch.Tensor, kvec_batch: torch.Tensor) -> torch.Tensor:
         """
-        Noting H(d) the block of the hessian matrix
-        corresponding the the d-th reference cell
-        whose origin is located at r_d, then:
-        K(kvec) = \sum_d H(d) exp(i kvec. r_d)
+        Compute K matrices for a batch of k-vectors.
         
         Args:
-            hessian: Hessian tensor from compute_hessian()
-            kvec: Phonon wavevector, default zeros(3)
+            hessian: Hessian tensor from compute_hessian() with shape [n_asu, n_atoms_per_asu, n_cell, n_asu, n_atoms_per_asu]
+            kvec_batch: Batch of k-vectors with shape [batch_size, 3]
             
         Returns:
-            Kmat: Dynamical matrix of shape (n_asu, n_atoms_per_asu, n_asu, n_atoms_per_asu)
-                with dtype torch.complex64
+            Kmat_batch: Batch of K matrices with shape [batch_size, n_asu, n_atoms_per_asu, n_asu, n_atoms_per_asu]
+            
+        Note:
+            This method efficiently processes multiple k-vectors at once.
         """
-        if kvec is None:
-            kvec = torch.zeros(3, device=self.device)
-        Kmat = hessian[:, :, self.id_cell_ref, :, :].clone()
-
+        # Get batch size
+        batch_size = kvec_batch.shape[0]
+        
+        # Start with reference cell contributions (which don't depend on k-vector)
+        # Create a proper copy by using repeat instead of expand to avoid overlapping memory
+        ref_cell_hessian = hessian[:, :, self.id_cell_ref, :, :].clone()
+        Kmat_batch = ref_cell_hessian.unsqueeze(0).repeat(batch_size, 1, 1, 1, 1)
+        
+        # Handle complex data type for batch
+        if hessian.dtype != torch.complex64:
+            Kmat_batch = Kmat_batch.to(torch.complex64)
+        
+        # For each non-reference cell:
         for j_cell in range(self.n_cell):
             if j_cell == self.id_cell_ref:
                 continue
-            
-            # Handle both dictionary-style and object-style crystal access
-            if isinstance(self.crystal, dict):
-                # Legacy dictionary-style access
-                if 'get_unitcell_origin' in self.crystal and 'id_to_hkl' in self.crystal:
-                    r_cell = self.crystal['get_unitcell_origin'](self.crystal['id_to_hkl'](j_cell))
-                else:
-                    # Fallback to zeros if methods not found
-                    r_cell = torch.zeros(3, device=self.device)
-            else:
-                # New object-style access
-                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
                 
-            phase = torch.sum(kvec * r_cell)
-            eikr = torch.complex(torch.cos(phase), torch.sin(phase))
+            # Get unit cell origin coordinates
+            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+            
+            # Calculate phase for all k-vectors in batch: batch_phases has shape [batch_size]
+            # Sum along last dimension (3) to get dot product of each k-vector with r_cell
+            batch_phases = torch.sum(kvec_batch * r_cell, dim=1)
+            
+            # Use ComplexTensorOps from torch_utils or compute complex exponentials directly
+            try:
+                from eryx.torch_utils import ComplexTensorOps
+                real_part, imag_part = ComplexTensorOps.complex_exp(batch_phases)
+            except ImportError:
+                # Fallback to direct computation
+                real_part = torch.cos(batch_phases)
+                imag_part = torch.sin(batch_phases)
+            
+            # Create complex exponentials for all phases: eikr_batch has shape [batch_size]
+            eikr_batch = torch.complex(real_part, imag_part)
+            
+            # Add contribution from this cell for all k-vectors
+            # Need to expand hessian block and phase terms to align dimensions
             for i_asu in range(self.n_asu):
                 for j_asu in range(self.n_asu):
-                    Kmat[i_asu, :, j_asu, :] += hessian[i_asu, :, j_cell, j_asu, :] * eikr
-        return Kmat
+                    # Get hessian block for this cell and ASU combo
+                    block = hessian[i_asu, :, j_cell, j_asu, :]
+                    
+                    # Apply phase factors to hessian blocks and accumulate
+                    # Need to reshape eikr_batch to allow broadcasting
+                    # [batch_size] -> [batch_size, 1, 1] for proper broadcasting
+                    eikr_reshaped = eikr_batch.view(batch_size, 1, 1)
+                    
+                    # Update the batch with this contribution
+                    Kmat_batch[:, i_asu, :, j_asu, :] += block * eikr_reshaped
+        
+        return Kmat_batch
 
-    def compute_Kinv(self, hessian: torch.Tensor, kvec: Optional[torch.Tensor] = None, 
+    def compute_Kinv(self, hessian: torch.Tensor, kvec_batch: torch.Tensor, 
                     reshape: bool = True) -> torch.Tensor:
         """
-        Compute the inverse of K(kvec)
-        (see compute_K() for the relationship between K and the hessian).
+        Compute the inverse of K(kvec) for a batch of k-vectors.
         
         Args:
-            hessian: Hessian tensor from compute_hessian()
-            kvec: Phonon wavevector, default zeros(3)
-            reshape: Whether to reshape the output to match the input shape
+            hessian: Hessian tensor from compute_hessian() with shape 
+                   [n_asu, n_atoms_per_asu, n_cell, n_asu, n_atoms_per_asu]
+            kvec_batch: Batch of k-vectors with shape [batch_size, 3]
+            reshape: Whether to reshape the output to match input dimensions
             
         Returns:
-            Kinv: Inverse of dynamical matrix K
+            Kinv_batch: Batch of inverse K matrices with shape
+                    [batch_size, n_asu*n_atoms_per_asu, n_asu*n_atoms_per_asu] if reshape=False,
+                    or [batch_size, n_asu, n_atoms_per_asu, n_asu, n_atoms_per_asu] if reshape=True
+            
+        Note:
+            This method efficiently processes multiple k-vectors at once.
         """
-        if kvec is None:
-            kvec = torch.zeros(3, device=self.device)
-        Kmat = self.compute_K(hessian, kvec=kvec)
-        Kshape = Kmat.shape
-        Kmat_2d = Kmat.reshape(Kshape[0] * Kshape[1], Kshape[2] * Kshape[3])
+        # Compute K matrices for the batch
+        Kmat_batch = self.compute_K(hessian, kvec_batch)
         
-        # Add small regularization for numerical stability
+        # Get shape information
+        batch_size = kvec_batch.shape[0]
+        
+        # Get other dimensions from the Kmat shape
+        n_asu = Kmat_batch.shape[1]
+        n_atoms = Kmat_batch.shape[2]
+        
+        # Reshape each K matrix to 2D for pseudo-inverse computation
+        # From [batch_size, n_asu, n_atoms, n_asu, n_atoms] 
+        # to [batch_size, n_asu*n_atoms, n_asu*n_atoms]
+        Kmat_batch_2d = Kmat_batch.reshape(batch_size, n_asu * n_atoms, n_asu * n_atoms)
+        
+        # Apply regularization for numerical stability
         eps = 1e-10
-        identity = torch.eye(Kmat_2d.shape[0], device=self.device, dtype=Kmat_2d.dtype)
-        Kmat_2d_reg = Kmat_2d + eps * identity
+        identity = torch.eye(
+            Kmat_batch_2d.shape[1], 
+            device=Kmat_batch_2d.device, 
+            dtype=Kmat_batch_2d.dtype
+        ).unsqueeze(0).expand(batch_size, -1, -1)
         
-        Kinv = torch.linalg.pinv(Kmat_2d_reg)
+        Kmat_batch_2d_reg = Kmat_batch_2d + eps * identity
+        
+        # Initialize output tensor
+        Kinv_batch = torch.zeros_like(Kmat_batch_2d_reg)
+        
+        # Compute pseudo-inverse for each matrix in the batch
+        # We process each matrix separately to handle potential singular matrices
+        for i in range(batch_size):
+            Kinv_batch[i] = torch.linalg.pinv(Kmat_batch_2d_reg[i])
+        
+        # Reshape if requested
         if reshape:
-            Kinv = Kinv.reshape((Kshape[0], Kshape[1], Kshape[2], Kshape[3]))
-        return Kinv
+            # From [batch_size, n_asu*n_atoms, n_asu*n_atoms] 
+            # to [batch_size, n_asu, n_atoms, n_asu, n_atoms]
+            Kinv_batch = Kinv_batch.reshape(batch_size, n_asu, n_atoms, n_asu, n_atoms)
+        
+        return Kinv_batch
 
 def sym_str_as_matrix(sym_str: str) -> torch.Tensor:
     """

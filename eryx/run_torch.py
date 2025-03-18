@@ -71,7 +71,7 @@ def run_torch(device: Optional[torch.device] = None):
         # Same parameters as NumPy version
         pdb_path = "tests/pdbs/5zck_p1.pdb"
         
-        # Create OnePhonon instance with parameters
+        # Create OnePhonon instance with optimized parameters
         onephonon_torch = OnePhonon(
             pdb_path,
             [-4, 4, 3], [-17, 17, 3], [-29, 29, 3],

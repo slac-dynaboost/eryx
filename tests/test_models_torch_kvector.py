@@ -128,13 +128,16 @@ class TestKvectorMethods(TestBase):
         
         # Verify results - check kvec tensor
         self.assertTrue(hasattr(model, 'kvec'), "kvec not created")
-        expected_kvec_shape = (model.hsampling[2], model.ksampling[2], model.lsampling[2], 3)
+        h_dim = int(model.hsampling[2])
+        k_dim = int(model.ksampling[2])
+        l_dim = int(model.lsampling[2])
+        expected_kvec_shape = (h_dim * k_dim * l_dim, 3)
         self.assertEqual(model.kvec.shape, expected_kvec_shape)
         self.assertTrue(model.kvec.requires_grad, "kvec should require gradients")
         
         # Check kvec_norm tensor
         self.assertTrue(hasattr(model, 'kvec_norm'), "kvec_norm not created")
-        expected_norm_shape = (model.hsampling[2], model.ksampling[2], model.lsampling[2], 1)
+        expected_norm_shape = (h_dim * k_dim * l_dim, 1)
         self.assertEqual(model.kvec_norm.shape, expected_norm_shape)
         self.assertTrue(model.kvec_norm.requires_grad, "kvec_norm should require gradients")
         
