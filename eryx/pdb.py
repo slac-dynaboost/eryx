@@ -159,7 +159,7 @@ class AtomicModel:
         Extract unit cell information.
         """
         self.cell = np.array(self.structure.cell.parameters)
-        self.A_inv = np.array(self.structure.cell.fractionalization_matrix)
+        self.A_inv = np.array(self.structure.cell.frac.mat)
         self.space_group = self.structure.spacegroup_hm
         self.unit_cell_axes = get_unit_cell_axes(self.cell)
         
