@@ -1,7 +1,9 @@
 import numpy as np
 import multiprocess as mp
 from functools import partial
+from eryx.autotest.debug import debug
 
+@debug
 def compute_form_factors(q_grid, ff_a, ff_b, ff_c):
     """
     Evaluate atomic form factors at the input q-vectors.
@@ -27,6 +29,7 @@ def compute_form_factors(q_grid, ff_a, ff_b, ff_c):
     fj = np.sum(fj, axis=1) + ff_c[:,np.newaxis]
     return fj.T
 
+@debug
 def structure_factors_batch(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
                             compute_qF=False, project_on_components=None,
                             sum_over_atoms=True):
@@ -80,6 +83,7 @@ def structure_factors_batch(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
         A = np.sum(A, axis=1)
     return A 
 
+@debug
 def structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, U=None,
                       batch_size=100000, n_processes=8,
                       compute_qF=False, project_on_components=None,

@@ -1,6 +1,8 @@
 import numpy as np
 import gemmi
+from eryx.autotest.debug import debug
 
+#@debug
 def generate_grid(A_inv, hsampling, ksampling, lsampling, return_hkl=False):
     """
     Generate a grid of q-vectors based on the desired extents 
@@ -43,6 +45,7 @@ def generate_grid(A_inv, hsampling, ksampling, lsampling, return_hkl=False):
         q_grid = 2*np.pi*np.inner(A_inv.T, hkl_grid).T
         return q_grid, map_shape
 
+#@debug
 def get_symmetry_equivalents(hkl_grid, sym_ops):
     """
     Get symmetry equivalent Miller indices of input hkl_grid.
@@ -69,6 +72,7 @@ def get_symmetry_equivalents(hkl_grid, sym_ops):
     hkl_grid_sym = hkl_grid_sym[1:]
     return hkl_grid_sym.reshape(len(sym_ops), hkl_grid.shape[0], 3)
     
+#@debug
 def get_ravel_indices(hkl_grid_sym, sampling):
     """
     Map 3d hkl indices to corresponding 1d indices after raveling.
@@ -108,6 +112,7 @@ def sin_sq(angles):
     """ Compute sine squared of input angles in radianss. """
     return np.square(np.sin(angles))
 
+#@debug
 def compute_resolution(cell, hkl):
     """
     Compute reflections' resolution in 1/Angstrom. To check, see: 
@@ -275,6 +280,7 @@ def get_asu_mask(space_group, hkl_grid):
     asu_mask = eval(asu_condition)
     return asu_mask
 
+#@debug
 def get_resolution_mask(cell, hkl_grid, res_limit):
     """
     Generate a boolean mask that indicates which hkl indices belong
@@ -300,6 +306,7 @@ def get_resolution_mask(cell, hkl_grid, res_limit):
     res_mask = res_map > res_limit
     return res_mask, res_map
 
+#@debug
 def get_dq_map(A_inv, hkl_grid):
     """
     Compute dq, the distance to the nearest Bragg peak, for 
@@ -323,6 +330,7 @@ def get_dq_map(A_inv, hkl_grid):
     dq = np.linalg.norm(np.abs(q_closest - q_grid), axis=1)
     return np.around(dq, decimals=8)
 
+#@debug
 def get_centered_sampling(map_shape, sampling):
     """
     Get the hsampling, ksampling, and lsampling tuples for the input 
@@ -344,6 +352,7 @@ def get_centered_sampling(map_shape, sampling):
     extents = [((map_shape[i]-1) / sampling[i] / 2.0) for i in range(3)]
     return [(-extents[i], extents[i], sampling[i]) for i in range(3)]
 
+#@debug
 def resize_map(new_map, old_sampling, new_sampling):
     """
     Resize map if symmetrization has resulted in the inclusion of 
