@@ -178,6 +178,10 @@ def compute_resolution(cell: torch.Tensor, hkl: torch.Tensor) -> torch.Tensor:
         
     References:
         - Original implementation: eryx/map_utils.py:compute_resolution
+        
+    This function works with both grid-based and arbitrary vector lists.
+    hkl can be any tensor of shape (..., 3) where the last dimension
+    contains the Miller indices.
     """
     # Extract cell parameters
     a, b, c = cell[0], cell[1], cell[2]

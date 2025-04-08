@@ -33,8 +33,11 @@ class OnePhonon:
     """
     
     #@debug
-    def __init__(self, pdb_path: str, hsampling: Tuple[float, float, float], 
-                 ksampling: Tuple[float, float, float], lsampling: Tuple[float, float, float],
+    def __init__(self, pdb_path: str, 
+                 hsampling: Optional[Tuple[float, float, float]] = None, 
+                 ksampling: Optional[Tuple[float, float, float]] = None, 
+                 lsampling: Optional[Tuple[float, float, float]] = None,
+                 q_vectors: Optional[torch.Tensor] = None,
                  expand_p1: bool = True, group_by: str = 'asu',
                  res_limit: float = 0., model: str = 'gnm',
                  gnm_cutoff: float = 4., gamma_intra: float = 1., gamma_inter: float = 1.,
@@ -47,6 +50,8 @@ class OnePhonon:
             hsampling: Tuple (hmin, hmax, oversampling) for h dimension.
             ksampling: Tuple (kmin, kmax, oversampling) for k dimension.
             lsampling: Tuple (lmin, lmax, oversampling) for l dimension.
+            q_vectors: Tensor of arbitrary q-vectors with shape [n_points, 3] in Å⁻¹. If provided, 
+                       sampling parameters are ignored.
             expand_p1: If True, expand to p1 (if PDB is asymmetric unit).
             group_by: Level of rigid-body assembly ('asu' or None).
             res_limit: High-resolution limit in Angstrom.
@@ -57,12 +62,38 @@ class OnePhonon:
             n_processes: Number of processes for parallel computation.
             device: PyTorch device to use (default: CUDA if available, else CPU).
         """
-        self.hsampling = hsampling
-        self.ksampling = ksampling
-        self.lsampling = lsampling
         self.n_processes = n_processes
         self.model_type = model
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Validate input parameters
+        self.use_arbitrary_q = q_vectors is not None
+        
+        if self.use_arbitrary_q:
+            # Validate q_vectors
+            if not isinstance(q_vectors, torch.Tensor):
+                raise ValueError("q_vectors must be a PyTorch tensor")
+            if q_vectors.dim() != 2 or q_vectors.shape[1] != 3:
+                raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
+            
+            # Ensure q_vectors is on the correct device and has requires_grad=True
+            self.q_vectors = q_vectors.to(device=self.device)
+            if self.q_vectors.dtype.is_floating_point:
+                self.q_vectors.requires_grad_(True)
+                
+            # Set placeholder values for sampling parameters
+            self.hsampling = (0, 0, 1)
+            self.ksampling = (0, 0, 1)
+            self.lsampling = (0, 0, 1)
+        else:
+            # Validate sampling parameters
+            if hsampling is None or ksampling is None or lsampling is None:
+                raise ValueError("Either q_vectors or all three sampling parameters (hsampling, ksampling, lsampling) must be provided")
+            
+            self.hsampling = hsampling
+            self.ksampling = ksampling
+            self.lsampling = lsampling
+            self.q_vectors = None
         
         self._setup(pdb_path, expand_p1, res_limit, group_by)
         self._setup_phonons(pdb_path, model, gnm_cutoff, gamma_intra, gamma_inter)
@@ -91,25 +122,47 @@ class OnePhonon:
         self.model.element_weights = element_weights
         print(f"Extracted {len(element_weights)} element weights using PDBToTensor adapter")
         
-        # Build the grid of hkl indices using the NP generate_grid.
-        from eryx.map_utils import generate_grid, get_resolution_mask
-        hkl_grid, self.map_shape = generate_grid(self.model.A_inv, 
-                                                 self.hsampling,
-                                                 self.ksampling,
-                                                 self.lsampling,
-                                                 return_hkl=True)
-        # Convert the hkl grid to a torch tensor.
-        self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
+        if self.use_arbitrary_q:
+            # For arbitrary q-vector mode
+            # Use provided q-vectors directly
+            self.q_grid = self.q_vectors
+            
+            # Derive hkl_grid from q_vectors if needed
+            # q = 2π * A_inv^T * hkl, so hkl = (1/2π) * q * (A_inv^T)^-1
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
+            scaling_factor = 1.0 / (2.0 * torch.pi)
+            
+            # Calculate the inverse transpose of A_inv
+            A_inv_T_inv = torch.inverse(A_inv_tensor.T)
+            self.hkl_grid = torch.matmul(self.q_grid * scaling_factor, A_inv_T_inv)
+            
+            # Set map_shape for compatibility
+            self.map_shape = (self.q_grid.shape[0], 1, 1)
+        else:
+            # Original path for grid-based approach
+            from eryx.map_utils import generate_grid, get_resolution_mask
+            hkl_grid, self.map_shape = generate_grid(self.model.A_inv, 
+                                                    self.hsampling,
+                                                    self.ksampling,
+                                                    self.lsampling,
+                                                    return_hkl=True)
+            
+            # Convert the hkl grid to a torch tensor
+            self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
+            
+            # Compute q-grid as: 2π * A_inv^T * hkl_grid^T
+            self.q_grid = 2 * torch.pi * torch.matmul(
+                torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device).T,
+                self.hkl_grid.T
+            ).T
         
-        # Obtain resolution mask (converted to a torch bool tensor).
-        res_mask, _ = get_resolution_mask(self.model.cell, hkl_grid, res_limit)
-        self.res_mask = torch.tensor(res_mask, dtype=torch.bool, device=self.device)
-        
-        # Compute q-grid as: 2π * A_inv^T * hkl_grid^T.
-        self.q_grid = 2 * torch.pi * torch.matmul(
-            torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device).T,
-            self.hkl_grid.T
-        ).T
+        # Compute resolution mask using PyTorch functions
+        from eryx.map_utils_torch import compute_resolution
+        resolution = compute_resolution(
+            torch.tensor(self.model.cell, dtype=torch.float32, device=self.device), 
+            self.hkl_grid
+        )
+        self.res_mask = resolution > res_limit
         
         # Setup Crystal
         self.crystal = Crystal(self.model)
