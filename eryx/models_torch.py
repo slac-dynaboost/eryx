@@ -551,7 +551,25 @@ class OnePhonon:
         
         Tensors will have shape [h_dim*k_dim*l_dim, 3] for kvec
         and [h_dim*k_dim*l_dim, 1] for kvec_norm using fully collapsed format.
+        
+        In arbitrary q-vector mode, k-vectors are directly derived from q-vectors
+        using the relationship k = q/(2π).
         """
+        if self.use_arbitrary_q:
+            # For arbitrary q-vector mode, k-vectors are directly derived from q-vectors
+            # using the relationship k = q/(2π)
+            scaling_factor = 1.0 / (2.0 * torch.pi)
+            self.kvec = self.q_grid * scaling_factor
+            
+            # Calculate norms
+            self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+            
+            # Set requires_grad after construction
+            self.kvec.requires_grad_(True)
+            self.kvec_norm.requires_grad_(True)
+            
+            return
+        
         # Initialize dimensions
         h_dim = int(self.hsampling[2])
         k_dim = int(self.ksampling[2])
@@ -629,12 +647,51 @@ class OnePhonon:
         2. Fully collapsed format: a single flat index
         3. Batched format: tensor of shape [batch_size] containing flat indices
         
+        In arbitrary q-vector mode, this method handles direct indices or finds the
+        nearest q-vector to the requested Miller indices.
+        
         Args:
             indices_or_batch: Either a 3-tuple (h,k,l), a single flat index, or a tensor of flat indices
             
         Returns:
             Torch tensor of raveled indices, or list of tensors for batched input
         """
+        # For arbitrary q-vector mode, handle differently
+        if self.use_arbitrary_q:
+            # If input is a direct index or tensor of indices, return as-is
+            if isinstance(indices_or_batch, int) or (isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() <= 1):
+                return indices_or_batch
+            
+            # If input is (h,k,l) tuple, find nearest q-vector
+            elif isinstance(indices_or_batch, (tuple, list)) and len(indices_or_batch) == 3:
+                # Convert Miller indices to q-vector
+                h, k, l = indices_or_batch
+                
+                # Convert to tensor if needed
+                if not isinstance(h, torch.Tensor):
+                    h = torch.tensor(h, device=self.device)
+                if not isinstance(k, torch.Tensor):
+                    k = torch.tensor(k, device=self.device)
+                if not isinstance(l, torch.Tensor):
+                    l = torch.tensor(l, device=self.device)
+                
+                hkl = torch.tensor([h, k, l], device=self.device).float()
+                
+                # Convert to q-vector: q = 2π * A_inv^T * hkl
+                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
+                target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl)
+                
+                # Find nearest q-vector in our list
+                distances = torch.norm(self.q_grid - target_q, dim=1)
+                nearest_idx = torch.argmin(distances)
+                
+                return nearest_idx
+            
+            # Unsupported input format
+            else:
+                raise ValueError(f"Unsupported input format for arbitrary q-vector mode: {type(indices_or_batch)}")
+        
+        # Original implementation for grid-based approach
         # Check if input is a batch tensor
         is_batch = isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 1 and indices_or_batch.numel() > 1
         
@@ -1216,12 +1273,19 @@ class OnePhonon:
         """
         Convert tensor from [h_dim, k_dim, l_dim, ...] to [h_dim*k_dim*l_dim, ...].
         
+        In arbitrary q-vector mode, this is an identity operation since tensors
+        are already in the correct shape.
+        
         Args:
             tensor: Tensor in original shape with dimensions [h_dim, k_dim, l_dim, ...]
             
         Returns:
             Tensor in fully collapsed batched shape [h_dim*k_dim*l_dim, ...]
         """
+        # For arbitrary q-vector mode, return tensor unchanged
+        if self.use_arbitrary_q:
+            return tensor
+            
         # Get dimensions
         h_dim = tensor.shape[0]
         k_dim = tensor.shape[1]
@@ -1235,12 +1299,19 @@ class OnePhonon:
         """
         Convert tensor from [h_dim*k_dim*l_dim, ...] to [h_dim, k_dim, l_dim, ...].
         
+        In arbitrary q-vector mode, this is an identity operation since there
+        is no grid structure to reshape to.
+        
         Args:
             tensor: Tensor in fully collapsed batched shape with dimensions [h_dim*k_dim*l_dim, ...]
             
         Returns:
             Tensor in original shape [h_dim, k_dim, l_dim, ...]
         """
+        # For arbitrary q-vector mode, return tensor unchanged
+        if self.use_arbitrary_q:
+            return tensor
+            
         # Get dimensions
         hkl_dim = tensor.shape[0]
         remaining_dims = tensor.shape[1:]

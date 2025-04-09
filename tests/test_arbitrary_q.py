@@ -190,7 +190,194 @@ class TestArbitraryQVectors(TestBase):
         expected_hkl = torch.matmul(q_vectors * scaling_factor, A_inv_T_inv)
         
         self.assertTrue(torch.allclose(model.hkl_grid, expected_hkl, rtol=1e-5, atol=1e-8))
+    
+    def test_build_kvec_brillouin(self):
+        """
+        Test _build_kvec_Brillouin method with arbitrary q-vectors.
+        """
+        # Create a custom set of q-vectors
+        q_vectors = torch.tensor([
+            [0.123, 0.456, 0.789],
+            [1.234, 2.345, 3.456],
+            [-0.123, -0.456, -0.789]
+        ], device=self.device, requires_grad=True)
+        
+        # Create model with these q-vectors
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Call _build_kvec_Brillouin explicitly
+        model._build_kvec_Brillouin()
+        
+        # Verify kvec and kvec_norm tensor shapes
+        self.assertEqual(model.kvec.shape, (3, 3))
+        self.assertEqual(model.kvec_norm.shape, (3, 1))
+        
+        # Verify kvec = q_grid/(2π)
+        expected_kvec = q_vectors / (2.0 * torch.pi)
+        self.assertTrue(torch.allclose(model.kvec, expected_kvec, rtol=1e-5, atol=1e-8))
+        
+        # Verify both tensors have requires_grad=True
+        self.assertTrue(model.kvec.requires_grad)
+        self.assertTrue(model.kvec_norm.requires_grad)
+        
+        # Test gradient flow
+        # Create a simple loss function
+        loss = torch.sum(model.kvec)
+        
+        # Compute backward pass
+        loss.backward()
+        
+        # Verify gradients are computed
+        self.assertIsNotNone(q_vectors.grad)
+        self.assertTrue(torch.all(q_vectors.grad > 0))
 
+
+    def test_at_kvec_from_miller_points(self):
+        """
+        Test _at_kvec_from_miller_points method with arbitrary q-vectors.
+        """
+        # Create a custom set of q-vectors
+        q_vectors = torch.tensor([
+            [0.123, 0.456, 0.789],
+            [1.234, 2.345, 3.456],
+            [-0.123, -0.456, -0.789]
+        ], device=self.device)
+        
+        # Create model with these q-vectors
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Test with direct index input
+        direct_idx = 1
+        result = model._at_kvec_from_miller_points(direct_idx)
+        self.assertEqual(result, direct_idx)
+        
+        # Test with tensor of indices
+        indices_tensor = torch.tensor([0, 2], device=self.device)
+        result = model._at_kvec_from_miller_points(indices_tensor)
+        self.assertTrue(torch.all(result == indices_tensor))
+        
+        # Test with Miller indices tuple
+        # Create a q-vector that should be close to one in our list
+        A_inv_tensor = torch.tensor(model.model.A_inv, dtype=torch.float32, device=self.device)
+        hkl = torch.tensor([1.0, 2.0, 3.0], device=self.device)
+        target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl)
+        
+        # Find the closest q-vector in our list
+        distances = torch.norm(q_vectors - target_q, dim=1)
+        expected_idx = torch.argmin(distances).item()
+        
+        # Test the method with the same hkl
+        result = model._at_kvec_from_miller_points((1.0, 2.0, 3.0))
+        self.assertEqual(result, expected_idx)
+    
+    def test_shape_handling_methods(self):
+        """
+        Test shape handling methods with arbitrary q-vectors.
+        """
+        # Create a custom set of q-vectors
+        q_vectors = torch.tensor([
+            [0.123, 0.456, 0.789],
+            [1.234, 2.345, 3.456],
+            [-0.123, -0.456, -0.789]
+        ], device=self.device)
+        
+        # Create model with these q-vectors
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Create test tensors
+        test_tensor_2d = torch.rand((3, 5), device=self.device)
+        test_tensor_3d = torch.rand((3, 3, 3), device=self.device)
+        
+        # Test to_batched_shape (should be identity operation)
+        result_2d = model.to_batched_shape(test_tensor_2d)
+        self.assertTrue(torch.all(result_2d == test_tensor_2d))
+        self.assertEqual(result_2d.shape, test_tensor_2d.shape)
+        
+        result_3d = model.to_batched_shape(test_tensor_3d)
+        self.assertTrue(torch.all(result_3d == test_tensor_3d))
+        self.assertEqual(result_3d.shape, test_tensor_3d.shape)
+        
+        # Test to_original_shape (should be identity operation)
+        result_2d = model.to_original_shape(test_tensor_2d)
+        self.assertTrue(torch.all(result_2d == test_tensor_2d))
+        self.assertEqual(result_2d.shape, test_tensor_2d.shape)
+        
+        result_3d = model.to_original_shape(test_tensor_3d)
+        self.assertTrue(torch.all(result_3d == test_tensor_3d))
+        self.assertEqual(result_3d.shape, test_tensor_3d.shape)
+    
+    def test_grid_equivalence_phase2(self):
+        """
+        Test that grid-based and arbitrary q-vector approaches produce equivalent results
+        for Phase 2 methods.
+        """
+        # Create grid-based model
+        grid_model = OnePhonon(
+            self.pdb_path,
+            **self.grid_params,
+            device=self.device
+        )
+        
+        # Extract q-vectors from grid model
+        q_vectors = grid_model.q_grid.clone().detach()
+        
+        # Create arbitrary q-vector model with the same q-vectors
+        q_model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Call _build_kvec_Brillouin on both models
+        grid_model._build_kvec_Brillouin()
+        q_model._build_kvec_Brillouin()
+        
+        # Compare k-vectors
+        self.assertTrue(torch.allclose(grid_model.kvec, q_model.kvec, rtol=1e-5, atol=1e-8))
+        self.assertTrue(torch.allclose(grid_model.kvec_norm, q_model.kvec_norm, rtol=1e-5, atol=1e-8))
+        
+        # Test _at_kvec_from_miller_points with a specific point
+        grid_result = grid_model._at_kvec_from_miller_points((0, 0, 0))
+        
+        # For arbitrary q-vector model, we need to find the equivalent point
+        # Convert (0,0,0) to q-vector
+        A_inv_tensor = torch.tensor(q_model.model.A_inv, dtype=torch.float32, device=self.device)
+        hkl = torch.tensor([0.0, 0.0, 0.0], device=self.device)
+        target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl)
+        
+        # Find nearest q-vector in our list
+        distances = torch.norm(q_vectors - target_q, dim=1)
+        nearest_idx = torch.argmin(distances).item()
+        
+        # Get the result from arbitrary q-vector model
+        q_result = q_model._at_kvec_from_miller_points((0, 0, 0))
+        
+        # The nearest index should match the expected index
+        self.assertEqual(q_result, nearest_idx)
+        
+        # Test shape handling methods with a test tensor
+        test_tensor = torch.rand((grid_model.kvec.shape[0], 5), device=self.device)
+        
+        # For grid model, shape transformations should change the shape
+        grid_original = grid_model.to_original_shape(test_tensor)
+        self.assertNotEqual(grid_original.shape, test_tensor.shape)
+        
+        # For arbitrary q-vector model, shape transformations should be identity operations
+        q_original = q_model.to_original_shape(test_tensor)
+        self.assertEqual(q_original.shape, test_tensor.shape)
+        self.assertTrue(torch.all(q_original == test_tensor))
 
 if __name__ == '__main__':
     unittest.main()
