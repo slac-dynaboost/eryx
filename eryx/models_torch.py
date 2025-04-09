@@ -9,6 +9,7 @@ References:
     - Original NumPy implementation in eryx/models.py
 """
 
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -602,22 +603,20 @@ class OnePhonon:
         
         if self.use_arbitrary_q:
             # For arbitrary q-vector mode, k-vectors are directly related to q-vectors: k = q/(2π)
-            print(f"Building k-vectors for {self.q_grid.shape[0]} arbitrary q-vectors")
+            # Gradients are automatically preserved through this operation
             self.kvec = self.q_grid / (2.0 * torch.pi)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
         
-            # Print debug information about the k-vectors
-            print(f"Arbitrary mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
-            print(f"Arbitrary mode: kvec range [{self.kvec.min().item():.4f}, {self.kvec.max().item():.4f}]")
-            print(f"Arbitrary mode: kvec_norm range [{self.kvec_norm.min().item():.4f}, {self.kvec_norm.max().item():.4f}]")
-        
-            # Print example k-vector for verification
-            if self.kvec.shape[0] > 0:
-                print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
-        
-            # Print example k-vector for verification
-            if self.kvec.shape[0] > 0:
-                print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
+            # Print debug information about the k-vectors (for development only)
+            if os.environ.get("ERYX_DEBUG") == "1":
+                print(f"Building k-vectors for {self.q_grid.shape[0]} arbitrary q-vectors")
+                print(f"Arbitrary mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
+                print(f"Arbitrary mode: kvec range [{self.kvec.min().item():.4f}, {self.kvec.max().item():.4f}]")
+                print(f"Arbitrary mode: kvec_norm range [{self.kvec_norm.min().item():.4f}, {self.kvec_norm.max().item():.4f}]")
+                
+                # Print example k-vector for verification
+                if self.kvec.shape[0] > 0:
+                    print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
         else:
             # For grid-based mode, carefully replicate the NumPy implementation
             
@@ -662,11 +661,8 @@ class OnePhonon:
             
             print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         
-        # Ensure tensors have requires_grad if they don't already
-        if not self.kvec.requires_grad and self.kvec.dtype.is_floating_point:
-            self.kvec.requires_grad_(True)
-        if not self.kvec_norm.requires_grad and self.kvec_norm.dtype.is_floating_point:
-            self.kvec_norm.requires_grad_(True)
+        # Note: requires_grad is already preserved from input q_vectors through operations
+        # No need to explicitly set requires_grad here
     
     #@debug
     def _center_kvec(self, x: int, L: int) -> float:
@@ -746,11 +742,14 @@ class OnePhonon:
                 distances = torch.norm(self.q_grid - target_q, dim=1)
                 nearest_idx = torch.argmin(distances)
             
-                print(f"Arbitrary mode: Found nearest q-vector at index {nearest_idx} for hkl={hkl}")
+                if os.environ.get("ERYX_DEBUG") == "1":
+                    print(f"Arbitrary mode: Found nearest q-vector at index {nearest_idx} for hkl={hkl}")
                 return nearest_idx
             
             # If input is a tensor with shape [batch_size, 3] (batched Miller indices)
             elif isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 2 and indices_or_batch.shape[1] == 3:
+                # TODO: Future enhancement - implement batched Miller indices support for arbitrary q-vector mode
+                # This would require vectorized nearest-neighbor search for multiple hkl points at once
                 raise NotImplementedError(
                     "Batched Miller indices (tensor of shape [batch_size, 3]) are not currently supported "
                     "in arbitrary q-vector mode. Please provide individual (h,k,l) tuples instead."
@@ -1356,13 +1355,14 @@ class OnePhonon:
                 return Id_masked
             
             # Pre-compute all ASU data to avoid repeated tensor creation
+            # Use array_to_tensor adapter for consistent dtype and gradient settings
             asu_data = []
             for i_asu in range(self.n_asu):
                 asu_data.append({
-                    'xyz': torch.tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32, device=self.device),
-                    'ff_a': torch.tensor(self.model.ff_a[i_asu], dtype=torch.float32, device=self.device),
-                    'ff_b': torch.tensor(self.model.ff_b[i_asu], dtype=torch.float32, device=self.device),
-                    'ff_c': torch.tensor(self.model.ff_c[i_asu], dtype=torch.float32, device=self.device),
+                    'xyz': self.array_to_tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32),
+                    'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=torch.float32),
+                    'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=torch.float32),
+                    'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=torch.float32),
                     'project': self.Amat[i_asu]
                 })
             
@@ -1471,13 +1471,14 @@ class OnePhonon:
         # Process grid-based mode
         
         # Pre-compute all ASU data to avoid repeated tensor creation
+        # Use array_to_tensor adapter for consistent dtype and gradient settings
         asu_data = []
         for i_asu in range(self.n_asu):
             asu_data.append({
-                'xyz': torch.tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32, device=self.device),
-                'ff_a': torch.tensor(self.model.ff_a[i_asu], dtype=torch.float32, device=self.device),
-                'ff_b': torch.tensor(self.model.ff_b[i_asu], dtype=torch.float32, device=self.device),
-                'ff_c': torch.tensor(self.model.ff_c[i_asu], dtype=torch.float32, device=self.device),
+                'xyz': self.array_to_tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32),
+                'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=torch.float32),
+                'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=torch.float32),
+                'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=torch.float32),
                 'project': self.Amat[i_asu]
             })
         
