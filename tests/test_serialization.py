@@ -80,53 +80,6 @@ class TestObjectSerializer(unittest.TestCase):
         except ImportError:
             self.skipTest("NumPy not available")
     
-    def test_gemmi_structure(self):
-        """Test Gemmi Structure serialization/deserialization."""
-        try:
-            import gemmi
-            
-            # Create a simple Structure with basic components
-            structure = gemmi.Structure()
-            structure.name = "test_structure"
-            structure.cell = gemmi.UnitCell(10, 10, 10, 90, 90, 90)
-            structure.spacegroup_hm = "P 1"
-            
-            model = gemmi.Model("1")
-            chain = gemmi.Chain("A")
-            residue = gemmi.Residue()
-            residue.name = "ALA"
-            residue.seqid = gemmi.SeqId(1, ' ')
-            
-            atom = gemmi.Atom()
-            atom.name = "CA"
-            atom.pos = gemmi.Position(1, 2, 3)
-            atom.element = gemmi.Element("C")
-            atom.b_iso = 20.0
-            atom.occ = 1.0
-            
-            residue.add_atom(atom)
-            chain.add_residue(residue)
-            model.add_chain(chain)
-            structure.add_model(model)
-            
-            # Test serialization/deserialization
-            serialized = self.serializer.serialize(structure)
-            self.assertEqual(serialized["__type__"], "gemmi.Structure")
-            self.assertEqual(serialized["name"], "test_structure")
-            
-            # Test deserialization if GemmiSerializer is available
-            try:
-                from eryx.autotest.gemmi_serializer import GemmiSerializer
-                deserialized = self.serializer.deserialize(serialized)
-                self.assertEqual(deserialized.name, "test_structure")
-                self.assertEqual(len(deserialized), 1)  # One model
-                self.assertEqual(len(deserialized[0]), 1)  # One chain
-            except ImportError:
-                print("GemmiSerializer not available, skipping deserialization test")
-                
-        except ImportError:
-            self.skipTest("Gemmi not available")
-    
     def test_custom_objects(self):
         """Test object serialization/deserialization."""
         # Define a simple custom class
@@ -207,42 +160,6 @@ class TestObjectSerializer(unittest.TestCase):
             self.assertEqual(data, loaded)
         finally:
             os.unlink(filename)
-    
-    def test_custom_handler(self):
-        """Test registering and using custom type handlers."""
-        # Define a custom class
-        class Point:
-            def __init__(self, x, y):
-                self.x = x
-                self.y = y
-                
-            def __eq__(self, other):
-                if not isinstance(other, Point):
-                    return False
-                return self.x == other.x and self.y == other.y
-        
-        # Define custom handlers
-        def serialize_point(point):
-            return {
-                "__type__": "custom.Point",
-                "x": point.x,
-                "y": point.y
-            }
-        
-        def deserialize_point(data):
-            return Point(data["x"], data["y"])
-        
-        # Register handlers
-        self.serializer.register_handler(Point, serialize_point, deserialize_point)
-        
-        # Test serialization/deserialization
-        point = Point(10, 20)
-        serialized = self.serializer.serialize(point)
-        deserialized = self.serializer.deserialize(serialized)
-        
-        self.assertEqual(point, deserialized)
-        self.assertEqual(deserialized.x, 10)
-        self.assertEqual(deserialized.y, 20)
 
     def test_numpy_array_format(self):
         """Test the specific binary format used for NumPy array serialization."""

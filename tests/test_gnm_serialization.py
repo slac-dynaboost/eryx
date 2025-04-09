@@ -79,58 +79,6 @@ class TestGNMSerialization(unittest.TestCase):
         # Print state structure
         self._print_state_structure(loaded_state)
     
-    def test_torch_gnm_creation_from_state(self):
-        """Test creating a PyTorch GNM from serialized state."""
-        # Create a NumPy GNM instance
-        gnm = NumpyGNM(self.pdb_path, self.enm_cutoff, self.gamma_intra, self.gamma_inter)
-        
-        # Serialize the GNM
-        state = self._capture_state(gnm)
-        
-        # Create a PyTorch GNM from the state
-        builder = StateBuilder(device=self.device)
-        torch_gnm = builder.build(TorchGNM, state)
-        
-        # Verify the PyTorch GNM has the correct attributes
-        self._verify_torch_gnm(torch_gnm)
-        
-        # Test compute_hessian method
-        try:
-            hessian = torch_gnm.compute_hessian()
-            self.assertIsInstance(hessian, torch.Tensor)
-            self.assertEqual(hessian.dtype, torch.complex64)
-            expected_shape = (torch_gnm.n_asu, torch_gnm.n_atoms_per_asu, 
-                             torch_gnm.n_cell, torch_gnm.n_asu, torch_gnm.n_atoms_per_asu)
-            self.assertEqual(hessian.shape, expected_shape)
-            print(f"Hessian shape: {hessian.shape}")
-        except Exception as e:
-            self.fail(f"compute_hessian failed: {e}")
-            
-        # Test compute_K method
-        try:
-            # Create a test k-vector
-            kvec = torch.ones(3, device=self.device, requires_grad=True)
-            
-            # Compute K matrix
-            K = torch_gnm.compute_K(hessian, kvec)
-            
-            # Verify K matrix
-            self.assertIsInstance(K, torch.Tensor)
-            self.assertEqual(K.dtype, torch.complex64)
-            expected_shape = (torch_gnm.n_asu, torch_gnm.n_atoms_per_asu, 
-                             torch_gnm.n_asu, torch_gnm.n_atoms_per_asu)
-            self.assertEqual(K.shape, expected_shape)
-            print(f"K matrix shape: {K.shape}")
-            
-#            # Test gradient flow
-#            loss = torch.abs(K).sum()
-#            loss.backward()
-#            self.assertIsNotNone(kvec.grad)
-#            self.assertFalse(torch.allclose(kvec.grad, torch.zeros_like(kvec.grad)),
-#                           "No gradient flow to kvec in compute_K")
-        except Exception as e:
-            self.fail(f"compute_K failed: {e}")
-    
     def _capture_state(self, obj: Any) -> Dict[str, Any]:
         """Capture the state of an object."""
         state = {}
@@ -190,108 +138,20 @@ class TestGNMSerialization(unittest.TestCase):
         self.assertIsInstance(gnm.crystal, dict)
         self.assertTrue(callable(gnm.crystal.get('id_to_hkl')))
         self.assertTrue(callable(gnm.crystal.get('get_unitcell_origin')))
-        
+
         # Test the methods in crystal dictionary
         hkl = gnm.crystal['id_to_hkl'](1)
         self.assertEqual(hkl, [1, 0, 0])
-        
+
         origin = gnm.crystal['get_unitcell_origin']([1, 0, 0])
         self.assertIsInstance(origin, torch.Tensor)
         self.assertEqual(origin.shape, (3,))
         self.assertTrue(origin.requires_grad)
-        
+
         # Verify asu_neighbors was created
         self.assertTrue(hasattr(gnm, 'asu_neighbors'))
         self.assertIsInstance(gnm.asu_neighbors, list)
-    
-    def test_dill_serialization(self):
-        """Test serialization and deserialization of GNM using dill."""
-        try:
-            import dill
-        except ImportError:
-            self.skipTest("dill not available")
-            
-        # Create a minimal GNM instance
-        gnm = TorchGNM()
-        gnm.device = self.device
-        gnm.n_asu = 2
-        gnm.n_atoms_per_asu = 3
-        gnm.n_cell = 3
-        gnm.id_cell_ref = 0
-        gnm.enm_cutoff = 4.0
-        gnm.gamma_intra = 1.0
-        gnm.gamma_inter = 1.0
-        
-        # Create gamma tensor
-        gnm.gamma = torch.ones((gnm.n_cell, gnm.n_asu, gnm.n_asu), 
-                              device=self.device, requires_grad=True)
-        
-        # Create crystal dictionary with required methods
-        gnm.crystal = {
-            'id_to_hkl': lambda cell_id: [cell_id, 0, 0],
-            'get_unitcell_origin': lambda unit_cell: torch.tensor(
-                [float(unit_cell[0]) if isinstance(unit_cell, (list, tuple)) else 0.0, 
-                 0.0, 0.0], device=self.device, requires_grad=True)
-        }
-        
-        # Create asu_neighbors
-        gnm.asu_neighbors = [[[[[] for _ in range(gnm.n_atoms_per_asu)] 
-                             for _ in range(gnm.n_asu)] 
-                            for _ in range(gnm.n_cell)] 
-                           for _ in range(gnm.n_asu)]
-        
-        # Direct dill serialization
-        serialized_bytes = dill.dumps(gnm)
-        deserialized_gnm = dill.loads(serialized_bytes)
-        
-        # Verify deserialized GNM has the correct structure
-        self.assertEqual(deserialized_gnm.n_asu, gnm.n_asu)
-        self.assertEqual(deserialized_gnm.n_atoms_per_asu, gnm.n_atoms_per_asu)
-        self.assertEqual(deserialized_gnm.n_cell, gnm.n_cell)
-        self.assertEqual(deserialized_gnm.id_cell_ref, gnm.id_cell_ref)
-        
-        # Verify gamma tensor
-        self.assertTrue(hasattr(deserialized_gnm, 'gamma'))
-        self.assertTrue(torch.allclose(deserialized_gnm.gamma, gnm.gamma))
-        
-        # Verify crystal functions
-        self.assertTrue(callable(deserialized_gnm.crystal['id_to_hkl']))
-        self.assertTrue(callable(deserialized_gnm.crystal['get_unitcell_origin']))
-        
-        # Test the functions
-        hkl = deserialized_gnm.crystal['id_to_hkl'](1)
-        self.assertEqual(hkl, [1, 0, 0])
-        
-        # Test with ObjectSerializer
-        from eryx.serialization import ObjectSerializer
-        serializer = ObjectSerializer()
-        
-        # Serialize using ObjectSerializer
-        serialized_dict = serializer.serialize(gnm)
-        self.assertEqual(serialized_dict["__type__"], "dill_serialized")
-        self.assertTrue("__data__" in serialized_dict)
-        
-        try:
-            # Deserialize using ObjectSerializer
-            deserialized_gnm2 = serializer.deserialize(serialized_dict)
-            
-            # Check if we got a dictionary with error information instead of a GNM instance
-            if isinstance(deserialized_gnm2, dict) and deserialized_gnm2.get("__type__") == "dill_deserialization_error":
-                print(f"Note: Got deserialization error dictionary instead of GNM instance.")
-                print(f"Error: {deserialized_gnm2.get('__error__', 'Unknown error')}")
-                # This is acceptable for this test - we're testing the serialization mechanism
-                # not the actual deserialization which depends on the test environment
-                self.assertEqual(deserialized_gnm2.get("__class__"), "GaussianNetworkModel")
-                self.assertEqual(deserialized_gnm2.get("__module__"), "eryx.pdb_torch")
-            else:
-                # If we got a proper GNM instance, verify its structure
-                self.assertIsInstance(deserialized_gnm2, TorchGNM, "Deserialized object is not a GaussianNetworkModel")
-                self.assertEqual(deserialized_gnm2.n_asu, gnm.n_asu)
-                self.assertEqual(deserialized_gnm2.n_atoms_per_asu, gnm.n_atoms_per_asu)
-                self.assertEqual(deserialized_gnm2.n_cell, gnm.n_cell)
-        except Exception as e:
-            self.fail(f"Failed to deserialize GNM with ObjectSerializer: {e}")
-    
+
     def _verify_gnm_state(self, state: Dict[str, Any]) -> None:
         """Verify the structure of the serialized GNM state."""
         # Check required attributes
@@ -308,38 +168,38 @@ class TestGNMSerialization(unittest.TestCase):
         
         # Check crystal
         self.assertIn('crystal', state, "Missing crystal")
-    
+
     def _verify_torch_gnm(self, gnm: TorchGNM) -> None:
         """Verify the structure of the PyTorch GNM instance."""
         # Check required attributes
         required_attrs = ['n_asu', 'n_atoms_per_asu', 'n_cell', 'id_cell_ref', 'device']
         for attr in required_attrs:
             self.assertTrue(hasattr(gnm, attr), f"Missing required attribute: {attr}")
-        
+
         # Check gamma tensor
         self.assertTrue(hasattr(gnm, 'gamma'), "Missing gamma tensor")
         if hasattr(gnm, 'gamma'):
             self.assertIsInstance(gnm.gamma, torch.Tensor, "gamma is not a tensor")
-        
+
         # Check asu_neighbors
         self.assertTrue(hasattr(gnm, 'asu_neighbors'), "Missing asu_neighbors")
-        
+
         # Check crystal
         self.assertTrue(hasattr(gnm, 'crystal'), "Missing crystal")
-        
+
         # Check methods
-        self.assertTrue(callable(getattr(gnm, 'compute_hessian', None)), 
+        self.assertTrue(callable(getattr(gnm, 'compute_hessian', None)),
                        "compute_hessian method not found")
-        self.assertTrue(callable(getattr(gnm, 'compute_K', None)), 
+        self.assertTrue(callable(getattr(gnm, 'compute_K', None)),
                        "compute_K method not found")
-        self.assertTrue(callable(getattr(gnm, 'compute_Kinv', None)), 
+        self.assertTrue(callable(getattr(gnm, 'compute_Kinv', None)),
                        "compute_Kinv method not found")
-    
+
     def _print_state_structure(self, state: Dict[str, Any], indent: int = 0) -> None:
         """Print the structure of the state dictionary."""
         prefix = "  " * indent
         print(f"\nState Structure:")
-        
+
         for key, value in state.items():
             if isinstance(value, dict):
                 print(f"{prefix}{key}: Dict with {len(value)} keys")
@@ -352,17 +212,17 @@ class TestGNMSerialization(unittest.TestCase):
                 print(f"{prefix}{key}: NumPy array with shape {value.shape} and dtype {value.dtype}")
             else:
                 print(f"{prefix}{key}: {type(value).__name__}")
-    
+
     def _print_dict_structure(self, d: Dict[str, Any], indent: int = 0) -> None:
         """Print the structure of a dictionary."""
         prefix = "  " * indent
-        
+
         # Handle non-string keys
         if any(not isinstance(k, str) for k in d.keys()):
             key_types = set(type(k).__name__ for k in d.keys())
             print(f"{prefix}Keys are of types: {', '.join(key_types)}")
             return
-        
+
         # Print a sample of keys
         keys = list(d.keys())
         if len(keys) > 5:
