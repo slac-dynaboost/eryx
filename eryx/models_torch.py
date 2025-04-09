@@ -22,6 +22,10 @@ from eryx.autotest.debug import debug
 from eryx.adapters import PDBToTensor, TensorToNumpy
 
 class OnePhonon:
+    # Ensure that if someone uses OnePhonon.__new__(OnePhonon),
+    # we default to use_arbitrary_q = False.  The real constructor
+    # will override this if we do pass q_vectors.
+    use_arbitrary_q: bool = False
     """
     PyTorch implementation of the OnePhonon model for diffuse scattering calculations.
     
@@ -88,6 +92,9 @@ class OnePhonon:
         self.ksampling = ksampling
         self.lsampling = lsampling
         self.n_processes = n_processes
+        
+        # after this, self.use_arbitrary_q definitely exists
+        logging.debug(f"[INIT] final use_arbitrary_q={self.use_arbitrary_q}")
         
         # Validate inputs
         if q_vectors is not None:
@@ -1112,7 +1119,7 @@ class OnePhonon:
             Points outside the resolution mask will have NaN values.
         """
         import logging
-        logging.debug(f"[apply_disorder] rank={rank}, use_data_adp={use_data_adp}, use_arbitrary_q={self.use_arbitrary_q}")
+        logging.debug(f"[apply_disorder] rank={rank}, use_data_adp={use_data_adp}, use_arbitrary_q={getattr(self,'use_arbitrary_q',None)}")
         
         # Prepare ADPs
         if use_data_adp:
