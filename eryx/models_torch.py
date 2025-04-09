@@ -1434,9 +1434,15 @@ class OnePhonon:
             print(f"to_original_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
         else:
-            # Reshape using self.map_shape as set by generate_grid so that grid-based mode
-            # has a consistent interpretation of the dense grid dimensions.
-            return tensor.reshape(*self.map_shape, *tensor.shape[1:])
+            # In grid-based mode, use the full map shape as computed by generate_grid.
+            if hasattr(self, 'map_shape') and self.map_shape is not None:
+                h_dim, k_dim, l_dim = self.map_shape
+            else:
+                h_dim, k_dim, l_dim = int(self.hsampling[2]), int(self.ksampling[2]), int(self.lsampling[2])
+            
+            result = tensor.reshape(h_dim, k_dim, l_dim, *tensor.shape[1:])
+            print(f"to_original_shape: Converted {tensor.shape} to {result.shape}")
+            return result
     
     #@debug
     def compute_rb_phonons(self):
@@ -1463,15 +1469,10 @@ class OnePhonon:
             print(f"_flat_to_3d_indices: Using direct indices in arbitrary mode, shape={flat_indices.shape}")
             return flat_indices, flat_indices, flat_indices
             
-        # In grid-based mode, use the oversampling values directly.
-        if not getattr(self, 'use_arbitrary_q', False):
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
-            k_l_size = k_dim * l_dim
-        else:
-            # In arbitrary mode, use the map_shape values
-            h_dim, k_dim, l_dim = self.map_shape
-            k_l_size = k_dim * l_dim
+        # In grid-based mode, use the full dense grid dimensions from generate_grid.
+        # (self.map_shape is produced by generate_grid and reflects the full grid.)
+        h_dim, k_dim, l_dim = self.map_shape
+        k_l_size = k_dim * l_dim
         h_indices = torch.div(flat_indices, k_l_size, rounding_mode='floor')
         kl_remainder = flat_indices % k_l_size
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
@@ -1496,10 +1497,10 @@ class OnePhonon:
         Returns:
             Tensor of raveled indices
         """
-        # Use step sizes from the oversampling values (convert to integer)
-        h_range = torch.arange(h_idx, h_dim, int(self.hsampling[2]), device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, k_dim, int(self.ksampling[2]), device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, l_dim, int(self.lsampling[2]), device=self.device, dtype=torch.long)
+        # Create index grid using a step of 1 because in grid mode self.map_shape defines the full grid.
+        h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
+        k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
+        l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
         
         # Debug output for verification
         print(f"_compute_indices_for_point: Using dimensions h_dim={h_dim}, k_dim={k_dim}, l_dim={l_dim}")
