@@ -76,9 +76,11 @@ class OnePhonon:
             if q_vectors.dim() != 2 or q_vectors.shape[1] != 3:
                 raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
             
-            # Ensure q_vectors is on the correct device and has requires_grad=True
-            # Don't detach to preserve gradient flow from the caller's tensor
-            self.q_vectors = q_vectors.to(device=self.device)
+            # Preserve the identity of the input tensor
+            # Only move to device if needed, don't clone or detach
+            if q_vectors.device != self.device:
+                q_vectors = q_vectors.to(self.device)
+            self.q_vectors = q_vectors
             if not self.q_vectors.requires_grad and self.q_vectors.dtype.is_floating_point:
                 self.q_vectors.requires_grad_(True)
                 
