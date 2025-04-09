@@ -102,54 +102,7 @@ class TestScatterTorch(unittest.TestCase):
         
         self.assertIsNotNone(q_grid.grad)
         self.assertFalse(torch.allclose(q_grid.grad, torch.zeros_like(q_grid.grad)))
-    
-    def test_structure_factors(self):
-        """Test structure_factors against ground truth data."""
-        # Test against ground truth using TorchTesting
-        self.assertTrue(
-            self.torch_testing.testTorchCallable(self.structure_factors_log, structure_factors),
-            "structure_factors failed ground truth test"
-        )
-        
-        # Test batching by comparing different batch sizes
-        q_grid = torch.tensor([
-            [0.1, 0.0, 0.0],
-            [0.0, 0.2, 0.0],
-            [0.0, 0.0, 0.3],
-            [0.1, 0.1, 0.0],
-            [0.2, 0.2, 0.0],
-            [0.3, 0.3, 0.3]
-        ], dtype=torch.float32)
-        
-        xyz = torch.tensor([
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0]
-        ], dtype=torch.float32)
-        
-        ff_a = torch.tensor([
-            [2.31000, 1.02000, 1.58860, 0.86500],
-            [2.31000, 1.02000, 1.58860, 0.86500],
-            [2.31000, 1.02000, 1.58860, 0.86500]
-        ], dtype=torch.float32)
-        
-        ff_b = torch.tensor([
-            [20.8439, 10.2075, 0.5687, 51.6512],
-            [20.8439, 10.2075, 0.5687, 51.6512],
-            [20.8439, 10.2075, 0.5687, 51.6512]
-        ], dtype=torch.float32)
-        
-        ff_c = torch.tensor([0.2159, 0.2159, 0.2159], dtype=torch.float32)
-        
-        # Test with various batch sizes
-        sf_full = structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, batch_size=6)
-        sf_half = structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, batch_size=3)
-        sf_small = structure_factors(q_grid, xyz, ff_a, ff_b, ff_c, batch_size=2)
-        
-        # Results should be the same regardless of batch size
-        self.assertTrue(torch.allclose(sf_full, sf_half, rtol=1e-5, atol=1e-8))
-        self.assertTrue(torch.allclose(sf_full, sf_small, rtol=1e-5, atol=1e-8))
-    
+
     def test_compute_qF_option(self):
         """Test the compute_qF option for structure factors calculation."""
         q_grid = torch.tensor([

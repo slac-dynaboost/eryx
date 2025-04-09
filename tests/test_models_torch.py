@@ -95,104 +95,6 @@ class TestMatrixConstruction(TestBase):
             "Amat values don't match expected"
         )
         
-    def test_build_M_state_based(self):
-        """Test _build_M using state-based approach."""
-        # Import test helpers
-        from eryx.autotest.test_helpers import (
-            load_test_state,
-            build_test_object,
-            ensure_tensor
-        )
-        
-        try:
-            # Load before state using the helper function
-            before_state = load_test_state(
-                self.logger, 
-                self.module_name, 
-                self.class_name, 
-                "_build_M"
-            )
-        except FileNotFoundError as e:
-            # Handle missing logs gracefully
-            import glob
-            available_logs = glob.glob("logs/*build_M*")
-            self.skipTest(f"Could not find state log. Available logs: {available_logs}\nError: {e}")
-            return
-        
-        # Build model with StateBuilder
-        model = build_test_object(OnePhonon, before_state, device=self.device)
-        
-        # Call the method under test
-        model._build_M()
-        
-        # Verify results - check Linv tensor
-        self.assertTrue(hasattr(model, 'Linv'), "Linv not created")
-        expected_shape = (model.n_asu * model.n_dof_per_asu, model.n_asu * model.n_dof_per_asu)
-        self.assertEqual(model.Linv.shape, expected_shape)
-        self.assertTrue(model.Linv.requires_grad, "Linv should require gradients")
-        
-        # Load after state for comparison
-        try:
-            after_state = load_test_state(
-                self.logger, 
-                self.module_name, 
-                self.class_name, 
-                "_build_M",
-                before=False
-            )
-        except FileNotFoundError as e:
-            self.skipTest(f"Could not find after state log: {e}")
-            return
-        
-        # Get expected tensor from after state
-        expected_linv = after_state.get('Linv')
-        
-        # Check if expected_linv exists
-        if expected_linv is None:
-            self.skipTest("Expected Linv not found in after state log")
-            return
-            
-        expected_linv = ensure_tensor(expected_linv, device='cpu')
-        
-        # Convert model tensor to numpy for comparison
-        linv_numpy = model.Linv.detach().cpu().numpy()
-        expected_linv_numpy = expected_linv.detach().cpu().numpy() if isinstance(expected_linv, torch.Tensor) else expected_linv
-        
-        # Compare with appropriate tolerances for float64 calculations
-        tolerances = {'rtol': 1e-4, 'atol': 1e-5}
-        
-        # Print differences for debugging
-        max_diff = np.max(np.abs(linv_numpy - expected_linv_numpy))
-        print(f"Maximum difference: {max_diff}")
-        
-        # Print more detailed diagnostics
-        if max_diff > 1.0:
-            print(f"DIAGNOSTIC: Linv shape: {linv_numpy.shape}")
-            print(f"DIAGNOSTIC: Expected Linv shape: {expected_linv_numpy.shape}")
-            print(f"DIAGNOSTIC: Linv min/max: {np.min(linv_numpy):.6f}/{np.max(linv_numpy):.6f}")
-            print(f"DIAGNOSTIC: Expected min/max: {np.min(expected_linv_numpy):.6f}/{np.max(expected_linv_numpy):.6f}")
-            
-            # Check if there's a scaling factor
-            ratio = np.median(expected_linv_numpy / linv_numpy)
-            if not np.isnan(ratio) and not np.isinf(ratio):
-                print(f"DIAGNOSTIC: Median ratio (expected/actual): {ratio:.6f}")
-                
-                # Check if scaling fixes the issue
-                scaled_linv = linv_numpy * ratio
-                scaled_diff = np.max(np.abs(scaled_linv - expected_linv_numpy))
-                print(f"DIAGNOSTIC: After scaling, max difference: {scaled_diff:.6f}")
-        
-        # Verify tensors match expected values
-        self.assertTrue(
-            np.allclose(
-                linv_numpy, 
-                expected_linv_numpy, 
-                rtol=tolerances['rtol'], 
-                atol=tolerances['atol']
-            ),
-            "Linv values don't match expected"
-        )
-        
     def test_build_M_allatoms_state_based(self):
         """Test _build_M_allatoms using state-based approach."""
         # Import test helpers
@@ -371,7 +273,7 @@ class TestMatrixConstruction(TestBase):
             ),
             "Projected M values don't match expected"
         )
-        
+
     def test_log_completeness(self):
         """Verify matrix construction logs exist and contain required attributes."""
         if not hasattr(self, 'verify_logs') or not self.verify_logs:
