@@ -313,6 +313,42 @@ class TestArbitraryQVectors(TestBase):
         result = model._at_kvec_from_miller_points((1.0, 2.0, 3.0))
         self.assertEqual(result, expected_idx)
     
+    def test_compute_gnm_phonons_arbitrary(self):
+        """Test phonon mode calculation with arbitrary q-vectors."""
+        # Create arbitrary q-vector model
+        q_vectors = torch.tensor([
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+            [0.7, 0.8, 0.9],
+            [1.0, 1.1, 1.2]
+        ], device=self.device)
+        
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Call compute_gnm_phonons explicitly
+        model.compute_gnm_phonons()
+        
+        # Verify tensor shapes
+        n_points = q_vectors.shape[0]
+        self.assertEqual(model.V.shape, (n_points, model.n_asu * model.n_dof_per_asu, 
+                                     model.n_asu * model.n_dof_per_asu))
+        self.assertEqual(model.Winv.shape, (n_points, model.n_asu * model.n_dof_per_asu))
+        
+        # Verify tensors have finite values (not all NaN)
+        self.assertTrue(torch.any(torch.isfinite(model.Winv)))
+        
+        # Verify gradient flow
+        loss = torch.sum(torch.real(model.V))
+        loss.backward()
+        
+        # Check gradients flow back to q_vectors
+        self.assertIsNotNone(model.q_vectors.grad)
+        self.assertTrue(torch.any(model.q_vectors.grad != 0))
+    
     def test_shape_handling_methods(self):
         """
         Test shape handling methods with arbitrary q-vectors.
@@ -352,6 +388,45 @@ class TestArbitraryQVectors(TestBase):
         result_3d = model.to_original_shape(test_tensor_3d)
         self.assertTrue(torch.all(result_3d == test_tensor_3d))
         self.assertEqual(result_3d.shape, test_tensor_3d.shape)
+    
+    def test_compute_covariance_matrix_arbitrary(self):
+        """Test covariance matrix calculation with arbitrary q-vectors."""
+        # Create arbitrary q-vector model
+        q_vectors = torch.tensor([
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+            [0.7, 0.8, 0.9],
+            [1.0, 1.1, 1.2]
+        ], device=self.device)
+        
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Calculate phonons first
+        model.compute_gnm_phonons()
+        
+        # Then calculate covariance matrix
+        model.compute_covariance_matrix()
+        
+        # Verify covariance matrix shape
+        expected_shape = (model.n_asu, model.n_dof_per_asu, 
+                      model.n_cell, model.n_asu, model.n_dof_per_asu)
+        self.assertEqual(model.covar.shape, expected_shape)
+        
+        # Verify ADP tensor shape and values
+        self.assertTrue(hasattr(model, 'ADP'))
+        self.assertTrue(torch.all(torch.isfinite(model.ADP)))
+        
+        # Verify gradient flow
+        loss = torch.sum(model.ADP)
+        loss.backward()
+        
+        # Check gradients flow back to q_vectors
+        self.assertIsNotNone(model.q_vectors.grad)
+        self.assertTrue(torch.any(model.q_vectors.grad != 0))
     
     def test_grid_equivalence_phase2(self):
         """
@@ -409,6 +484,121 @@ class TestArbitraryQVectors(TestBase):
         q_original = q_model.to_original_shape(test_tensor)
         self.assertEqual(q_original.shape, test_tensor.shape)
         self.assertTrue(torch.all(q_original == test_tensor))
+    
+    def test_grid_equivalence_phase3(self):
+        """
+        Test that grid-based and arbitrary q-vector approaches produce
+        equivalent results for phonon calculations.
+        """
+        # Create a grid-based model
+        grid_model = OnePhonon(
+            self.pdb_path,
+            hsampling=[-2, 2, 2],
+            ksampling=[-2, 2, 2], 
+            lsampling=[-2, 2, 2],
+            device=self.device
+        )
+        
+        # Extract q-vectors from grid model
+        q_vectors = grid_model.q_grid.clone().detach()
+        
+        # Create an arbitrary q-vector model with the same vectors
+        q_model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Run phonon calculations on both models
+        grid_model.compute_gnm_phonons()
+        q_model.compute_gnm_phonons()
+        
+        # Run covariance matrix calculations
+        grid_model.compute_covariance_matrix()
+        q_model.compute_covariance_matrix()
+        
+        # Compare eigenvalues (Winv)
+        # Sort to handle potential ordering differences
+        grid_Winv = grid_model.Winv.reshape(-1).real
+        q_Winv = q_model.Winv.reshape(-1).real
+        
+        # Remove NaN values for comparison
+        grid_Winv_valid = grid_Winv[~torch.isnan(grid_Winv)]
+        q_Winv_valid = q_Winv[~torch.isnan(q_Winv)]
+        
+        # Sort values
+        grid_Winv_sorted, _ = torch.sort(grid_Winv_valid)
+        q_Winv_sorted, _ = torch.sort(q_Winv_valid)
+        
+        # Trim to same length if needed
+        min_length = min(grid_Winv_sorted.shape[0], q_Winv_sorted.shape[0])
+        grid_Winv_sorted = grid_Winv_sorted[:min_length]
+        q_Winv_sorted = q_Winv_sorted[:min_length]
+        
+        # Check if eigenvalues match
+        self.assertTrue(torch.allclose(
+            grid_Winv_sorted, q_Winv_sorted,
+            rtol=1e-4, atol=1e-5
+        ), "Eigenvalues (Winv) don't match between grid and arbitrary mode")
+        
+        # Compare ADP values
+        self.assertTrue(torch.allclose(
+            grid_model.ADP, q_model.ADP,
+            rtol=1e-4, atol=1e-5
+        ), "ADP values don't match between grid and arbitrary mode")
+
+    def test_phonon_calculation_performance(self):
+        """Compare performance between grid-based and arbitrary q-vector approaches."""
+        import time
+        
+        # 1. Set up identical q-vectors for comparison
+        grid_model = OnePhonon(
+            self.pdb_path,
+            hsampling=[-3, 3, 2],
+            ksampling=[-3, 3, 2], 
+            lsampling=[-3, 3, 2],
+            device=self.device
+        )
+        
+        # Extract q-vectors
+        q_vectors = grid_model.q_grid.clone().detach()
+        print(f"Testing with {q_vectors.shape[0]} q-vectors")
+        
+        # 2. Benchmark grid-based approach
+        start_time = time.time()
+        grid_model.compute_gnm_phonons()
+        grid_time_phonons = time.time() - start_time
+        
+        start_time = time.time()
+        grid_model.compute_covariance_matrix()
+        grid_time_covar = time.time() - start_time
+        
+        # 3. Benchmark arbitrary q-vector approach
+        q_model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        start_time = time.time()
+        q_model.compute_gnm_phonons()
+        q_time_phonons = time.time() - start_time
+        
+        start_time = time.time()
+        q_model.compute_covariance_matrix()
+        q_time_covar = time.time() - start_time
+        
+        # 4. Report results
+        print(f"\nPerformance comparison:")
+        print(f"  Grid-based phonon calculation: {grid_time_phonons:.4f}s")
+        print(f"  Arbitrary q-vector phonon calculation: {q_time_phonons:.4f}s")
+        print(f"  Phonon speedup factor: {grid_time_phonons/q_time_phonons:.2f}x")
+        
+        print(f"  Grid-based covariance calculation: {grid_time_covar:.4f}s")
+        print(f"  Arbitrary q-vector covariance calculation: {q_time_covar:.4f}s")
+        print(f"  Covariance speedup factor: {grid_time_covar/q_time_covar:.2f}x")
+        
+        # No hard assertions, this is just for information
 
 if __name__ == '__main__':
     unittest.main()
