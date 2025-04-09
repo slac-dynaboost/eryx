@@ -658,9 +658,11 @@ class OnePhonon:
             
             print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         
-        # Ensure the resulting tensors require gradients
-        self.kvec.requires_grad_(True)
-        self.kvec_norm.requires_grad_(True)
+        # Ensure tensors have requires_grad if they don't already
+        if not self.kvec.requires_grad and self.kvec.dtype.is_floating_point:
+            self.kvec.requires_grad_(True)
+        if not self.kvec_norm.requires_grad and self.kvec_norm.dtype.is_floating_point:
+            self.kvec_norm.requires_grad_(True)
     
     #@debug
     def _center_kvec(self, x: int, L: int) -> float:
@@ -1298,16 +1300,23 @@ class OnePhonon:
         """
         Compute the diffuse intensity using the one-phonon approximation.
         
-        This method uses vectorized operations to process k-vectors efficiently,
+        This method handles two modes of operation:
+        1. Grid-based mode: Processes q-vectors arranged in a 3D grid
+        2. Arbitrary q-vector mode: Processes arbitrary q-vectors in a vectorized manner
+        
+        The method uses vectorized operations to process k-vectors efficiently,
         minimizing loops and maximizing GPU utilization.
         
         Args:
             rank: Phonon mode rank to use (-1 for all modes)
             outdir: Directory to save results
-            use_data_adp: Whether to use ADPs from data
+            use_data_adp: Whether to use ADPs from data instead of computed values
             
         Returns:
-            Diffuse intensity tensor
+            Diffuse intensity tensor. In grid-based mode, this tensor has shape [n_points]
+            where n_points = product of grid dimensions. In arbitrary q-vector mode, 
+            this tensor has shape [n_points] where n_points = number of provided q-vectors.
+            Points outside the resolution mask will have NaN values.
         """
         import logging
         logging.info(f"apply_disorder: rank={rank}, use_data_adp={use_data_adp}")
@@ -1454,6 +1463,8 @@ class OnePhonon:
         
         # Import structure_factors function
         from eryx.scatter_torch import structure_factors
+        
+        # Process grid-based mode
         
         # Pre-compute all ASU data to avoid repeated tensor creation
         asu_data = []
