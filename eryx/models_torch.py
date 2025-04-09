@@ -151,29 +151,25 @@ class OnePhonon:
             resolution = compute_resolution(cell_tensor, self.hkl_grid)
             self.res_mask = resolution > res_limit
         else:
-            # Instead of using the full grid from generate_grid, we compute a smaller grid
-            # using the oversampling parameters directly (to mimic the original NP behavior).
-            h_steps = int(self.hsampling[2])
-            k_steps = int(self.ksampling[2])
-            l_steps = int(self.lsampling[2])
-            self.map_shape = (h_steps, k_steps, l_steps)
-
-            h_lin = torch.linspace(self.hsampling[0], self.hsampling[1], steps=h_steps, device=self.device)
-            k_lin = torch.linspace(self.ksampling[0], self.ksampling[1], steps=k_steps, device=self.device)
-            l_lin = torch.linspace(self.lsampling[0], self.lsampling[1], steps=l_steps, device=self.device)
-
-            h_mesh, k_mesh, l_mesh = torch.meshgrid(h_lin, k_lin, l_lin, indexing='ij')
-            self.hkl_grid = torch.stack([h_mesh.flatten(), k_mesh.flatten(), l_mesh.flatten()], dim=1)
-
-            # Obtain resolution mask using PyTorch functions
-            from eryx.map_utils_torch import compute_resolution
-            cell_tensor = torch.tensor(self.model.cell, dtype=torch.float32, device=self.device)
-            resolution = compute_resolution(cell_tensor, self.hkl_grid)
-            self.res_mask = resolution > res_limit
-
-            # Compute q_grid using:  q = 2π * A_inv^T * hkl^T
-            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
-            self.q_grid = 2 * torch.pi * torch.matmul(A_inv_tensor.T, self.hkl_grid.T).T
+            # Build the full dense grid of hkl indices using the NP generate_grid.
+            from eryx.map_utils import generate_grid, get_resolution_mask
+            hkl_grid, self.map_shape = generate_grid(self.model.A_inv,
+                                                     self.hsampling,
+                                                     self.ksampling,
+                                                     self.lsampling,
+                                                     return_hkl=True)
+            # Convert the full dense grid to a torch tensor.
+            self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
+            
+            # Obtain the resolution mask based on the full grid.
+            res_mask, _ = get_resolution_mask(self.model.cell, hkl_grid, res_limit)
+            self.res_mask = torch.tensor(res_mask, dtype=torch.bool, device=self.device)
+            
+            # Compute q-grid using the full dense grid:
+            self.q_grid = 2 * torch.pi * torch.matmul(
+                torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device).T,
+                self.hkl_grid.T
+            ).T
         
         # Compute resolution mask using PyTorch functions
         from eryx.map_utils_torch import compute_resolution
@@ -1425,24 +1421,9 @@ class OnePhonon:
         if self.use_arbitrary_q:
             print(f"to_original_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
-            
-        # Get dimensions
-        hkl_dim = tensor.shape[0]
-        remaining_dims = tensor.shape[1:]
-        
-        # For test cases, we need to infer h_dim, k_dim and l_dim
-        if hasattr(self, 'test_k_dim') and hasattr(self, 'test_l_dim'):
-            # Use test dimensions if they've been explicitly set
-            h_dim = hkl_dim // (self.test_k_dim * self.test_l_dim)
-            k_dim = self.test_k_dim
-            l_dim = self.test_l_dim
-        elif hasattr(self, 'map_shape') and self.map_shape is not None:
-            # In grid mode, use map_shape (which was overridden to oversampling counts)
-            h_dim, k_dim, l_dim = self.map_shape
         else:
-            raise ValueError("Cannot determine grid dimensions for to_original_shape.")
-            
-        return tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
+            # Use self.map_shape from the full dense grid generated in _setup
+            return tensor.reshape(*self.map_shape, *tensor.shape[1:])
     
     #@debug
     def compute_rb_phonons(self):
