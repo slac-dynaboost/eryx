@@ -78,44 +78,41 @@ class OnePhonon:
             with experimental data.
         """
         import logging
-        logging.debug(f"[INIT] Called OnePhonon constructor with q_vectors={q_vectors is not None}")
+        logging.debug(f"[INIT] Called OnePhonon constructor (q_vectors is None? {q_vectors is None})")
 
         self.n_processes = n_processes
         self.model_type = model
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Set flag for arbitrary q-vector mode and store the provided tensor (if any)
-        self.use_arbitrary_q = (q_vectors is not None)
-        if self.use_arbitrary_q:
+        self.hsampling = hsampling
+        self.ksampling = ksampling
+        self.lsampling = lsampling
+        self.n_processes = n_processes
+        
+        # Validate inputs
+        if q_vectors is not None:
             # Validate q_vectors
             if not isinstance(q_vectors, torch.Tensor):
                 raise ValueError("q_vectors must be a PyTorch tensor")
             if q_vectors.dim() != 2 or q_vectors.shape[1] != 3:
                 raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
-            
-            if q_vectors.device != self.device:
-                q_vectors = q_vectors.to(self.device)
-            if not q_vectors.requires_grad and q_vectors.dtype.is_floating_point:
-                q_vectors.requires_grad_(True)
-            self.q_vectors = q_vectors
-            logging.debug("[INIT] use_arbitrary_q=True, loaded q_vectors of shape "
-                          f"{self.q_vectors.shape}")
-            
-            # Set placeholder values for sampling parameters
-            self.hsampling = (0, 0, 1)
-            self.ksampling = (0, 0, 1)
-            self.lsampling = (0, 0, 1)
+        elif hsampling is None or ksampling is None or lsampling is None:
+            raise ValueError("Either q_vectors or all three sampling parameters (hsampling, ksampling, lsampling) must be provided")
+        
+        # next lines unify a flag for arbitrary mode
+        if q_vectors is not None:
+            self.use_arbitrary_q = True
+            self.q_vectors = q_vectors.to(device=(device or torch.device('cpu')))
+            if not self.q_vectors.requires_grad and self.q_vectors.dtype.is_floating_point:
+                self.q_vectors.requires_grad_(True)
+            logging.debug("[INIT] use_arbitrary_q=True, loaded q_vectors "
+                          f"with shape={self.q_vectors.shape}")
         else:
+            self.use_arbitrary_q = False
             logging.debug("[INIT] use_arbitrary_q=False; will generate grid-based q_vectors.")
-            
-            # Validate sampling parameters
-            if hsampling is None or ksampling is None or lsampling is None:
-                raise ValueError("Either q_vectors or all three sampling parameters (hsampling, ksampling, lsampling) must be provided")
-            
-            self.hsampling = hsampling
-            self.ksampling = ksampling
-            self.lsampling = lsampling
-            self.q_vectors = None
+        
+        # after this, self.use_arbitrary_q definitely exists
+        logging.debug(f"[INIT] final use_arbitrary_q={self.use_arbitrary_q}")
         
         self._setup(pdb_path, expand_p1, res_limit, group_by)
         self._setup_phonons(pdb_path, model, gnm_cutoff, gamma_intra, gamma_inter)
@@ -266,8 +263,16 @@ class OnePhonon:
         """
         logging.debug(f"[_setup_phonons] use_arbitrary_q={self.use_arbitrary_q}, model={model}")
 
-        # Use the grid dimensions from the generated hkl grid.
-        h_dim, k_dim, l_dim = self.map_shape
+        # Decide how many total points we expect
+        if self.use_arbitrary_q and (q_vectors is not None):
+            # Actually we rely on self.q_grid shape. We'll do that after _build_A, etc. anyway.
+            pass
+        if self.use_arbitrary_q:
+            # We'll skip certain computations or do them differently.
+            logging.debug("[_setup_phonons] We are in arbitrary q-vector mode.")
+        else:
+            # Use the grid dimensions from the generated hkl grid.
+            h_dim, k_dim, l_dim = self.map_shape
         
         self.kvec = torch.zeros((h_dim, k_dim, l_dim, 3), device=self.device)
         self.kvec_norm = torch.zeros((h_dim, k_dim, l_dim, 1), device=self.device)
@@ -308,17 +313,16 @@ class OnePhonon:
         self._setup_gamma_parameters(pdb_path, model, gnm_cutoff, gamma_intra, gamma_inter)
         
         if model == 'gnm':
-            # store gamma, then check if we skip
-            import logging
-            if self.use_arbitrary_q:
-                logging.debug("[_setup_phonons] Currently skipping phonon in arbitrary q-vector mode (PHASE 2).")
-                # we do not compute phonons -> zero gradient flow
-                # (We log this to confirm if it triggers.)
+            # Only skip if we truly want to skip
+            if self.use_arbitrary_q:  # actual check
+                logging.debug("[_setup_phonons] We do NOT compute grid-based phonons for arbitrary mode.")
             else:
                 self.compute_gnm_phonons()
                 self.compute_covariance_matrix()
         else:
             self.compute_rb_phonons()
+            
+        logging.debug("[_setup_phonons] done.")
     
     #@debug
     def _build_A(self):
@@ -625,7 +629,7 @@ class OnePhonon:
         import logging
         logging.debug(f"[_build_kvec_Brillouin] use_arbitrary_q={self.use_arbitrary_q}")
 
-        if self.use_arbitrary_q:
+        if getattr(self, 'use_arbitrary_q', False):
             # Arbitrary q-vector mode
             self.kvec = self.q_grid / (2.0 * torch.pi)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
@@ -1119,6 +1123,7 @@ class OnePhonon:
             else:
                 # fallback if not computed
                 ADP = torch.ones(self.n_atoms_per_asu, device=self.device, dtype=torch.float32)
+        logging.debug(f"[apply_disorder] ADP shape= {self.ADP.shape if hasattr(self,'ADP') else '(none)'}")
         
         # Initialize intensity tensor
         Id = torch.zeros(self.q_grid.shape[0], dtype=torch.float32, device=self.device)
@@ -1130,8 +1135,9 @@ class OnePhonon:
         total_q = self.q_grid.shape[0]
         
         # Get total number of k-vectors
-        if not self.use_arbitrary_q:
-            h_dim, k_dim, l_dim = self.map_shape
+        if not getattr(self, 'use_arbitrary_q', False):
+            # fallback if self.map_shape not set? we do a safety check
+            (h_dim, k_dim, l_dim) = getattr(self, 'map_shape', (1,1,1))
             total_q = h_dim * k_dim * l_dim
             logging.debug(f"[apply_disorder] Grid mode. map_shape={self.map_shape} => total_q={total_q}")
         else:
