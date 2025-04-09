@@ -77,9 +77,9 @@ class OnePhonon:
                 raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
             
             # Ensure q_vectors is on the correct device and has requires_grad=True
-            # Clone and detach to ensure it's a leaf tensor for proper gradient flow
-            self.q_vectors = q_vectors.clone().detach().to(device=self.device)
-            if self.q_vectors.dtype.is_floating_point:
+            # Don't detach to preserve gradient flow from the caller's tensor
+            self.q_vectors = q_vectors.to(device=self.device)
+            if not self.q_vectors.requires_grad and self.q_vectors.dtype.is_floating_point:
                 self.q_vectors.requires_grad_(True)
                 
             # Set placeholder values for sampling parameters
@@ -579,78 +579,17 @@ class OnePhonon:
         """
         Compute all k-vectors and their norm in the first Brillouin zone.
         
-        This implementation matches the NumPy version by regularly sampling
-        [-0.5, 0.5[ for h, k and l using the sampling parameters.
+        For both grid-based and arbitrary q-vector modes, we compute the k-vectors
+        simply by dividing the q-grid by 2π.
         
         Tensors will have shape [h_dim*k_dim*l_dim, 3] for kvec
         and [h_dim*k_dim*l_dim, 1] for kvec_norm using fully collapsed format.
-        
-        In arbitrary q-vector mode, k-vectors are directly derived from q-vectors
-        using the relationship k = q/(2π).
         """
-        if self.use_arbitrary_q:
-            # For arbitrary q-vector mode, k-vectors are directly derived from q-vectors
-            # using the relationship k = q/(2π)
-            scaling_factor = 1.0 / (2.0 * torch.pi)
-            self.kvec = self.q_grid * scaling_factor
-            
-            # Calculate norms
-            self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-            
-            # Set requires_grad after construction
-            self.kvec.requires_grad_(True)
-            self.kvec_norm.requires_grad_(True)
-            
-            return
-        
-        # Use the actual grid dimensions from map_shape
-        h_dim, k_dim, l_dim = self.map_shape
-        
-        # Convert A_inv to tensor properly using clone().detach() to avoid warning
-        if isinstance(self.model.A_inv, torch.Tensor):
-            A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=torch.float32, device=self.device)
-        else:
-            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
-        
-        # Fully collapsed batching implementation
-        total_points = h_dim * k_dim * l_dim
-        
-        # Create tensors with fully collapsed shape
-        self.kvec = torch.zeros((total_points, 3), device=self.device)
-        self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
-        
-        # Generate all indices at once
-        flat_indices = torch.arange(total_points, device=self.device)
-        h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
-        
-        # Calculate centered k-values for all indices
-        k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices], 
-                                  device=self.device, dtype=torch.float32)
-        k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices], 
-                                  device=self.device, dtype=torch.float32)
-        k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices], 
-                                  device=self.device, dtype=torch.float32)
-        
-        # Stack into hkl_tensor with shape [total_points, 3]
-        hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
-        
-        # Debug calculation for specific points
-        debug_idx = torch.where((h_indices == 0) & (k_indices == 1) & (l_indices == 0))[0]
-        if len(debug_idx) > 0:
-            idx = debug_idx[0].item()
-            print(f"\nDEBUGGING calculation for point [0,1,0] at flat index {idx}:")
-            print(f"hkl_tensor: {hkl_tensor[idx]}")
-            print(f"A_inv_tensor.T:\n{A_inv_tensor.T}")
-            result = torch.matmul(A_inv_tensor.T, hkl_tensor[idx])
-            print(f"Result of matmul: {result}")
-        
-        # Calculate k-vectors for all points at once
-        self.kvec = torch.matmul(hkl_tensor, A_inv_tensor)
-        
-        # Calculate norms
+        # In both modes, simply compute k-vectors from q-grid
+        self.kvec = self.q_grid / (2.0 * torch.pi)
         self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
         
-        # Set requires_grad after construction
+        # Ensure the resulting tensors require gradients
         self.kvec.requires_grad_(True)
         self.kvec_norm.requires_grad_(True)
     
