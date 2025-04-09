@@ -77,7 +77,8 @@ class OnePhonon:
                 raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
             
             # Ensure q_vectors is on the correct device and has requires_grad=True
-            self.q_vectors = q_vectors.to(device=self.device)
+            # Clone and detach to ensure it's a leaf tensor for proper gradient flow
+            self.q_vectors = q_vectors.clone().detach().to(device=self.device)
             if self.q_vectors.dtype.is_floating_point:
                 self.q_vectors.requires_grad_(True)
                 
@@ -248,6 +249,8 @@ class OnePhonon:
         self.kvec_norm = torch.zeros((h_dim, k_dim, l_dim, 1), device=self.device)
         
         # Initialize tensors for phonon calculations with fully collapsed shape
+        # Use actual grid dimensions from map_shape
+        h_dim, k_dim, l_dim = self.map_shape
         total_points = h_dim * k_dim * l_dim
         self.V = torch.zeros((total_points,
                               self.n_asu * self.n_dof_per_asu,
@@ -600,8 +603,7 @@ class OnePhonon:
             
             return
         
-        # Initialize dimensions using the actual grid dimensions from map_shape
-        # instead of the oversampling parameters
+        # Use the actual grid dimensions from map_shape
         h_dim, k_dim, l_dim = self.map_shape
         
         # Convert A_inv to tensor properly using clone().detach() to avoid warning
@@ -984,9 +986,8 @@ class OnePhonon:
             self.Winv.requires_grad_(True)
         else:
             # Original grid-based implementation
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
+            # Use actual grid dimensions from map_shape
+            h_dim, k_dim, l_dim = self.map_shape
             
             # Initialize V and Winv with fully collapsed batching
             total_points = h_dim * k_dim * l_dim
@@ -1178,9 +1179,8 @@ class OnePhonon:
                 self.covar[:, j_cell, :] = complex_sum
         else:
             # Original grid-based implementation
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
+            # Use actual grid dimensions from map_shape
+            h_dim, k_dim, l_dim = self.map_shape
             
             # Process all k-vectors at once
             total_points = h_dim * k_dim * l_dim
@@ -1429,7 +1429,7 @@ class OnePhonon:
         if self.use_arbitrary_q:
             return tensor
             
-        # Get dimensions
+        # Get dimensions from the tensor shape
         h_dim = tensor.shape[0]
         k_dim = tensor.shape[1]
         l_dim = tensor.shape[2]
@@ -1466,10 +1466,8 @@ class OnePhonon:
             k_dim = self.test_k_dim
             l_dim = self.test_l_dim
         else:
-            # Try to infer from sampling parameters
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
+            # Use actual grid dimensions from map_shape
+            h_dim, k_dim, l_dim = self.map_shape
             
             # If dimensions don't match, try to infer from the tensor shape
             if hkl_dim != h_dim * k_dim * l_dim:
