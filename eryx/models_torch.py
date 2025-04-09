@@ -100,14 +100,14 @@ class OnePhonon:
             self.q_vectors = q_vectors
             logging.debug("[INIT] use_arbitrary_q=True, loaded q_vectors of shape "
                           f"{self.q_vectors.shape}")
-        else:
-            logging.debug("[INIT] use_arbitrary_q=False; will generate grid-based q_vectors.")
             
             # Set placeholder values for sampling parameters
             self.hsampling = (0, 0, 1)
             self.ksampling = (0, 0, 1)
             self.lsampling = (0, 0, 1)
         else:
+            logging.debug("[INIT] use_arbitrary_q=False; will generate grid-based q_vectors.")
+            
             # Validate sampling parameters
             if hsampling is None or ksampling is None or lsampling is None:
                 raise ValueError("Either q_vectors or all three sampling parameters (hsampling, ksampling, lsampling) must be provided")
