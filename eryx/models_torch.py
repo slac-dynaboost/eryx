@@ -38,11 +38,11 @@ class OnePhonon:
                  hsampling: Optional[Tuple[float, float, float]] = None, 
                  ksampling: Optional[Tuple[float, float, float]] = None, 
                  lsampling: Optional[Tuple[float, float, float]] = None,
-                 q_vectors: Optional[torch.Tensor] = None,
                  expand_p1: bool = True, group_by: str = 'asu',
                  res_limit: float = 0., model: str = 'gnm',
                  gnm_cutoff: float = 4., gamma_intra: float = 1., gamma_inter: float = 1.,
-                 n_processes: int = 8, device: Optional[torch.device] = None):
+                 n_processes: int = 8, device: Optional[torch.device] = None,
+                 q_vectors: Optional[torch.Tensor] = None):
         """
         Initialize the OnePhonon model with PyTorch tensors.
         
@@ -78,9 +78,8 @@ class OnePhonon:
         self.model_type = model
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Validate input parameters
-        self.use_arbitrary_q = q_vectors is not None
-        
+        # Set flag for arbitrary q-vector mode and store the provided tensor (if any)
+        self.use_arbitrary_q = (q_vectors is not None)
         if self.use_arbitrary_q:
             # Validate q_vectors
             if not isinstance(q_vectors, torch.Tensor):
@@ -88,14 +87,12 @@ class OnePhonon:
             if q_vectors.dim() != 2 or q_vectors.shape[1] != 3:
                 raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
             
-            # Preserve the identity of the input tensor
-            # Only move to device if needed, don't clone or detach
             if q_vectors.device != self.device:
                 q_vectors = q_vectors.to(self.device)
+            if not q_vectors.requires_grad and q_vectors.dtype.is_floating_point:
+                q_vectors.requires_grad_(True)
             self.q_vectors = q_vectors
-            if not self.q_vectors.requires_grad and self.q_vectors.dtype.is_floating_point:
-                self.q_vectors.requires_grad_(True)
-                
+            
             # Set placeholder values for sampling parameters
             self.hsampling = (0, 0, 1)
             self.ksampling = (0, 0, 1)
@@ -138,21 +135,21 @@ class OnePhonon:
         print(f"Extracted {len(element_weights)} element weights using PDBToTensor adapter")
         
         if self.use_arbitrary_q:
-            # For arbitrary q-vector mode
-            # Use provided q-vectors directly
+            # In arbitrary q-vector mode, use the provided q_vectors directly.
             self.q_grid = self.q_vectors
-            
-            # Derive hkl_grid from q_vectors if needed
-            # q = 2π * A_inv^T * hkl, so hkl = (1/2π) * q * (A_inv^T)^-1
+            # Derive hkl_grid from q_vectors using q = 2π * A_inv^T * hkl  => hkl = (1/(2π)) * q * (A_inv^T)^{-1}
             A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
             scaling_factor = 1.0 / (2.0 * torch.pi)
-            
-            # Calculate the inverse transpose of A_inv
             A_inv_T_inv = torch.inverse(A_inv_tensor.T)
             self.hkl_grid = torch.matmul(self.q_grid * scaling_factor, A_inv_T_inv)
-            
-            # Set map_shape for compatibility
+            # For arbitrary mode, we set a dummy map_shape (number of points,1,1)
             self.map_shape = (self.q_grid.shape[0], 1, 1)
+            
+            # Compute resolution mask using PyTorch functions
+            from eryx.map_utils_torch import compute_resolution
+            cell_tensor = torch.tensor(self.model.cell, dtype=torch.float32, device=self.device)
+            resolution = compute_resolution(cell_tensor, self.hkl_grid)
+            self.res_mask = resolution > res_limit
         else:
             # Instead of using the full grid from generate_grid, we compute a smaller grid
             # using the oversampling parameters directly (to mimic the original NP behavior).
@@ -1005,7 +1002,7 @@ class OnePhonon:
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
                                 dtype=torch.complex64, device=self.device)
         
-        if self.use_arbitrary_q:
+        if getattr(self, 'use_arbitrary_q', False):
             total_points = self.q_grid.shape[0]
         else:
             h_dim = int(self.hsampling[2])
@@ -1439,14 +1436,13 @@ class OnePhonon:
             h_dim = hkl_dim // (self.test_k_dim * self.test_l_dim)
             k_dim = self.test_k_dim
             l_dim = self.test_l_dim
+        elif hasattr(self, 'map_shape') and self.map_shape is not None:
+            # In grid mode, use map_shape (which was overridden to oversampling counts)
+            h_dim, k_dim, l_dim = self.map_shape
         else:
-            if not getattr(self, 'use_arbitrary_q', False):
-                # In grid mode, use map_shape (which was overridden to oversampling counts)
-                h_dim, k_dim, l_dim = self.map_shape
-                return tensor.reshape(h_dim, k_dim, l_dim, *tensor.shape[1:])
-            else:
-                # In arbitrary mode, leave the tensor unchanged
-                return tensor
+            raise ValueError("Cannot determine grid dimensions for to_original_shape.")
+            
+        return tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
     
     #@debug
     def compute_rb_phonons(self):
