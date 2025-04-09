@@ -242,10 +242,8 @@ class OnePhonon:
             gamma_intra: Spring constant for intra-asu interactions.
             gamma_inter: Spring constant for inter-asu interactions.
         """
-        # Use the sampling parameters directly.
-        h_dim = int(self.hsampling[2])
-        k_dim = int(self.ksampling[2])
-        l_dim = int(self.lsampling[2])
+        # Use the grid dimensions from the generated hkl grid.
+        h_dim, k_dim, l_dim = self.map_shape
         
         self.kvec = torch.zeros((h_dim, k_dim, l_dim, 3), device=self.device)
         self.kvec_norm = torch.zeros((h_dim, k_dim, l_dim, 1), device=self.device)
@@ -587,6 +585,9 @@ class OnePhonon:
         Tensors will have shape [h_dim*k_dim*l_dim, 3] for kvec
         and [h_dim*k_dim*l_dim, 1] for kvec_norm using fully collapsed format.
         """
+        # Initialize dimensions from the computed grid shape.
+        h_dim, k_dim, l_dim = self.map_shape
+        
         # In both modes, simply compute k-vectors from q-grid
         self.kvec = self.q_grid / (2.0 * torch.pi)
         self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
