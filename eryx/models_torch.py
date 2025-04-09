@@ -591,78 +591,66 @@ class OnePhonon:
         """
         Compute all k-vectors and their norm in the first Brillouin zone.
         
-        For both grid-based and arbitrary q-vector modes, we compute the k-vectors.
-        In arbitrary mode, simply k = q/(2π).
-        In grid-based mode, we carefully match the NumPy implementation.
+        For grid-based mode, this replicates the original behavior:
+            - Generate hkl tensor from grid sampling,
+            - Compute kvec = hkl * A_inv.
+        For arbitrary q-vector mode, it computes hkl from the provided q_vectors as:
+            hkl = (1/(2π)) * q_grid * (A_inv^T)^(-1)
+        then computes kvec = hkl * A_inv.
         
-        Tensors will have shape [h_dim*k_dim*l_dim, 3] for kvec
-        and [h_dim*k_dim*l_dim, 1] for kvec_norm using fully collapsed format.
+        Tensors will have shape [N, 3] for kvec and [N, 1] for kvec_norm, where N is either
+        the total number of grid points or the number of provided q-vectors.
         """
-        # Initialize dimensions from the computed grid shape.
-        h_dim, k_dim, l_dim = self.map_shape
-        
-        if self.use_arbitrary_q:
-            # For arbitrary q-vector mode, k-vectors are directly related to q-vectors: k = q/(2π)
-            # Gradients are automatically preserved through this operation
-            self.kvec = self.q_grid / (2.0 * torch.pi)
+        if getattr(self, 'use_arbitrary_q', False):
+            # Arbitrary q-vector mode
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
+            A_inv_T_inv = torch.inverse(A_inv_tensor.T)
+            # Convert provided q_vectors to hkl indices
+            hkl = torch.matmul(self.q_grid / (2.0 * torch.pi), A_inv_T_inv)
+            # Compute kvec as hkl * A_inv
+            self.kvec = torch.matmul(hkl, A_inv_tensor)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-        
-            # Print debug information about the k-vectors (for development only)
-            if os.environ.get("ERYX_DEBUG") == "1":
-                print(f"Building k-vectors for {self.q_grid.shape[0]} arbitrary q-vectors")
-                print(f"Arbitrary mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
-                print(f"Arbitrary mode: kvec range [{self.kvec.min().item():.4f}, {self.kvec.max().item():.4f}]")
-                print(f"Arbitrary mode: kvec_norm range [{self.kvec_norm.min().item():.4f}, {self.kvec_norm.max().item():.4f}]")
-                
-                # Print example k-vector for verification
-                if self.kvec.shape[0] > 0:
-                    print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
+            self.kvec.requires_grad_(True)
+            self.kvec_norm.requires_grad_(True)
+            print(f"Arbitrary mode: kvec shape: {self.kvec.shape}, norm range: {self.kvec_norm.min().item()} to {self.kvec_norm.max().item()}")
         else:
-            # For grid-based mode, carefully replicate the NumPy implementation
-            
-            # Initialize tensors with fully collapsed shape
+            # Grid-based mode
+            h_dim, k_dim, l_dim = self.map_shape
             total_points = h_dim * k_dim * l_dim
-            self.kvec = torch.zeros((total_points, 3), device=self.device)
-            self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
-            
-            # Generate all indices at once
-            flat_indices = torch.arange(total_points, device=self.device)
-            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
-            
-            # Calculate centered k-values for all indices (matching NumPy behavior)
-            k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices], 
-                                    device=self.device, dtype=torch.float32)
-            k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices], 
-                                    device=self.device, dtype=torch.float32)
-            k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices], 
-                                    device=self.device, dtype=torch.float32)
-            
-            # Stack into hkl_tensor with shape [total_points, 3]
-            hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
-            
-            # Convert A_inv to tensor properly
+
             if isinstance(self.model.A_inv, torch.Tensor):
                 A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=torch.float32, device=self.device)
             else:
                 A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
-            
-            # Calculate k-vectors MATCHING NUMPY IMPLEMENTATION - use A_inv_tensor.T
-            # This matches np.inner(self.model.A_inv.T, (k_dh, k_dk, k_dl)).T
-            self.kvec = torch.matmul(hkl_tensor, A_inv_tensor.T)
-            
-            # Calculate norms
+
+            self.kvec = torch.zeros((total_points, 3), device=self.device)
+            self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
+
+            flat_indices = torch.arange(total_points, device=self.device)
+            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
+
+            k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices], 
+                                      device=self.device, dtype=torch.float32)
+            k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices], 
+                                      device=self.device, dtype=torch.float32)
+            k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices], 
+                                      device=self.device, dtype=torch.float32)
+
+            hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
+
+            debug_idx = torch.where((h_indices == 0) & (k_indices == 1) & (l_indices == 0))[0]
+            if len(debug_idx) > 0:
+                idx = debug_idx[0].item()
+                print(f"\nDEBUGGING calculation for point [0,1,0] at flat index {idx}:")
+                print(f"hkl_tensor: {hkl_tensor[idx]}")
+                print(f"A_inv_tensor.T:\n{A_inv_tensor.T}")
+                result = torch.matmul(A_inv_tensor.T, hkl_tensor[idx])
+                print(f"Result of matmul: {result}")
+
+            self.kvec = torch.matmul(hkl_tensor, A_inv_tensor)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-            
-            # Debug output for verification
-            for i in range(total_points):
-                if (h_indices[i] == 0 and k_indices[i] == 1 and l_indices[i] == 0):
-                    print(f"Grid-based _build_kvec_Brillouin: kvec at [0,1,0] = {self.kvec[i]}")
-                    break
-            
-            print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
-        
-        # Note: requires_grad is already preserved from input q_vectors through operations
-        # No need to explicitly set requires_grad here
+            self.kvec.requires_grad_(True)
+            self.kvec_norm.requires_grad_(True)
     
     #@debug
     def _center_kvec(self, x: int, L: int) -> float:
@@ -713,120 +701,63 @@ class OnePhonon:
             In arbitrary q-vector mode, batched Miller indices (tensor of shape [batch_size, 3])
             are not currently supported.
         """
-        # For arbitrary q-vector mode, handle differently
-        if self.use_arbitrary_q:
-            # If input is a direct index or tensor of indices, return as-is
-            if isinstance(indices_or_batch, int) or (isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() <= 1):
-                return indices_or_batch
-            
-            # If input is (h,k,l) tuple, find nearest q-vector
-            elif isinstance(indices_or_batch, (tuple, list)) and len(indices_or_batch) == 3:
-                # Convert Miller indices to q-vector
-                h, k, l = indices_or_batch
-            
-                # Convert to tensor if needed
-                if not isinstance(h, torch.Tensor):
-                    h = torch.tensor(h, device=self.device)
-                if not isinstance(k, torch.Tensor):
-                    k = torch.tensor(k, device=self.device)
-                if not isinstance(l, torch.Tensor):
-                    l = torch.tensor(l, device=self.device)
-            
-                hkl = torch.tensor([h, k, l], device=self.device).float()
-            
-                # Convert to q-vector: q = 2π * A_inv^T * hkl
+        # In arbitrary q-vector mode, assume that if given a Miller indices tuple,
+        # the user wants to locate the nearest q_vector.
+        if getattr(self, 'use_arbitrary_q', False):
+            if isinstance(indices_or_batch, (tuple, list)) and len(indices_or_batch) == 3:
+                hkl = torch.tensor([indices_or_batch], device=self.device, dtype=torch.float32)
                 A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
-                target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl)
-            
-                # Find nearest q-vector in our list
+                target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl.T).T  # shape [1,3]
                 distances = torch.norm(self.q_grid - target_q, dim=1)
                 nearest_idx = torch.argmin(distances)
-            
-                if os.environ.get("ERYX_DEBUG") == "1":
-                    print(f"Arbitrary mode: Found nearest q-vector at index {nearest_idx} for hkl={hkl}")
+                print(f"Arbitrary mode: Nearest q_vector index for hkl {indices_or_batch}: {nearest_idx.item()}")
                 return nearest_idx
-            
-            # If input is a tensor with shape [batch_size, 3] (batched Miller indices)
-            elif isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 2 and indices_or_batch.shape[1] == 3:
-                # TODO: Future enhancement - implement batched Miller indices support for arbitrary q-vector mode
-                # This would require vectorized nearest-neighbor search for multiple hkl points at once
-                raise NotImplementedError(
-                    "Batched Miller indices (tensor of shape [batch_size, 3]) are not currently supported "
-                    "in arbitrary q-vector mode. Please provide individual (h,k,l) tuples instead."
-                )
-        
-            # Unsupported input format
-            else:
-                raise ValueError(f"Unsupported input format for arbitrary q-vector mode: {type(indices_or_batch)}")
-        
-        # Original implementation for grid-based approach
-        # Check if input is a batch tensor
+            if isinstance(indices_or_batch, int):
+                return torch.tensor([indices_or_batch], device=self.device)
+            if isinstance(indices_or_batch, torch.Tensor):
+                return indices_or_batch
+
+        # Grid-based mode: use original implementation
         is_batch = isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 1 and indices_or_batch.numel() > 1
-        
         if is_batch:
-            # Handle batch of flat indices
             flat_indices = indices_or_batch
             h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
         elif isinstance(indices_or_batch, (tuple, list)) and len(indices_or_batch) == 3:
-            # Traditional (h,k,l) format - convert to batch of one
             h_indices = torch.tensor([indices_or_batch[0]], device=self.device)
             k_indices = torch.tensor([indices_or_batch[1]], device=self.device)
             l_indices = torch.tensor([indices_or_batch[2]], device=self.device)
         else:
-            # Single flat index - convert to batch of one
             flat_idx = indices_or_batch
             if isinstance(flat_idx, torch.Tensor):
                 flat_indices = flat_idx.view(1)
             else:
                 flat_indices = torch.tensor([flat_idx], device=self.device)
             h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
-        
-        # Calculate steps based on sampling parameters - MUST MATCH NUMPY VERSION
+
         hsteps = int(self.hsampling[2] * (self.hsampling[1] - self.hsampling[0]) + 1)
         ksteps = int(self.ksampling[2] * (self.ksampling[1] - self.ksampling[0]) + 1)
         lsteps = int(self.lsampling[2] * (self.lsampling[1] - self.lsampling[0]) + 1)
-        
+
         print(f"_at_kvec_from_miller_points: Using steps hsteps={hsteps}, ksteps={ksteps}, lsteps={lsteps}")
-        
-        # Process entire batch at once in vectorized fashion
+
         batch_size = h_indices.numel()
-        
-        # If batch size is 1, process directly and return the result
         if batch_size == 1:
             h_idx, k_idx, l_idx = h_indices.item(), k_indices.item(), l_indices.item()
-            
-            # Create index grid - use exact sampling parameters for step size
-            h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
-            k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
-            l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
-            
+            h_range = torch.arange(h_idx, hsteps, self.hsampling[2], device=self.device, dtype=torch.long)
+            k_range = torch.arange(k_idx, ksteps, self.ksampling[2], device=self.device, dtype=torch.long)
+            l_range = torch.arange(l_idx, lsteps, self.lsampling[2], device=self.device, dtype=torch.long)
             print(f"_at_kvec_from_miller_points: Single point - ranges h:{h_range.shape}, k:{k_range.shape}, l:{l_range.shape}")
-            
-            # Create meshgrid
             h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
-            
-            # Flatten indices
             h_flat = h_grid.reshape(-1)
             k_flat = k_grid.reshape(-1)
             l_flat = l_grid.reshape(-1)
-            
-            # Compute raveled indices
-            indices = h_flat * (self.map_shape[1] * self.map_shape[2]) + \
-                     k_flat * self.map_shape[2] + \
-                     l_flat
-            
+            indices = h_flat * (self.map_shape[1] * self.map_shape[2]) + k_flat * self.map_shape[2] + l_flat
             print(f"_at_kvec_from_miller_points: Single point result shape: {indices.shape}")
             return indices
         else:
-            # For larger batches, process all points at once using vectorized operations
-            # Create a list to store results for each point
-            all_indices = []
-            
-            # Process all points in parallel using a list comprehension
             all_indices = [self._compute_indices_for_point(h_indices[i].item(), k_indices[i].item(), 
-                                                          l_indices[i].item(), hsteps, ksteps, lsteps) 
-                          for i in range(batch_size)]
-            
+                                                            l_indices[i].item(), hsteps, ksteps, lsteps)
+                            for i in range(batch_size)]
             print(f"_at_kvec_from_miller_points: Batch processing - {len(all_indices)} results")
             return all_indices
     
