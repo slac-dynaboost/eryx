@@ -155,24 +155,39 @@ class OnePhonon:
             self.map_shape = (self.q_grid.shape[0], 1, 1)
         else:
             # Original path for grid-based approach
-            from eryx.map_utils import generate_grid, get_resolution_mask
-            hkl_grid, _ = generate_grid(self.model.A_inv, 
-                                      self.hsampling,
-                                      self.ksampling,
-                                      self.lsampling,
-                                      return_hkl=True)
-            # Override map_shape in grid mode to use the oversampling parameters directly.
-            # (This matches the NP implementation where the loop runs for int(self.hsampling[2]) times.)
-            self.map_shape = (int(self.hsampling[2]), int(self.ksampling[2]), int(self.lsampling[2]))
+            # Instead of using generate_grid which creates a full dense grid,
+            # we'll manually create a grid with exactly the number of points specified by oversampling
+            
+            # Set map_shape to use the oversampling parameters directly
+            # This matches the NP implementation where the loop runs for int(self.hsampling[2]) times
+            h_dim = int(self.hsampling[2])
+            k_dim = int(self.ksampling[2])
+            l_dim = int(self.lsampling[2])
+            self.map_shape = (h_dim, k_dim, l_dim)
+            
+            # Create hkl grid manually with exactly the right number of points
+            hkl_grid = []
+            for dh in range(h_dim):
+                for dk in range(k_dim):
+                    for dl in range(l_dim):
+                        # Compute the centered h, k, l values based on oversampling
+                        hkl_grid.append([
+                            self._center_kvec(dh, h_dim),
+                            self._center_kvec(dk, k_dim),
+                            self._center_kvec(dl, l_dim)
+                        ])
             
             # Convert the hkl grid to a torch tensor
             self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
             
             # Compute q-grid as: 2π * A_inv^T * hkl_grid^T
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
             self.q_grid = 2 * torch.pi * torch.matmul(
-                torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device).T,
+                A_inv_tensor.T,
                 self.hkl_grid.T
             ).T
+            
+            print(f"Created grid-based hkl_grid with shape {self.hkl_grid.shape} for map_shape {self.map_shape}")
         
         # Compute resolution mask using PyTorch functions
         from eryx.map_utils_torch import compute_resolution
@@ -615,42 +630,26 @@ class OnePhonon:
             self.kvec_norm.requires_grad_(True)
             print(f"Arbitrary mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         else:
-            # Grid-based mode: use oversampling values directly.
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
+            # Grid-based mode: use the hkl_grid we already created with exactly the right number of points
+            h_dim, k_dim, l_dim = self.map_shape
             total_points = h_dim * k_dim * l_dim
-
-            flat_indices = torch.arange(total_points, device=self.device)
-            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
-
-            k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices],
-                                      device=self.device, dtype=torch.float32)
-            k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices],
-                                      device=self.device, dtype=torch.float32)
-            k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices],
-                                      device=self.device, dtype=torch.float32)
-
-            hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
-
+            
+            # Use the hkl_grid we already created in _setup
             if isinstance(self.model.A_inv, torch.Tensor):
                 A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=torch.float32, device=self.device)
             else:
                 A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
-
-            self.kvec = torch.matmul(hkl_tensor, A_inv_tensor)
+            
+            # Compute kvec directly from hkl_grid
+            self.kvec = torch.matmul(self.hkl_grid, A_inv_tensor)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-
+            
             self.kvec.requires_grad_(True)
             self.kvec_norm.requires_grad_(True)
-
+            
             # Debug output for verification
-            for i in range(total_points):
-                if (h_indices[i] == 0 and k_indices[i] == 1 and l_indices[i] == 0):
-                    print(f"Grid-based _build_kvec_Brillouin: kvec at [0,1,0] = {self.kvec[i]}")
-                    break
-
             print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
+            print(f"Grid-based mode: total points={total_points}, matches kvec shape={self.kvec.shape[0] == total_points}")
     
     #@debug
     def _center_kvec(self, x: int, L: int) -> float:
@@ -717,7 +716,9 @@ class OnePhonon:
             if isinstance(indices_or_batch, torch.Tensor):
                 return indices_or_batch
 
-        # Grid-based mode: use original implementation
+        # Grid-based mode: use map_shape directly for steps
+        h_dim, k_dim, l_dim = self.map_shape
+        
         is_batch = isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 1 and indices_or_batch.numel() > 1
         if is_batch:
             flat_indices = indices_or_batch
@@ -734,18 +735,17 @@ class OnePhonon:
                 flat_indices = torch.tensor([flat_idx], device=self.device)
             h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
 
-        hsteps = int(self.hsampling[2] * (self.hsampling[1] - self.hsampling[0]) + 1)
-        ksteps = int(self.ksampling[2] * (self.ksampling[1] - self.ksampling[0]) + 1)
-        lsteps = int(self.lsampling[2] * (self.lsampling[1] - self.lsampling[0]) + 1)
-
-        print(f"_at_kvec_from_miller_points: Using steps hsteps={hsteps}, ksteps={ksteps}, lsteps={lsteps}")
+        print(f"_at_kvec_from_miller_points: Using map_shape={self.map_shape}")
 
         batch_size = h_indices.numel()
         if batch_size == 1:
             h_idx, k_idx, l_idx = h_indices.item(), k_indices.item(), l_indices.item()
-            h_range = torch.arange(h_idx, hsteps, self.hsampling[2], device=self.device, dtype=torch.long)
-            k_range = torch.arange(k_idx, ksteps, self.ksampling[2], device=self.device, dtype=torch.long)
-            l_range = torch.arange(l_idx, lsteps, self.lsampling[2], device=self.device, dtype=torch.long)
+            
+            # Use direct ranges based on map_shape
+            h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
+            k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
+            l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
+            
             print(f"_at_kvec_from_miller_points: Single point - ranges h:{h_range.shape}, k:{k_range.shape}, l:{l_range.shape}")
             h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
             h_flat = h_grid.reshape(-1)
@@ -756,8 +756,8 @@ class OnePhonon:
             return indices
         else:
             all_indices = [self._compute_indices_for_point(h_indices[i].item(), k_indices[i].item(), 
-                                                            l_indices[i].item(), hsteps, ksteps, lsteps)
-                            for i in range(batch_size)]
+                                                          l_indices[i].item(), h_dim, k_dim, l_dim)
+                          for i in range(batch_size)]
             print(f"_at_kvec_from_miller_points: Batch processing - {len(all_indices)} results")
             return all_indices
     
@@ -1658,24 +1658,24 @@ class OnePhonon:
         return h_indices, k_indices, l_indices
     
     def _compute_indices_for_point(self, h_idx: int, k_idx: int, l_idx: int, 
-                                  hsteps: int, ksteps: int, lsteps: int) -> torch.Tensor:
+                                  h_dim: int, k_dim: int, l_dim: int) -> torch.Tensor:
         """
         Compute raveled indices for a single (h,k,l) point.
         
         Args:
             h_idx, k_idx, l_idx: Miller indices
-            hsteps, ksteps, lsteps: Maximum steps for each dimension
+            h_dim, k_dim, l_dim: Dimensions for each axis from map_shape
             
         Returns:
             Tensor of raveled indices
         """
-        # Create index grid - USE SAMPLING PARAMETERS FOR STEP SIZE, NOT HARDCODED 1
-        h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
+        # Create index grid - use step size of 1 to match our manually created grid
+        h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
+        k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
+        l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
         
         # Debug output for verification
-        print(f"_compute_indices_for_point: Using step sizes h={int(self.hsampling[2])}, k={int(self.ksampling[2])}, l={int(self.lsampling[2])}")
+        print(f"_compute_indices_for_point: Using dimensions h_dim={h_dim}, k_dim={k_dim}, l_dim={l_dim}")
         
         # Create meshgrid
         h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
