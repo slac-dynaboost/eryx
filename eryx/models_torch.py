@@ -579,18 +579,31 @@ class OnePhonon:
         """
         Compute all k-vectors and their norm in the first Brillouin zone.
         
-        For both grid-based and arbitrary q-vector modes, we compute the k-vectors
-        simply by dividing the q-grid by 2π.
+        This method handles both grid-based and arbitrary q-vector modes differently:
+        - For arbitrary q-vector mode: directly uses k = q/(2π) without grid reshaping
+        - For grid-based mode: computes k-vectors based on the grid structure
         
-        Tensors will have shape [h_dim*k_dim*l_dim, 3] for kvec
-        and [h_dim*k_dim*l_dim, 1] for kvec_norm using fully collapsed format.
+        Tensors will have appropriate shapes for each mode:
+        - Arbitrary mode: [n_points, 3] for kvec and [n_points, 1] for kvec_norm
+        - Grid mode: [h_dim*k_dim*l_dim, 3] for kvec and [h_dim*k_dim*l_dim, 1] for kvec_norm
         """
-        # Initialize dimensions from the computed grid shape.
-        h_dim, k_dim, l_dim = self.map_shape
-        
-        # In both modes, simply compute k-vectors from q-grid
-        self.kvec = self.q_grid / (2.0 * torch.pi)
-        self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+        if self.use_arbitrary_q:
+            # For arbitrary q-vector mode, simply compute k-vectors directly
+            # No need to worry about grid dimensions or reshaping
+            self.kvec = self.q_grid / (2.0 * torch.pi)
+            self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+            
+            print(f"Arbitrary q-vector mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
+        else:
+            # Original grid-based implementation
+            # Initialize dimensions from the computed grid shape
+            h_dim, k_dim, l_dim = self.map_shape
+            
+            # Compute k-vectors from q-grid
+            self.kvec = self.q_grid / (2.0 * torch.pi)
+            self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+            
+            print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         
         # Ensure the resulting tensors require gradients
         self.kvec.requires_grad_(True)
@@ -658,6 +671,7 @@ class OnePhonon:
                 distances = torch.norm(self.q_grid - target_q, dim=1)
                 nearest_idx = torch.argmin(distances)
                 
+                print(f"Arbitrary mode: Found nearest q-vector at index {nearest_idx} for hkl={hkl}")
                 return nearest_idx
             
             # Unsupported input format
@@ -860,7 +874,9 @@ class OnePhonon:
             # For arbitrary mode, process all k-vectors as a batch
             n_points = self.kvec.shape[0]
             
-            # Initialize V and Winv tensors
+            print(f"Computing phonons for {n_points} arbitrary q-vectors")
+            
+            # Initialize V and Winv tensors with proper shapes for arbitrary mode
             self.V = torch.zeros((n_points, self.n_asu * self.n_dof_per_asu, 
                                 self.n_asu * self.n_dof_per_asu),
                               dtype=torch.complex64, device=self.device)
@@ -875,6 +891,8 @@ class OnePhonon:
                                           self.n_asu * self.n_dof_per_asu,
                                           self.n_asu * self.n_dof_per_asu)
             
+            print(f"Arbitrary mode: Kmat_all_2d shape = {Kmat_all_2d.shape}")
+            
             # Compute D matrices: D = Linv * K * Linv^T for each k-vector
             Dmat_all = torch.matmul(
                 Linv_complex.unsqueeze(0).expand(n_points, -1, -1),
@@ -883,6 +901,8 @@ class OnePhonon:
                     Linv_complex.T.unsqueeze(0).expand(n_points, -1, -1)
                 )
             )
+            
+            print(f"Arbitrary mode: Dmat_all shape = {Dmat_all.shape}")
             
             # Extract eigenvalues and eigenvectors without tracking phase gradients
             with torch.no_grad():
@@ -922,6 +942,8 @@ class OnePhonon:
             # Store results
             self.Winv = winv_all
             self.V = v_all_transformed
+            
+            print(f"Arbitrary mode: V shape = {self.V.shape}, Winv shape = {self.Winv.shape}")
             
             # Set requires_grad for tensors
             self.V.requires_grad_(True)
@@ -1097,8 +1119,12 @@ class OnePhonon:
             # For arbitrary mode, process all k-vectors as a batch
             n_points = self.kvec.shape[0]
             
+            print(f"Computing covariance matrix for {n_points} arbitrary q-vectors")
+            
             # Compute Kinv matrices for all k-vectors at once
             Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
+            
+            print(f"Arbitrary mode: Kinv_all shape = {Kinv_all.shape}")
             
             # For each unit cell, compute phase factors and accumulate contributions
             for j_cell in range(self.n_cell):
@@ -1119,6 +1145,9 @@ class OnePhonon:
                 # Sum over all k-vectors with phase factors
                 complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
                 self.covar[:, j_cell, :] = complex_sum
+                
+                if j_cell == 0:
+                    print(f"Arbitrary mode: First cell phase factors shape = {eikr_reshaped.shape}")
         else:
             # Original grid-based implementation
             # Use actual grid dimensions from map_shape
@@ -1215,10 +1244,15 @@ class OnePhonon:
         Id = torch.zeros(self.q_grid.shape[0], dtype=torch.float32, device=self.device)
         
         # Get total number of k-vectors
-        h_dim = int(self.hsampling[2])
-        k_dim = int(self.ksampling[2])
-        l_dim = int(self.lsampling[2])
-        total_points = h_dim * k_dim * l_dim
+        if self.use_arbitrary_q:
+            total_points = self.q_grid.shape[0]
+            print(f"Applying disorder for {total_points} arbitrary q-vectors")
+        else:
+            h_dim = int(self.hsampling[2])
+            k_dim = int(self.ksampling[2])
+            l_dim = int(self.lsampling[2])
+            total_points = h_dim * k_dim * l_dim
+            print(f"Applying disorder for {total_points} grid points ({h_dim}x{k_dim}x{l_dim})")
         
         # Import structure_factors function
         from eryx.scatter_torch import structure_factors
@@ -1239,10 +1273,20 @@ class OnePhonon:
         
         # Get all indices
         all_indices = torch.arange(total_points, device=self.device)
-        h_indices, k_indices, l_indices = self._flat_to_3d_indices(all_indices)
+        
+        if self.use_arbitrary_q:
+            # In arbitrary mode, we don't need to convert to 3D indices
+            # Just use the direct indices
+            print(f"Arbitrary mode: Using direct indices for {total_points} q-vectors")
+            h_indices = all_indices
+            k_indices = all_indices
+            l_indices = all_indices
+        else:
+            # In grid mode, convert to 3D indices
+            h_indices, k_indices, l_indices = self._flat_to_3d_indices(all_indices)
+            print(f"Grid mode: Converted to 3D indices for {total_points} grid points")
         
         # Process all points in parallel using vectorized operations where possible
-        # We'll use a more efficient approach that processes points in parallel
         print(f"Processing all {total_points} k-vectors using vectorized operations")
         
         # Process each k-vector point in parallel
@@ -1369,6 +1413,7 @@ class OnePhonon:
         """
         # For arbitrary q-vector mode, return tensor unchanged
         if self.use_arbitrary_q:
+            print(f"to_batched_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
             
         # Get dimensions from the tensor shape
@@ -1378,7 +1423,9 @@ class OnePhonon:
         remaining_dims = tensor.shape[3:]
         
         # Reshape to combine all three dimensions into one
-        return tensor.reshape(h_dim * k_dim * l_dim, *remaining_dims)
+        result = tensor.reshape(h_dim * k_dim * l_dim, *remaining_dims)
+        print(f"to_batched_shape: Converted {tensor.shape} to {result.shape}")
+        return result
     
     def to_original_shape(self, tensor: torch.Tensor) -> torch.Tensor:
         """
@@ -1395,6 +1442,7 @@ class OnePhonon:
         """
         # For arbitrary q-vector mode, return tensor unchanged
         if self.use_arbitrary_q:
+            print(f"to_original_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
             
         # Get dimensions
@@ -1428,7 +1476,9 @@ class OnePhonon:
                     l_dim = hkl_dim
         
         # Reshape to separate h, k, and l dimensions
-        return tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
+        result = tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
+        print(f"to_original_shape: Converted {tensor.shape} to {result.shape}")
+        return result
     
     #@debug
     def compute_rb_phonons(self):
@@ -1452,6 +1502,7 @@ class OnePhonon:
         """
         # For arbitrary q-vector mode, return the indices as-is for all dimensions
         if self.use_arbitrary_q:
+            print(f"_flat_to_3d_indices: Using direct indices in arbitrary mode, shape={flat_indices.shape}")
             return flat_indices, flat_indices, flat_indices
             
         # Calculate dimensions from map_shape instead of sampling parameters
@@ -1464,6 +1515,7 @@ class OnePhonon:
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
         l_indices = kl_remainder % l_dim
         
+        print(f"_flat_to_3d_indices: Converted {flat_indices.shape} to 3D indices with shapes {h_indices.shape}")
         return h_indices, k_indices, l_indices
     
     def _compute_indices_for_point(self, h_idx: int, k_idx: int, l_idx: int, 
@@ -1515,20 +1567,18 @@ class OnePhonon:
         """
         # For arbitrary q-vector mode, return h_indices directly
         if self.use_arbitrary_q:
+            print(f"_3d_to_flat_indices: Using direct indices in arbitrary mode, shape={h_indices.shape}")
             return h_indices
             
         # Calculate dimensions from map_shape instead of sampling parameters
         _, k_dim, l_dim = self.map_shape
         k_l_size = k_dim * l_dim
         
-        # Print dimensions for debugging
-        if torch.is_tensor(h_indices) and h_indices.numel() > 0:
-            print(f"3D to flat conversion - k_dim: {k_dim}, l_dim: {l_dim}, k_l_size: {k_l_size}")
-        
         # Convert 3D indices to flat indices
         # flat_idx = h_idx * (k_dim * l_dim) + k_idx * l_dim + l_idx
         flat_indices = h_indices * k_l_size + k_indices * l_dim + l_indices
         
+        print(f"_3d_to_flat_indices: Converted 3D indices to flat indices with shape {flat_indices.shape}")
         return flat_indices
 
 # Minimal implementations for additional models
