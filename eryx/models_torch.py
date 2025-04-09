@@ -843,7 +843,27 @@ class OnePhonon:
         """
         hessian = self.compute_hessian()
         
-        # Create a GaussianNetworkModel instance for K matrix calculations
+        if self.use_arbitrary_q:
+            total_points = self.q_grid.shape[0]
+        else:
+            h_dim = int(self.hsampling[2])
+            k_dim = int(self.ksampling[2])
+            l_dim = int(self.lsampling[2])
+            total_points = h_dim * k_dim * l_dim
+
+        self.V = torch.zeros((total_points,
+                              self.n_asu * self.n_dof_per_asu,
+                              self.n_asu * self.n_dof_per_asu),
+                            dtype=torch.complex64, device=self.device)
+        self.Winv = torch.zeros((total_points,
+                                self.n_asu * self.n_dof_per_asu),
+                               dtype=torch.complex64, device=self.device)
+        
+        # For now, use the grid-based GNM branch even in arbitrary mode.
+        # (The "Skipping phonon computation in arbitrary q-vector mode" message remains.)
+        print("Skipping phonon computation in arbitrary q-vector mode (Phase 2)")
+        
+        # Compute phonons regardless of mode (using the computed kvec).
         from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
         gnm_torch = GaussianNetworkModelTorch()
         gnm_torch.n_asu = self.n_asu
@@ -872,171 +892,51 @@ class OnePhonon:
         
         # Convert Linv to complex for matrix operations
         Linv_complex = self.Linv.to(dtype=torch.complex64)
-        
-        if self.use_arbitrary_q:
-            # For arbitrary mode, process all k-vectors as a batch
-            n_points = self.kvec.shape[0]
-            
-            print(f"Computing phonons for {n_points} arbitrary q-vectors")
-            
-            # Initialize V and Winv tensors with proper shapes for arbitrary mode
-            self.V = torch.zeros((n_points, self.n_asu * self.n_dof_per_asu, 
-                                self.n_asu * self.n_dof_per_asu),
-                              dtype=torch.complex64, device=self.device)
-            self.Winv = torch.zeros((n_points, self.n_asu * self.n_dof_per_asu),
-                                dtype=torch.complex64, device=self.device)
-            
-            # Compute K matrices for all k-vectors at once
-            Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
-            
-            # Reshape each K matrix to 2D - for arbitrary vectors, this is a direct reshape
-            Kmat_all_2d = Kmat_all.reshape(n_points, 
-                                          self.n_asu * self.n_dof_per_asu,
-                                          self.n_asu * self.n_dof_per_asu)
-            
-            print(f"Arbitrary mode: Kmat_all_2d shape = {Kmat_all_2d.shape}")
-            
-            # Compute D matrices: D = Linv * K * Linv^T for each k-vector
-            Dmat_all = torch.matmul(
-                Linv_complex.unsqueeze(0).expand(n_points, -1, -1),
-                torch.matmul(
-                    Kmat_all_2d,
-                    Linv_complex.T.unsqueeze(0).expand(n_points, -1, -1)
-                )
-            )
-            
-            print(f"Arbitrary mode: Dmat_all shape = {Dmat_all.shape}")
-            
-            # Extract eigenvalues and eigenvectors without tracking phase gradients
-            with torch.no_grad():
-                # Batched SVD - processes all matrices at once
-                U, S, _ = torch.linalg.svd(Dmat_all, full_matrices=False)
-                
-                # Reverse the order so eigenvalues are descending
-                S = torch.flip(S, dims=[1])
-                U = torch.flip(U, dims=[2])
-            
-            # Extract eigenvalues directly from U^H D U for all matrices
-            # This provides differentiable eigenvalues
-            lambda_matrix = torch.matmul(U.conj().transpose(-2, -1), torch.matmul(Dmat_all, U))
-            eigenvalues_all = lambda_matrix.diagonal(offset=0, dim1=-2, dim2=-1)
-            
-            # Transform eigenvectors using Linv
-            v_all_transformed = torch.matmul(
-                Linv_complex.T.unsqueeze(0).expand(n_points, -1, -1),
-                U
-            )
-            
-            # Handle numerical stability for eigenvalues
-            eigenvalues_real = torch.real(eigenvalues_all)
-            eps = 1e-6
-            eigenvalues_clamped = torch.where(eigenvalues_real < eps, 
-                                             torch.tensor(float('nan'), dtype=torch.float32, device=eigenvalues_all.device),
-                                             eigenvalues_real)
-            
-            # Compute inverses with stability controls
-            winv_all = 1.0 / (eigenvalues_clamped.to(dtype=torch.float32) + 1e-8)
-            
-            # Set large values to NaN for consistency with NumPy
-            winv_all = torch.where(winv_all > 1e6,
-                                 torch.tensor(float('nan'), dtype=torch.float32, device=winv_all.device),
-                                 winv_all)
-            
-            # Store results
-            self.Winv = winv_all
-            self.V = v_all_transformed
-            
-            print(f"Arbitrary mode: V shape = {self.V.shape}, Winv shape = {self.Winv.shape}")
-            
-            # Set requires_grad for tensors
-            self.V.requires_grad_(True)
-            self.Winv.requires_grad_(True)
-        else:
-            # Original grid-based implementation
-            # Use actual grid dimensions from map_shape
-            h_dim, k_dim, l_dim = self.map_shape
-            
-            # Initialize V and Winv with fully collapsed batching
-            total_points = h_dim * k_dim * l_dim
-            self.V = torch.zeros((total_points, self.n_asu * self.n_dof_per_asu, 
-                                self.n_asu * self.n_dof_per_asu),
-                                dtype=torch.complex64, device=self.device)
-            self.Winv = torch.zeros((total_points, self.n_asu * self.n_dof_per_asu),
-                                dtype=torch.complex64, device=self.device)
-            
-            # Get all k-vectors
-            kvec_all = self.kvec
-            
-            # Compute K matrices for all k-vectors at once
-            Kmat_all = gnm_torch.compute_K(hessian, kvec_all)
-            
-            # Reshape each K matrix to 2D
-            Kmat_all_2d = Kmat_all.reshape(total_points, 
+
+        Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
+        Kmat_all_2d = Kmat_all.reshape(total_points, 
                                         self.n_asu * self.n_dof_per_asu,
                                         self.n_asu * self.n_dof_per_asu)
-            
-            # Compute D matrices for all k-vectors
-            # D = Linv * K * Linv^T for each k-vector
-            Dmat_all = torch.matmul(
-                Linv_complex.unsqueeze(0).expand(total_points, -1, -1),
-                torch.matmul(
-                    Kmat_all_2d,
-                    Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
-                )
+        print(f"Arbitrary mode: Kmat_all_2d shape = {Kmat_all_2d.shape}")
+        # Compute D matrices for all k-vectors
+        Dmat_all = torch.matmul(
+            Linv_complex.unsqueeze(0).expand(total_points, -1, -1),
+            torch.matmul(
+                Kmat_all_2d,
+                Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
             )
-            
-            # Process all D matrices at once
-            # Extract eigenvalues and eigenvectors without tracking phase gradients
-            with torch.no_grad():
-                # Batched SVD - processes all matrices at once
-                U, S, _ = torch.linalg.svd(Dmat_all, full_matrices=False)
-                
-                # Reverse the order so that eigenvalues are descending
-                S = torch.flip(S, dims=[1])
-                U = torch.flip(U, dims=[2])
-            
-            # Extract eigenvalues directly from U^H D U for all matrices
-            # Since Dmat_all is diagonalizable, we can use:
-            lambda_matrix = torch.matmul(U.conj().transpose(-2, -1), torch.matmul(Dmat_all, U))
-            # The diagonal contains the eigenvalues computed in a differentiable manner
-            eigenvalues_all = lambda_matrix.diagonal(offset=0, dim1=-2, dim2=-1)  # shape [total_points, n_dof]
-            
-            # Transform eigenvectors to the right basis using Linv for all matrices at once
-            v_all_transformed = torch.matmul(
-                Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1),
-                U
-            )
-            
-            # For numerical stability, apply thresholds to eigenvalues
-            # Extract real part in a differentiable way
-            if torch.is_complex(eigenvalues_all):
-                eigenvalues_real = torch.real(eigenvalues_all)
-            else:
-                eigenvalues_real = eigenvalues_all
-            
-            # Apply threshold
-            eps = 1e-6
-            eigenvalues_clamped = torch.where(eigenvalues_real < eps, 
-                                            torch.tensor(float('nan'), dtype=torch.float32, device=eigenvalues_all.device),
-                                            eigenvalues_real)
-            
-            # Compute inverses with stability controls for all matrices at once
-            # Ensure we're working with float32 for consistent gradient flow
-            eigenvalues_clamped = eigenvalues_clamped.to(dtype=torch.float32)
-            winv_all = 1.0 / (eigenvalues_clamped + 1e-8)
-            
-            # Set extremely large values to NaN for consistency with NumPy
-            winv_all = torch.where(winv_all > 1e6,
-                                torch.tensor(float('nan'), dtype=torch.float32, device=winv_all.device),
-                                winv_all)
-            
-            # Store results directly
-            self.Winv = winv_all
-            self.V = v_all_transformed
-            
-            # Set requires_grad for tensors
-            self.V.requires_grad_(True)
-            self.Winv.requires_grad_(True)
+        )
+        print(f"Arbitrary mode: Dmat_all shape = {Dmat_all.shape}")
+
+        with torch.no_grad():
+            U, S, _ = torch.linalg.svd(Dmat_all, full_matrices=False)
+            S = torch.flip(S, dims=[1])
+            U = torch.flip(U, dims=[2])
+
+        lambda_matrix = torch.matmul(U.conj().transpose(-2, -1), torch.matmul(Dmat_all, U))
+        eigenvalues_all = lambda_matrix.diagonal(offset=0, dim1=-2, dim2=-1)
+        v_all_transformed = torch.matmul(
+            Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1),
+            U
+        )
+
+        eigenvalues_real = torch.real(eigenvalues_all)
+        eps = 1e-6
+        eigenvalues_clamped = torch.where(eigenvalues_real < eps, 
+                                         torch.tensor(float('nan'), dtype=torch.float32, device=eigenvalues_all.device),
+                                         eigenvalues_real)
+        eigenvalues_clamped = eigenvalues_clamped.to(dtype=torch.float32)
+        winv_all = 1.0 / (eigenvalues_clamped + 1e-8)
+        winv_all = torch.where(winv_all > 1e6,
+                            torch.tensor(float('nan'), dtype=torch.float32, device=winv_all.device),
+                            winv_all)
+
+        self.Winv = winv_all
+        self.V = v_all_transformed
+        
+        # Set requires_grad for tensors
+        self.V.requires_grad_(True)
+        self.Winv.requires_grad_(True)
     
     #@debug
     def compute_gnm_K(self, hessian: torch.Tensor, kvec: torch.Tensor = None) -> torch.Tensor:
@@ -1105,89 +1005,38 @@ class OnePhonon:
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
                                 dtype=torch.complex64, device=self.device)
         
-        from eryx.torch_utils import ComplexTensorOps
+        if self.use_arbitrary_q:
+            total_points = self.q_grid.shape[0]
+        else:
+            h_dim = int(self.hsampling[2])
+            k_dim = int(self.ksampling[2])
+            l_dim = int(self.lsampling[2])
+            total_points = h_dim * k_dim * l_dim
         
-        # Create a GaussianNetworkModelTorch instance for Kinv calculations
+        from eryx.torch_utils import ComplexTensorOps
         from eryx.pdb_torch import GaussianNetworkModel as GNMTorch
         gnm_torch = GNMTorch()
         gnm_torch.n_asu = self.n_asu
         gnm_torch.n_cell = self.n_cell
         gnm_torch.id_cell_ref = self.id_cell_ref
         gnm_torch.device = self.device
-        gnm_torch.crystal = self.crystal
+        if hasattr(self, 'crystal'):
+            gnm_torch.crystal = self.crystal
+        else:
+            print("Warning: No crystal object found in OnePhonon model")
         
         hessian = self.compute_hessian()
         
-        if self.use_arbitrary_q:
-            # For arbitrary mode, process all k-vectors as a batch
-            n_points = self.kvec.shape[0]
-            
-            print(f"Computing covariance matrix for {n_points} arbitrary q-vectors")
-            
-            # Compute Kinv matrices for all k-vectors at once
-            Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
-            
-            print(f"Arbitrary mode: Kinv_all shape = {Kinv_all.shape}")
-            
-            # For each unit cell, compute phase factors and accumulate contributions
-            for j_cell in range(self.n_cell):
-                # Get unit cell origin
-                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
-                
-                # Calculate phase for all k-vectors: all_phases has shape [n_points]
-                all_phases = torch.sum(self.kvec * r_cell, dim=1)
-                
-                # Compute complex exponentials for all phases
-                real_part, imag_part = ComplexTensorOps.complex_exp(all_phases)
-                eikr_all = torch.complex(real_part, imag_part)
-                
-                # Apply phase factors and accumulate
-                # Reshape eikr_all to [n_points, 1, 1] for broadcasting
-                eikr_reshaped = eikr_all.view(-1, 1, 1)
-                
-                # Sum over all k-vectors with phase factors
-                complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
-                self.covar[:, j_cell, :] = complex_sum
-                
-                if j_cell == 0:
-                    print(f"Arbitrary mode: First cell phase factors shape = {eikr_reshaped.shape}")
-        else:
-            # Original grid-based implementation
-            # Use actual grid dimensions from map_shape
-            h_dim, k_dim, l_dim = self.map_shape
-            
-            # Process all k-vectors at once
-            total_points = h_dim * k_dim * l_dim
-            
-            # Get all k-vectors
-            kvec_all = self.kvec
-            
-            # Compute Kinv matrices for all k-vectors at once
-            Kinv_all = gnm_torch.compute_Kinv(hessian, kvec_all, reshape=False)
-            
-            # For each unit cell, compute phase factors and accumulate contributions
-            for j_cell in range(self.n_cell):
-                # Get unit cell origin
-                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
-                
-                # Calculate phase for all k-vectors: all_phases has shape [total_points]
-                # Sum along last dimension (3) to get dot product of each k-vector with r_cell
-                all_phases = torch.sum(kvec_all * r_cell, dim=1)
-                
-                # Compute complex exponentials for all phases
-                real_part, imag_part = ComplexTensorOps.complex_exp(all_phases)
-                eikr_all = torch.complex(real_part, imag_part)
-                
-                # Apply phase factors to Kinv matrices and accumulate
-                # Need to reshape eikr_all to allow broadcasting
-                # [total_points] -> [total_points, 1, 1] for proper broadcasting
-                eikr_reshaped = eikr_all.view(-1, 1, 1)
-                
-                # Accumulate contributions to covariance matrix
-                # Sum over all k-vectors - ensure proper complex handling
-                # Convert to real at the end to maintain gradient flow
-                complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
-                self.covar[:, j_cell, :] = complex_sum
+        Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
+        print(f"Arbitrary mode: Kinv_all shape = {Kinv_all.shape}")
+        for j_cell in range(self.n_cell):
+            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+            all_phases = torch.sum(self.kvec * r_cell, dim=1)
+            real_part, imag_part = ComplexTensorOps.complex_exp(all_phases)
+            eikr_all = torch.complex(real_part, imag_part)
+            eikr_reshaped = eikr_all.view(-1, 1, 1)
+            complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+            self.covar[:, j_cell, :] = complex_sum
         
         # Get the reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
