@@ -579,29 +579,62 @@ class OnePhonon:
         """
         Compute all k-vectors and their norm in the first Brillouin zone.
         
-        This method handles both grid-based and arbitrary q-vector modes differently:
-        - For arbitrary q-vector mode: directly uses k = q/(2π) without grid reshaping
-        - For grid-based mode: computes k-vectors based on the grid structure
+        For both grid-based and arbitrary q-vector modes, we compute the k-vectors.
+        In arbitrary mode, simply k = q/(2π).
+        In grid-based mode, we carefully match the NumPy implementation.
         
-        Tensors will have appropriate shapes for each mode:
-        - Arbitrary mode: [n_points, 3] for kvec and [n_points, 1] for kvec_norm
-        - Grid mode: [h_dim*k_dim*l_dim, 3] for kvec and [h_dim*k_dim*l_dim, 1] for kvec_norm
+        Tensors will have shape [h_dim*k_dim*l_dim, 3] for kvec
+        and [h_dim*k_dim*l_dim, 1] for kvec_norm using fully collapsed format.
         """
+        # Initialize dimensions from the computed grid shape.
+        h_dim, k_dim, l_dim = self.map_shape
+        
         if self.use_arbitrary_q:
-            # For arbitrary q-vector mode, simply compute k-vectors directly
-            # No need to worry about grid dimensions or reshaping
+            # For arbitrary q-vector mode, simply compute k-vectors from q-grid
             self.kvec = self.q_grid / (2.0 * torch.pi)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-            
             print(f"Arbitrary q-vector mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         else:
-            # Original grid-based implementation
-            # Initialize dimensions from the computed grid shape
-            h_dim, k_dim, l_dim = self.map_shape
+            # For grid-based mode, carefully replicate the NumPy implementation
             
-            # Compute k-vectors from q-grid
-            self.kvec = self.q_grid / (2.0 * torch.pi)
+            # Initialize tensors with fully collapsed shape
+            total_points = h_dim * k_dim * l_dim
+            self.kvec = torch.zeros((total_points, 3), device=self.device)
+            self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
+            
+            # Generate all indices at once
+            flat_indices = torch.arange(total_points, device=self.device)
+            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
+            
+            # Calculate centered k-values for all indices (matching NumPy behavior)
+            k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices], 
+                                    device=self.device, dtype=torch.float32)
+            k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices], 
+                                    device=self.device, dtype=torch.float32)
+            k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices], 
+                                    device=self.device, dtype=torch.float32)
+            
+            # Stack into hkl_tensor with shape [total_points, 3]
+            hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
+            
+            # Convert A_inv to tensor properly
+            if isinstance(self.model.A_inv, torch.Tensor):
+                A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=torch.float32, device=self.device)
+            else:
+                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
+            
+            # Calculate k-vectors MATCHING NUMPY IMPLEMENTATION - use A_inv_tensor.T
+            # This matches np.inner(self.model.A_inv.T, (k_dh, k_dk, k_dl)).T
+            self.kvec = torch.matmul(hkl_tensor, A_inv_tensor.T)
+            
+            # Calculate norms
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+            
+            # Debug output for verification
+            for i in range(total_points):
+                if (h_indices[i] == 0 and k_indices[i] == 1 and l_indices[i] == 0):
+                    print(f"Grid-based _build_kvec_Brillouin: kvec at [0,1,0] = {self.kvec[i]}")
+                    break
             
             print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         
@@ -612,16 +645,26 @@ class OnePhonon:
     #@debug
     def _center_kvec(self, x: int, L: int) -> float:
         """
-        Center a k-vector index.
+        Center a k-vector index using exact NumPy-compatible operations.
         
         For x and L integers such that 0 <= x < L, return -L/2 < x < L/2
         by applying periodic boundary condition in L/2.
         
-        This matches the NumPy implementation exactly.
+        This implementation exactly matches the NumPy behavior for modulo with
+        negative numbers.
+        
+        Args:
+            x: Index to center
+            L: Length of the periodic box
+            
+        Returns:
+            Centered value in range [-L/2, L/2)
         """
-        # Exactly match the NumPy implementation
-        # The key is to use integer division and modulo operations in the same order
-        return int(((x - L / 2) % L) - L / 2) / L
+        # Implementation that exactly matches NumPy behavior
+        result = ((x - L/2) % L) - L/2
+        
+        # Convert to float division as in the original
+        return float(int(result)) / L
     
     #@debug
     def _at_kvec_from_miller_points(self, indices_or_batch: Union[Tuple[int, int, int], torch.Tensor, int]) -> Union[torch.Tensor, List[torch.Tensor]]:
@@ -700,10 +743,12 @@ class OnePhonon:
                 flat_indices = torch.tensor([flat_idx], device=self.device)
             h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
         
-        # Calculate steps based on sampling parameters
+        # Calculate steps based on sampling parameters - MUST MATCH NUMPY VERSION
         hsteps = int(self.hsampling[2] * (self.hsampling[1] - self.hsampling[0]) + 1)
         ksteps = int(self.ksampling[2] * (self.ksampling[1] - self.ksampling[0]) + 1)
         lsteps = int(self.lsampling[2] * (self.lsampling[1] - self.lsampling[0]) + 1)
+        
+        print(f"_at_kvec_from_miller_points: Using steps hsteps={hsteps}, ksteps={ksteps}, lsteps={lsteps}")
         
         # Process entire batch at once in vectorized fashion
         batch_size = h_indices.numel()
@@ -712,10 +757,12 @@ class OnePhonon:
         if batch_size == 1:
             h_idx, k_idx, l_idx = h_indices.item(), k_indices.item(), l_indices.item()
             
-            # Create index grid
-            h_range = torch.arange(h_idx, hsteps, self.hsampling[2], device=self.device, dtype=torch.long)
-            k_range = torch.arange(k_idx, ksteps, self.ksampling[2], device=self.device, dtype=torch.long)
-            l_range = torch.arange(l_idx, lsteps, self.lsampling[2], device=self.device, dtype=torch.long)
+            # Create index grid - use exact sampling parameters for step size
+            h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
+            k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
+            l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
+            
+            print(f"_at_kvec_from_miller_points: Single point - ranges h:{h_range.shape}, k:{k_range.shape}, l:{l_range.shape}")
             
             # Create meshgrid
             h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
@@ -730,21 +777,19 @@ class OnePhonon:
                      k_flat * self.map_shape[2] + \
                      l_flat
             
+            print(f"_at_kvec_from_miller_points: Single point result shape: {indices.shape}")
             return indices
         else:
             # For larger batches, process all points at once using vectorized operations
             # Create a list to store results for each point
             all_indices = []
             
-            # Create a batched version that processes all points at once
-            # We need to handle each point separately because each one can have different grid sizes
-            # But we'll use vectorized operations where possible
-            
             # Process all points in parallel using a list comprehension
             all_indices = [self._compute_indices_for_point(h_indices[i].item(), k_indices[i].item(), 
                                                           l_indices[i].item(), hsteps, ksteps, lsteps) 
                           for i in range(batch_size)]
             
+            print(f"_at_kvec_from_miller_points: Batch processing - {len(all_indices)} results")
             return all_indices
     
     
@@ -1510,12 +1555,17 @@ class OnePhonon:
         k_l_size = k_dim * l_dim
         
         # Use integer division and modulo to extract h, k, and l indices
+        # Use floor division to match NumPy behavior with negative indices
         h_indices = torch.div(flat_indices, k_l_size, rounding_mode='floor')
         kl_remainder = flat_indices % k_l_size
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
         l_indices = kl_remainder % l_dim
         
+        # Debug output for verification
+        if flat_indices.numel() > 0:
+            print(f"_flat_to_3d_indices: Example conversion: flat_idx={flat_indices[0]} -> h={h_indices[0]}, k={k_indices[0]}, l={l_indices[0]}")
         print(f"_flat_to_3d_indices: Converted {flat_indices.shape} to 3D indices with shapes {h_indices.shape}")
+        
         return h_indices, k_indices, l_indices
     
     def _compute_indices_for_point(self, h_idx: int, k_idx: int, l_idx: int, 
@@ -1530,10 +1580,13 @@ class OnePhonon:
         Returns:
             Tensor of raveled indices
         """
-        # Create index grid - use 1 for step size to ensure we get all points
-        h_range = torch.arange(h_idx, hsteps, 1, device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, ksteps, 1, device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, lsteps, 1, device=self.device, dtype=torch.long)
+        # Create index grid - USE SAMPLING PARAMETERS FOR STEP SIZE, NOT HARDCODED 1
+        h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
+        k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
+        l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
+        
+        # Debug output for verification
+        print(f"_compute_indices_for_point: Using step sizes h={int(self.hsampling[2])}, k={int(self.ksampling[2])}, l={int(self.lsampling[2])}")
         
         # Create meshgrid
         h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
@@ -1547,6 +1600,10 @@ class OnePhonon:
         indices = h_flat * (self.map_shape[1] * self.map_shape[2]) + \
                  k_flat * self.map_shape[2] + \
                  l_flat
+        
+        # Debug output for verification
+        if h_flat.numel() > 0:
+            print(f"_compute_indices_for_point: First index: h={h_flat[0]}, k={k_flat[0]}, l={l_flat[0]} -> flat={indices[0]}")
         
         return indices
     
@@ -1578,7 +1635,11 @@ class OnePhonon:
         # flat_idx = h_idx * (k_dim * l_dim) + k_idx * l_dim + l_idx
         flat_indices = h_indices * k_l_size + k_indices * l_dim + l_indices
         
+        # Debug output for verification
+        if h_indices.numel() > 0:
+            print(f"_3d_to_flat_indices: Example conversion: h={h_indices[0]}, k={k_indices[0]}, l={l_indices[0]} -> flat_idx={flat_indices[0]}")
         print(f"_3d_to_flat_indices: Converted 3D indices to flat indices with shape {flat_indices.shape}")
+        
         return flat_indices
 
 # Minimal implementations for additional models
