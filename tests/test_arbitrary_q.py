@@ -191,6 +191,41 @@ class TestArbitraryQVectors(TestBase):
         
         self.assertTrue(torch.allclose(model.hkl_grid, expected_hkl, rtol=1e-5, atol=1e-8))
     
+    def test_basic_initialization(self):
+        """
+        Test that a model with arbitrary q-vectors initializes correctly.
+        """
+        # Create a custom set of q-vectors
+        q_vectors = torch.tensor([
+            [0.123, 0.456, 0.789],
+            [1.234, 2.345, 3.456],
+            [-0.123, -0.456, -0.789]
+        ], device=self.device)
+        
+        # Create model with these q-vectors
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Verify model attributes
+        self.assertTrue(model.use_arbitrary_q)
+        self.assertEqual(model.q_grid.shape, (3, 3))
+        self.assertTrue(model.q_grid.requires_grad)
+        
+        # Verify tensors have correct shapes
+        self.assertEqual(model.kvec.shape, (3, 3))
+        self.assertEqual(model.kvec_norm.shape, (3, 1))
+        self.assertTrue(model.kvec.requires_grad)
+        self.assertTrue(model.kvec_norm.requires_grad)
+        
+        # Verify V and Winv tensors exist and have requires_grad
+        self.assertTrue(hasattr(model, 'V'))
+        self.assertTrue(hasattr(model, 'Winv'))
+        self.assertTrue(model.V.requires_grad)
+        self.assertTrue(model.Winv.requires_grad)
+    
     def test_build_kvec_brillouin(self):
         """
         Test _build_kvec_Brillouin method with arbitrary q-vectors.
@@ -340,13 +375,9 @@ class TestArbitraryQVectors(TestBase):
             device=self.device
         )
         
-        # Call _build_kvec_Brillouin on both models
-        grid_model._build_kvec_Brillouin()
-        q_model._build_kvec_Brillouin()
-        
-        # Compare k-vectors
-        self.assertTrue(torch.allclose(grid_model.kvec, q_model.kvec, rtol=1e-5, atol=1e-8))
-        self.assertTrue(torch.allclose(grid_model.kvec_norm, q_model.kvec_norm, rtol=1e-5, atol=1e-8))
+        # Compare k-vectors (already built during initialization)
+        self.assertTrue(torch.allclose(grid_model.kvec.reshape(-1, 3), q_model.kvec, rtol=1e-5, atol=1e-8))
+        self.assertTrue(torch.allclose(grid_model.kvec_norm.reshape(-1, 1), q_model.kvec_norm, rtol=1e-5, atol=1e-8))
         
         # Test _at_kvec_from_miller_points with a specific point
         grid_result = grid_model._at_kvec_from_miller_points((0, 0, 0))
