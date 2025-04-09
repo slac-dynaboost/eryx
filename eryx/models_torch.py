@@ -45,13 +45,18 @@ class OnePhonon:
         """
         Initialize the OnePhonon model with PyTorch tensors.
         
+        This class supports two modes of operation:
+        1. Grid-based mode: Uses sampling parameters (hsampling, ksampling, lsampling) to create a grid
+                           of q-vectors in reciprocal space.
+        2. Arbitrary q-vector mode: Directly specifies q-vectors of interest without grid sampling.
+        
         Args:
             pdb_path: Path to coordinates file.
-            hsampling: Tuple (hmin, hmax, oversampling) for h dimension.
-            ksampling: Tuple (kmin, kmax, oversampling) for k dimension.
-            lsampling: Tuple (lmin, lmax, oversampling) for l dimension.
+            hsampling: Tuple (hmin, hmax, oversampling) for h dimension. Required for grid-based mode.
+            ksampling: Tuple (kmin, kmax, oversampling) for k dimension. Required for grid-based mode.
+            lsampling: Tuple (lmin, lmax, oversampling) for l dimension. Required for grid-based mode.
             q_vectors: Tensor of arbitrary q-vectors with shape [n_points, 3] in Å⁻¹. If provided, 
-                       sampling parameters are ignored.
+                       sampling parameters are ignored and calculation is performed in arbitrary q-vector mode.
             expand_p1: If True, expand to p1 (if PDB is asymmetric unit).
             group_by: Level of rigid-body assembly ('asu' or None).
             res_limit: High-resolution limit in Angstrom.
@@ -61,6 +66,12 @@ class OnePhonon:
             gamma_inter: Spring constant for inter-asu interactions.
             n_processes: Number of processes for parallel computation.
             device: PyTorch device to use (default: CUDA if available, else CPU).
+            
+        Note:
+            When using arbitrary q-vector mode (by providing q_vectors), the calculation bypasses
+            the grid structure and processes all provided q-vectors directly. This is useful for
+            focusing computation on specific points of interest in reciprocal space or for matching
+            with experimental data.
         """
         self.n_processes = n_processes
         self.model_type = model
@@ -590,10 +601,19 @@ class OnePhonon:
         h_dim, k_dim, l_dim = self.map_shape
         
         if self.use_arbitrary_q:
-            # For arbitrary q-vector mode, simply compute k-vectors from q-grid
+            # For arbitrary q-vector mode, k-vectors are directly related to q-vectors: k = q/(2π)
+            print(f"Building k-vectors for {self.q_grid.shape[0]} arbitrary q-vectors")
             self.kvec = self.q_grid / (2.0 * torch.pi)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-            print(f"Arbitrary q-vector mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
+        
+            # Print debug information about the k-vectors
+            print(f"Arbitrary mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
+            print(f"Arbitrary mode: kvec range [{self.kvec.min().item():.4f}, {self.kvec.max().item():.4f}]")
+            print(f"Arbitrary mode: kvec_norm range [{self.kvec_norm.min().item():.4f}, {self.kvec_norm.max().item():.4f}]")
+        
+            # Print example k-vector for verification
+            if self.kvec.shape[0] > 0:
+                print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
         else:
             # For grid-based mode, carefully replicate the NumPy implementation
             
@@ -676,14 +696,20 @@ class OnePhonon:
         2. Fully collapsed format: a single flat index
         3. Batched format: tensor of shape [batch_size] containing flat indices
         
-        In arbitrary q-vector mode, this method handles direct indices or finds the
-        nearest q-vector to the requested Miller indices.
+        Behavior differs between grid-based and arbitrary q-vector modes:
+        - In grid-based mode: Uses the grid structure to find all q-vectors at the specified Miller indices
+        - In arbitrary q-vector mode: For (h,k,l) tuples, finds the nearest q-vector to the specified Miller indices;
+          for direct indices, returns them unchanged
         
         Args:
             indices_or_batch: Either a 3-tuple (h,k,l), a single flat index, or a tensor of flat indices
             
         Returns:
             Torch tensor of raveled indices, or list of tensors for batched input
+            
+        Note:
+            In arbitrary q-vector mode, batched Miller indices (tensor of shape [batch_size, 3])
+            are not currently supported.
         """
         # For arbitrary q-vector mode, handle differently
         if self.use_arbitrary_q:
@@ -695,7 +721,7 @@ class OnePhonon:
             elif isinstance(indices_or_batch, (tuple, list)) and len(indices_or_batch) == 3:
                 # Convert Miller indices to q-vector
                 h, k, l = indices_or_batch
-                
+            
                 # Convert to tensor if needed
                 if not isinstance(h, torch.Tensor):
                     h = torch.tensor(h, device=self.device)
@@ -703,20 +729,27 @@ class OnePhonon:
                     k = torch.tensor(k, device=self.device)
                 if not isinstance(l, torch.Tensor):
                     l = torch.tensor(l, device=self.device)
-                
+            
                 hkl = torch.tensor([h, k, l], device=self.device).float()
-                
+            
                 # Convert to q-vector: q = 2π * A_inv^T * hkl
                 A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
                 target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl)
-                
+            
                 # Find nearest q-vector in our list
                 distances = torch.norm(self.q_grid - target_q, dim=1)
                 nearest_idx = torch.argmin(distances)
-                
+            
                 print(f"Arbitrary mode: Found nearest q-vector at index {nearest_idx} for hkl={hkl}")
                 return nearest_idx
             
+            # If input is a tensor with shape [batch_size, 3] (batched Miller indices)
+            elif isinstance(indices_or_batch, torch.Tensor) and indices_or_batch.dim() == 2 and indices_or_batch.shape[1] == 3:
+                raise NotImplementedError(
+                    "Batched Miller indices (tensor of shape [batch_size, 3]) are not currently supported "
+                    "in arbitrary q-vector mode. Please provide individual (h,k,l) tuples instead."
+                )
+        
             # Unsupported input format
             else:
                 raise ValueError(f"Unsupported input format for arbitrary q-vector mode: {type(indices_or_batch)}")
@@ -1290,14 +1323,134 @@ class OnePhonon:
         
         # Get total number of k-vectors
         if self.use_arbitrary_q:
-            total_points = self.q_grid.shape[0]
-            print(f"Applying disorder for {total_points} arbitrary q-vectors")
-        else:
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
-            total_points = h_dim * k_dim * l_dim
-            print(f"Applying disorder for {total_points} grid points ({h_dim}x{k_dim}x{l_dim})")
+            # In arbitrary q-vector mode, we process all provided q-vectors directly
+            n_points = self.q_grid.shape[0]
+            print(f"Processing {n_points} arbitrary q-vectors as a batch")
+            
+            # Get valid indices directly from the resolution mask
+            valid_indices = torch.where(self.res_mask)[0]
+            if valid_indices.numel() == 0:
+                # If no valid indices, return array of NaNs
+                Id_masked = torch.full((n_points,), float('nan'), device=self.device)
+                
+                # Save results if outdir is provided
+                if outdir is not None:
+                    import os
+                    os.makedirs(outdir, exist_ok=True)
+                    torch.save(Id_masked, os.path.join(outdir, f"rank_{rank:05d}_torch.pt"))
+                    np.save(os.path.join(outdir, f"rank_{rank:05d}.npy"), Id_masked.detach().cpu().numpy())
+                
+                return Id_masked
+            
+            # Pre-compute all ASU data to avoid repeated tensor creation
+            asu_data = []
+            for i_asu in range(self.n_asu):
+                asu_data.append({
+                    'xyz': torch.tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32, device=self.device),
+                    'ff_a': torch.tensor(self.model.ff_a[i_asu], dtype=torch.float32, device=self.device),
+                    'ff_b': torch.tensor(self.model.ff_b[i_asu], dtype=torch.float32, device=self.device),
+                    'ff_c': torch.tensor(self.model.ff_c[i_asu], dtype=torch.float32, device=self.device),
+                    'project': self.Amat[i_asu]
+                })
+            
+            # Compute structure factors for all valid q-vectors
+            F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
+                          dtype=torch.complex64, device=self.device)
+            
+            # Import structure_factors function
+            from eryx.scatter_torch import structure_factors
+            
+            # Process all ASUs
+            for i_asu in range(self.n_asu):
+                asu = asu_data[i_asu]
+                F[:, i_asu, :] = structure_factors(
+                    self.q_grid[valid_indices],
+                    asu['xyz'],
+                    asu['ff_a'],
+                    asu['ff_b'],
+                    asu['ff_c'],
+                    U=ADP,
+                    n_processes=self.n_processes,
+                    compute_qF=True,
+                    project_on_components=asu['project'],
+                    sum_over_atoms=False
+                )
+            
+            # Reshape for matrix operations
+            F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
+            
+            # Apply disorder model depending on rank parameter
+            if rank == -1:
+                # Get eigenvectors and eigenvalues for all valid points
+                V_valid = self.V[valid_indices]  # shape: [n_valid, n_dof, n_dof]
+                Winv_valid = self.Winv[valid_indices]  # shape: [n_valid, n_dof]
+                
+                # Process each point
+                intensity = torch.zeros(valid_indices.numel(), device=self.device)
+                for i, idx in enumerate(valid_indices):
+                    # Get eigenvectors and eigenvalues for this q-vector
+                    V_idx = V_valid[i]
+                    Winv_idx = Winv_valid[i]
+                    
+                    # Compute F·V for all modes at once
+                    FV = torch.matmul(F[i], V_idx)
+                    
+                    # Calculate absolute squared values - ensure real output
+                    FV_abs_squared = torch.abs(FV)**2
+                    
+                    # Extract real part of eigenvalues with NaN handling
+                    if torch.is_complex(Winv_idx):
+                        real_winv = torch.real(Winv_idx)
+                    else:
+                        real_winv = Winv_idx
+                    
+                    # Weight by eigenvalues and sum - ensure real output
+                    intensity[i] = torch.sum(FV_abs_squared * real_winv.to(dtype=torch.float32))
+            else:
+                # Process single mode
+                intensity = torch.zeros(valid_indices.numel(), device=self.device)
+                for i, idx in enumerate(valid_indices):
+                    # Get mode for this q-vector
+                    V_rank = self.V[idx, :, rank]
+                    
+                    # Compute FV
+                    FV = torch.matmul(F[i], V_rank)
+                    
+                    # Calculate absolute squared value
+                    FV_abs_squared = torch.abs(FV)**2
+                    
+                    # Get eigenvalue for this mode
+                    if torch.is_complex(self.Winv[idx, rank]):
+                        real_winv = torch.real(self.Winv[idx, rank])
+                    else:
+                        real_winv = self.Winv[idx, rank]
+                    
+                    # Compute intensity
+                    intensity[i] = FV_abs_squared * real_winv.to(dtype=torch.float32)
+            
+            # Build full result array
+            Id = torch.full((n_points,), float('nan'), device=self.device)
+            Id[valid_indices] = intensity
+            
+            # Apply resolution mask (redundant but kept for consistency)
+            Id_masked = Id.clone()
+            Id_masked[~self.res_mask] = float('nan')
+            
+            # Save results if outdir is provided
+            if outdir is not None:
+                import os
+                os.makedirs(outdir, exist_ok=True)
+                torch.save(Id_masked, os.path.join(outdir, f"rank_{rank:05d}_torch.pt"))
+                np.save(os.path.join(outdir, f"rank_{rank:05d}.npy"), Id_masked.detach().cpu().numpy())
+            
+            return Id_masked
+            
+        # The original grid-based implementation continues below
+        h_dim = int(self.hsampling[2])
+        k_dim = int(self.ksampling[2])
+        l_dim = int(self.lsampling[2])
+        total_points = h_dim * k_dim * l_dim
+        print(f"Applying disorder for {total_points} grid points ({h_dim}x{k_dim}x{l_dim})")
         
         # Import structure_factors function
         from eryx.scatter_torch import structure_factors
@@ -1313,6 +1466,7 @@ class OnePhonon:
                 'project': self.Amat[i_asu]
             })
         
+        # Process grid-based mode
         # Process all k-vectors at once for maximum parallelism
         print(f"Processing all {total_points} k-vectors at once")
         
