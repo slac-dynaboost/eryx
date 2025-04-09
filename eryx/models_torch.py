@@ -1358,12 +1358,19 @@ class OnePhonon:
         """
         Convert fully collapsed flat indices to h,k,l indices.
         
+        In arbitrary q-vector mode, this returns the input indices for all three dimensions
+        since there is no grid structure.
+        
         Args:
             flat_indices: Tensor of flat indices with shape [N]
             
         Returns:
             Tuple of (h_indices, k_indices, l_indices) tensors with shape [N]
         """
+        # For arbitrary q-vector mode, return the indices as-is for all dimensions
+        if self.use_arbitrary_q:
+            return flat_indices, flat_indices, flat_indices
+            
         # Calculate dimensions from sampling parameters
         k_dim = int(self.ksampling[2])
         l_dim = int(self.lsampling[2])
@@ -1413,6 +1420,9 @@ class OnePhonon:
         """
         Convert h,k,l indices to fully collapsed flat indices.
         
+        In arbitrary q-vector mode, this returns the h_indices directly
+        since there is no grid structure.
+        
         Args:
             h_indices: Tensor of h indices with shape [N]
             k_indices: Tensor of k indices with shape [N]
@@ -1421,6 +1431,10 @@ class OnePhonon:
         Returns:
             Tensor of fully collapsed flat indices with shape [N]
         """
+        # For arbitrary q-vector mode, return h_indices directly
+        if self.use_arbitrary_q:
+            return h_indices
+            
         # Calculate dimensions from sampling parameters
         k_dim = int(self.ksampling[2])
         l_dim = int(self.lsampling[2])
