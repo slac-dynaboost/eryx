@@ -78,6 +78,16 @@ class OnePhonon:
         self.model_type = model
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
+        # IMPORTANT: Always define the use_arbitrary_q flag.
+        # Set use_arbitrary_q flag based on whether q_vectors is provided.
+        if q_vectors is not None:
+             self.use_arbitrary_q = True
+             self.q_grid = q_vectors.to(self.device)
+             if not self.q_grid.requires_grad:
+                  self.q_grid.requires_grad_(True)
+        else:
+             self.use_arbitrary_q = False
+            
         # Set flag for arbitrary q-vector mode and store the provided tensor (if any)
         self.use_arbitrary_q = (q_vectors is not None)
         if self.use_arbitrary_q:
@@ -835,10 +845,11 @@ class OnePhonon:
         if self.use_arbitrary_q:
             total_points = self.q_grid.shape[0]
         else:
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
-            total_points = h_dim * k_dim * l_dim
+            # Instead of relying on the sampling values (which in tests are [start, stop, 2]),
+            # use the full grid shape computed from generate_grid. This ensures that grid-based
+            # mode (as seen by NumPy) produces the full dense grid (e.g. 9×9×9 = 729 points).
+            import numpy as np
+            total_points = int(np.prod(self.map_shape))
 
         self.V = torch.zeros((total_points,
                               self.n_asu * self.n_dof_per_asu,
@@ -1090,6 +1101,11 @@ class OnePhonon:
         
         # Initialize intensity tensor
         Id = torch.zeros(self.q_grid.shape[0], dtype=torch.float32, device=self.device)
+        
+        # Get total number of k-vectors
+        # Since self.q_grid is always built (from generate_grid in grid mode, or provided externally),
+        # we can use its size directly.
+        total_q = self.q_grid.shape[0]
         
         # Get total number of k-vectors
         if self.use_arbitrary_q:
@@ -1418,7 +1434,8 @@ class OnePhonon:
             print(f"to_original_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
         else:
-            # Use self.map_shape from the full dense grid generated in _setup
+            # Reshape using self.map_shape as set by generate_grid so that grid-based mode
+            # has a consistent interpretation of the dense grid dimensions.
             return tensor.reshape(*self.map_shape, *tensor.shape[1:])
     
     #@debug
