@@ -154,40 +154,29 @@ class OnePhonon:
             # Set map_shape for compatibility
             self.map_shape = (self.q_grid.shape[0], 1, 1)
         else:
-            # Original path for grid-based approach
-            # Instead of using generate_grid which creates a full dense grid,
-            # we'll manually create a grid with exactly the number of points specified by oversampling
-            
-            # Set map_shape to use the oversampling parameters directly
-            # This matches the NP implementation where the loop runs for int(self.hsampling[2]) times
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
-            self.map_shape = (h_dim, k_dim, l_dim)
-            
-            # Create hkl grid manually with exactly the right number of points
-            hkl_grid = []
-            for dh in range(h_dim):
-                for dk in range(k_dim):
-                    for dl in range(l_dim):
-                        # Compute the centered h, k, l values based on oversampling
-                        hkl_grid.append([
-                            self._center_kvec(dh, h_dim),
-                            self._center_kvec(dk, k_dim),
-                            self._center_kvec(dl, l_dim)
-                        ])
-            
-            # Convert the hkl grid to a torch tensor
-            self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
-            
-            # Compute q-grid as: 2π * A_inv^T * hkl_grid^T
+            # Instead of using the full grid from generate_grid, we compute a smaller grid
+            # using the oversampling parameters directly (to mimic the original NP behavior).
+            h_steps = int(self.hsampling[2])
+            k_steps = int(self.ksampling[2])
+            l_steps = int(self.lsampling[2])
+            self.map_shape = (h_steps, k_steps, l_steps)
+
+            h_lin = torch.linspace(self.hsampling[0], self.hsampling[1], steps=h_steps, device=self.device)
+            k_lin = torch.linspace(self.ksampling[0], self.ksampling[1], steps=k_steps, device=self.device)
+            l_lin = torch.linspace(self.lsampling[0], self.lsampling[1], steps=l_steps, device=self.device)
+
+            h_mesh, k_mesh, l_mesh = torch.meshgrid(h_lin, k_lin, l_lin, indexing='ij')
+            self.hkl_grid = torch.stack([h_mesh.flatten(), k_mesh.flatten(), l_mesh.flatten()], dim=1)
+
+            # Obtain resolution mask using PyTorch functions
+            from eryx.map_utils_torch import compute_resolution
+            cell_tensor = torch.tensor(self.model.cell, dtype=torch.float32, device=self.device)
+            resolution = compute_resolution(cell_tensor, self.hkl_grid)
+            self.res_mask = resolution > res_limit
+
+            # Compute q_grid using:  q = 2π * A_inv^T * hkl^T
             A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
-            self.q_grid = 2 * torch.pi * torch.matmul(
-                A_inv_tensor.T,
-                self.hkl_grid.T
-            ).T
-            
-            print(f"Created grid-based hkl_grid with shape {self.hkl_grid.shape} for map_shape {self.map_shape}")
+            self.q_grid = 2 * torch.pi * torch.matmul(A_inv_tensor.T, self.hkl_grid.T).T
         
         # Compute resolution mask using PyTorch functions
         from eryx.map_utils_torch import compute_resolution
@@ -1603,12 +1592,11 @@ class OnePhonon:
             l_dim = self.test_l_dim
         else:
             if not getattr(self, 'use_arbitrary_q', False):
-                h_dim = int(self.hsampling[2])
-                k_dim = int(self.ksampling[2])
-                l_dim = int(self.lsampling[2])
-                return tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
+                # In grid mode, use map_shape (which was overridden to oversampling counts)
+                h_dim, k_dim, l_dim = self.map_shape
+                return tensor.reshape(h_dim, k_dim, l_dim, *tensor.shape[1:])
             else:
-                # Arbitrary mode: return tensor unchanged
+                # In arbitrary mode, leave the tensor unchanged
                 return tensor
     
     #@debug
@@ -1638,13 +1626,13 @@ class OnePhonon:
             
         # In grid-based mode, use the oversampling values directly.
         if not getattr(self, 'use_arbitrary_q', False):
-            h_dim = int(self.hsampling[2])
             k_dim = int(self.ksampling[2])
             l_dim = int(self.lsampling[2])
+            k_l_size = k_dim * l_dim
         else:
+            # In arbitrary mode, use the map_shape values
             h_dim, k_dim, l_dim = self.map_shape
-
-        k_l_size = k_dim * l_dim
+            k_l_size = k_dim * l_dim
         h_indices = torch.div(flat_indices, k_l_size, rounding_mode='floor')
         kl_remainder = flat_indices % k_l_size
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
@@ -1669,10 +1657,10 @@ class OnePhonon:
         Returns:
             Tensor of raveled indices
         """
-        # Create index grid - use step size of 1 to match our manually created grid
-        h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
+        # Use step sizes from the oversampling values (convert to integer)
+        h_range = torch.arange(h_idx, h_dim, int(self.hsampling[2]), device=self.device, dtype=torch.long)
+        k_range = torch.arange(k_idx, k_dim, int(self.ksampling[2]), device=self.device, dtype=torch.long)
+        l_range = torch.arange(l_idx, l_dim, int(self.lsampling[2]), device=self.device, dtype=torch.long)
         
         # Debug output for verification
         print(f"_compute_indices_for_point: Using dimensions h_dim={h_dim}, k_dim={k_dim}, l_dim={l_dim}")
