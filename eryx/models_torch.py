@@ -1427,26 +1427,19 @@ class OnePhonon:
 
     def _flat_to_3d_indices(self, flat_indices: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Convert fully collapsed flat indices to h,k,l indices.
-        
-        In arbitrary q-vector mode, this returns the input indices for all three dimensions
-        since there is no grid structure.
-        
-        Args:
-            flat_indices: Tensor of flat indices with shape [N]
-            
-        Returns:
-            Tuple of (h_indices, k_indices, l_indices) tensors with shape [N]
+        Convert fully collapsed flat indices to h,k,l indices in grid-based mode.
+        In arbitrary mode: we might either return a direct pass or do something minimal.
         """
-        # For arbitrary q-vector mode, return the indices as-is for all dimensions
         if self.use_arbitrary_q:
-            print(f"_flat_to_3d_indices: Using direct indices in arbitrary mode, shape={flat_indices.shape}")
-            return flat_indices, flat_indices, flat_indices
-            
+            # Possibly no real meaning to do flat->3d
+            print(f"_flat_to_3d_indices: Using direct pass in arbitrary mode, shape={flat_indices.shape}")
+            return (flat_indices, flat_indices, flat_indices)
+        
         # In grid-based mode, use the full dense grid dimensions from generate_grid.
         # (self.map_shape is produced by generate_grid and reflects the full grid.)
         h_dim, k_dim, l_dim = self.map_shape
         k_l_size = k_dim * l_dim
+        # normal integer division
         h_indices = torch.div(flat_indices, k_l_size, rounding_mode='floor')
         kl_remainder = flat_indices % k_l_size
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
