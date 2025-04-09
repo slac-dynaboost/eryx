@@ -600,10 +600,9 @@ class OnePhonon:
             
             return
         
-        # Initialize dimensions
-        h_dim = int(self.hsampling[2])
-        k_dim = int(self.ksampling[2])
-        l_dim = int(self.lsampling[2])
+        # Initialize dimensions using the actual grid dimensions from map_shape
+        # instead of the oversampling parameters
+        h_dim, k_dim, l_dim = self.map_shape
         
         # Convert A_inv to tensor properly using clone().detach() to avoid warning
         if isinstance(self.model.A_inv, torch.Tensor):
@@ -1401,9 +1400,8 @@ class OnePhonon:
         if self.use_arbitrary_q:
             return flat_indices, flat_indices, flat_indices
             
-        # Calculate dimensions from sampling parameters
-        k_dim = int(self.ksampling[2])
-        l_dim = int(self.lsampling[2])
+        # Calculate dimensions from map_shape instead of sampling parameters
+        _, k_dim, l_dim = self.map_shape
         k_l_size = k_dim * l_dim
         
         # Use integer division and modulo to extract h, k, and l indices
@@ -1426,10 +1424,10 @@ class OnePhonon:
         Returns:
             Tensor of raveled indices
         """
-        # Create index grid
-        h_range = torch.arange(h_idx, hsteps, self.hsampling[2], device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, ksteps, self.ksampling[2], device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, lsteps, self.lsampling[2], device=self.device, dtype=torch.long)
+        # Create index grid - use 1 for step size to ensure we get all points
+        h_range = torch.arange(h_idx, hsteps, 1, device=self.device, dtype=torch.long)
+        k_range = torch.arange(k_idx, ksteps, 1, device=self.device, dtype=torch.long)
+        l_range = torch.arange(l_idx, lsteps, 1, device=self.device, dtype=torch.long)
         
         # Create meshgrid
         h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
@@ -1465,9 +1463,8 @@ class OnePhonon:
         if self.use_arbitrary_q:
             return h_indices
             
-        # Calculate dimensions from sampling parameters
-        k_dim = int(self.ksampling[2])
-        l_dim = int(self.lsampling[2])
+        # Calculate dimensions from map_shape instead of sampling parameters
+        _, k_dim, l_dim = self.map_shape
         k_l_size = k_dim * l_dim
         
         # Print dimensions for debugging
