@@ -614,6 +614,10 @@ class OnePhonon:
             # Print example k-vector for verification
             if self.kvec.shape[0] > 0:
                 print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
+        
+            # Print example k-vector for verification
+            if self.kvec.shape[0] > 0:
+                print(f"Arbitrary mode: First k-vector = {self.kvec[0].detach().cpu().numpy()}")
         else:
             # For grid-based mode, carefully replicate the NumPy implementation
             
