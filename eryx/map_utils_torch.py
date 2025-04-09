@@ -35,10 +35,11 @@ def generate_grid(A_inv: torch.Tensor, hsampling: Tuple[float, float, float],
     References:
         - Original implementation: eryx/map_utils.py:generate_grid
     """
-    # Calculate steps for each dimension
-    hsteps = int(hsampling[2] * (hsampling[1] - hsampling[0]) + 1)
-    ksteps = int(ksampling[2] * (ksampling[1] - ksampling[0]) + 1)
-    lsteps = int(lsampling[2] * (lsampling[1] - lsampling[0]) + 1)
+    # Use the oversampling value directly as the number of grid points
+    # This matches the behavior of the NumPy implementation
+    hsteps = int(hsampling[2])
+    ksteps = int(ksampling[2])
+    lsteps = int(lsampling[2])
     
     # Create linspace for each dimension
     h_grid = torch.linspace(hsampling[0], hsampling[1], hsteps, device=A_inv.device)
