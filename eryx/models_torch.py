@@ -271,7 +271,7 @@ class OnePhonon:
         logging.debug(f"[_setup_phonons] use_arbitrary_q={self.use_arbitrary_q}, model={model}")
 
         # Decide how many total points we expect
-        if self.use_arbitrary_q and (q_vectors is not None):
+        if self.use_arbitrary_q and hasattr(self, 'q_vectors') and self.q_vectors is not None:
             # Actually we rely on self.q_grid shape. We'll do that after _build_A, etc. anyway.
             pass
         if self.use_arbitrary_q:
