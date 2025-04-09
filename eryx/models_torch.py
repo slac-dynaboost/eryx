@@ -156,11 +156,14 @@ class OnePhonon:
         else:
             # Original path for grid-based approach
             from eryx.map_utils import generate_grid, get_resolution_mask
-            hkl_grid, self.map_shape = generate_grid(self.model.A_inv, 
-                                                    self.hsampling,
-                                                    self.ksampling,
-                                                    self.lsampling,
-                                                    return_hkl=True)
+            hkl_grid, _ = generate_grid(self.model.A_inv, 
+                                      self.hsampling,
+                                      self.ksampling,
+                                      self.lsampling,
+                                      return_hkl=True)
+            # Override map_shape in grid mode to use the oversampling parameters directly.
+            # (This matches the NP implementation where the loop runs for int(self.hsampling[2]) times.)
+            self.map_shape = (int(self.hsampling[2]), int(self.ksampling[2]), int(self.lsampling[2]))
             
             # Convert the hkl grid to a torch tensor
             self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
@@ -602,55 +605,52 @@ class OnePhonon:
         the total number of grid points or the number of provided q-vectors.
         """
         if getattr(self, 'use_arbitrary_q', False):
-            # Arbitrary q-vector mode
+            # Arbitrary q-vector mode remains unchanged.
             A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
             A_inv_T_inv = torch.inverse(A_inv_tensor.T)
-            # Convert provided q_vectors to hkl indices
             hkl = torch.matmul(self.q_grid / (2.0 * torch.pi), A_inv_T_inv)
-            # Compute kvec as hkl * A_inv
             self.kvec = torch.matmul(hkl, A_inv_tensor)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
             self.kvec.requires_grad_(True)
             self.kvec_norm.requires_grad_(True)
-            print(f"Arbitrary mode: kvec shape: {self.kvec.shape}, norm range: {self.kvec_norm.min().item()} to {self.kvec_norm.max().item()}")
+            print(f"Arbitrary mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
         else:
-            # Grid-based mode
-            h_dim, k_dim, l_dim = self.map_shape
+            # Grid-based mode: use oversampling values directly.
+            h_dim = int(self.hsampling[2])
+            k_dim = int(self.ksampling[2])
+            l_dim = int(self.lsampling[2])
             total_points = h_dim * k_dim * l_dim
+
+            flat_indices = torch.arange(total_points, device=self.device)
+            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
+
+            k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices],
+                                      device=self.device, dtype=torch.float32)
+            k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices],
+                                      device=self.device, dtype=torch.float32)
+            k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices],
+                                      device=self.device, dtype=torch.float32)
+
+            hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
 
             if isinstance(self.model.A_inv, torch.Tensor):
                 A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=torch.float32, device=self.device)
             else:
                 A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
 
-            self.kvec = torch.zeros((total_points, 3), device=self.device)
-            self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
-
-            flat_indices = torch.arange(total_points, device=self.device)
-            h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
-
-            k_dh_values = torch.tensor([self._center_kvec(int(h.item()), h_dim) for h in h_indices], 
-                                      device=self.device, dtype=torch.float32)
-            k_dk_values = torch.tensor([self._center_kvec(int(k.item()), k_dim) for k in k_indices], 
-                                      device=self.device, dtype=torch.float32)
-            k_dl_values = torch.tensor([self._center_kvec(int(l.item()), l_dim) for l in l_indices], 
-                                      device=self.device, dtype=torch.float32)
-
-            hkl_tensor = torch.stack([k_dh_values, k_dk_values, k_dl_values], dim=1)
-
-            debug_idx = torch.where((h_indices == 0) & (k_indices == 1) & (l_indices == 0))[0]
-            if len(debug_idx) > 0:
-                idx = debug_idx[0].item()
-                print(f"\nDEBUGGING calculation for point [0,1,0] at flat index {idx}:")
-                print(f"hkl_tensor: {hkl_tensor[idx]}")
-                print(f"A_inv_tensor.T:\n{A_inv_tensor.T}")
-                result = torch.matmul(A_inv_tensor.T, hkl_tensor[idx])
-                print(f"Result of matmul: {result}")
-
             self.kvec = torch.matmul(hkl_tensor, A_inv_tensor)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+
             self.kvec.requires_grad_(True)
             self.kvec_norm.requires_grad_(True)
+
+            # Debug output for verification
+            for i in range(total_points):
+                if (h_indices[i] == 0 and k_indices[i] == 1 and l_indices[i] == 0):
+                    print(f"Grid-based _build_kvec_Brillouin: kvec at [0,1,0] = {self.kvec[i]}")
+                    break
+
+            print(f"Grid-based mode: kvec shape={self.kvec.shape}, norm shape={self.kvec_norm.shape}")
     
     #@debug
     def _center_kvec(self, x: int, L: int) -> float:
@@ -1602,29 +1602,14 @@ class OnePhonon:
             k_dim = self.test_k_dim
             l_dim = self.test_l_dim
         else:
-            # Use actual grid dimensions from map_shape
-            h_dim, k_dim, l_dim = self.map_shape
-            
-            # If dimensions don't match, try to infer from the tensor shape
-            if hkl_dim != h_dim * k_dim * l_dim:
-                # For testing, try to find reasonable divisors
-                if hkl_dim % 8 == 0:
-                    h_dim = 2
-                    k_dim = 2
-                    l_dim = hkl_dim // 4
-                elif hkl_dim % 6 == 0:
-                    h_dim = 2
-                    k_dim = 3
-                    l_dim = hkl_dim // 6
-                else:
-                    h_dim = 1
-                    k_dim = 1
-                    l_dim = hkl_dim
-        
-        # Reshape to separate h, k, and l dimensions
-        result = tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
-        print(f"to_original_shape: Converted {tensor.shape} to {result.shape}")
-        return result
+            if not getattr(self, 'use_arbitrary_q', False):
+                h_dim = int(self.hsampling[2])
+                k_dim = int(self.ksampling[2])
+                l_dim = int(self.lsampling[2])
+                return tensor.reshape(h_dim, k_dim, l_dim, *remaining_dims)
+            else:
+                # Arbitrary mode: return tensor unchanged
+                return tensor
     
     #@debug
     def compute_rb_phonons(self):
@@ -1651,12 +1636,15 @@ class OnePhonon:
             print(f"_flat_to_3d_indices: Using direct indices in arbitrary mode, shape={flat_indices.shape}")
             return flat_indices, flat_indices, flat_indices
             
-        # Calculate dimensions from map_shape instead of sampling parameters
-        _, k_dim, l_dim = self.map_shape
+        # In grid-based mode, use the oversampling values directly.
+        if not getattr(self, 'use_arbitrary_q', False):
+            h_dim = int(self.hsampling[2])
+            k_dim = int(self.ksampling[2])
+            l_dim = int(self.lsampling[2])
+        else:
+            h_dim, k_dim, l_dim = self.map_shape
+
         k_l_size = k_dim * l_dim
-        
-        # Use integer division and modulo to extract h, k, and l indices
-        # Use floor division to match NumPy behavior with negative indices
         h_indices = torch.div(flat_indices, k_l_size, rounding_mode='floor')
         kl_remainder = flat_indices % k_l_size
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
