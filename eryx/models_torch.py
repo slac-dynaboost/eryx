@@ -1240,7 +1240,9 @@ class OnePhonon:
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
         
         # Extract diagonal elements for ADP calculation
-        self.ADP = torch.real(torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1))
+        # Use .real attribute instead of torch.real() to preserve gradient flow
+        diagonal_values = torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1)
+        self.ADP = diagonal_values.real
         
         # Transform ADP using the displacement projection matrix
         Amat = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu)
@@ -1265,8 +1267,10 @@ class OnePhonon:
         self.covar = self.covar * ADP_scale
         
         # Reshape covariance matrix to final format
-        self.covar = torch.real(self.covar.reshape((self.n_asu, self.n_dof_per_asu,
-                                                  self.n_cell, self.n_asu, self.n_dof_per_asu)))
+        # Use .real attribute instead of torch.real() to preserve gradient flow
+        reshaped_covar = self.covar.reshape((self.n_asu, self.n_dof_per_asu,
+                                           self.n_cell, self.n_asu, self.n_dof_per_asu))
+        self.covar = reshaped_covar.real
         
         # Set requires_grad for ADP tensor
         self.ADP.requires_grad_(True)
@@ -1410,7 +1414,7 @@ class OnePhonon:
                     
                     # Extract real part of eigenvalues with NaN handling
                     if torch.is_complex(Winv_idx):
-                        real_winv = torch.real(Winv_idx)
+                        real_winv = Winv_idx.real  # Use .real attribute to preserve gradients
                     else:
                         real_winv = Winv_idx
                     
@@ -1431,7 +1435,7 @@ class OnePhonon:
                     
                     # Get eigenvalue for this mode
                     if torch.is_complex(self.Winv[idx, rank]):
-                        real_winv = torch.real(self.Winv[idx, rank])
+                        real_winv = self.Winv[idx, rank].real  # Use .real attribute to preserve gradients
                     else:
                         real_winv = self.Winv[idx, rank]
                     
