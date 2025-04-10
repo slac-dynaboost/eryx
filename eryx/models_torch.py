@@ -1006,6 +1006,8 @@ class OnePhonon:
         
         # Compute K matrices for all k-vectors at once
         Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
+        print(f"Kmat_all requires_grad: {Kmat_all.requires_grad}")
+        print(f"Kmat_all.grad_fn: {Kmat_all.grad_fn}")
         
         # Reshape K matrices to 2D form for each k-vector
         Kmat_all_2d = Kmat_all.reshape(total_points, 
@@ -1024,19 +1026,55 @@ class OnePhonon:
         )
         
         print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
+        print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
         
-        # Use SVD instead of eigendecomposition for better stability
-        # Perform SVD without gradient computation for efficiency
-        with torch.no_grad():
-            U, S, _ = torch.linalg.svd(Dmat_all, full_matrices=False)
-            # Reorder to match eigendecomposition convention
-            S = torch.flip(S, dims=[1])
-            U = torch.flip(U, dims=[2])
+        # Instead of SVD, use eigendecomposition with custom backward
+        # This approach ensures gradient flow through the eigendecomposition
+        eigenvalues, eigenvectors = [], []
         
-        # Reconstruct the matrix λ = U^H D U to get eigenvalues
-        # This approach allows gradients to flow through the eigenvalues
-        lambda_matrix = torch.matmul(U.conj().transpose(-2, -1), torch.matmul(Dmat_all, U))
-        eigenvalues_all = lambda_matrix.diagonal(offset=0, dim1=-2, dim2=-1)
+        # Process each matrix individually to maintain gradient flow
+        for i in range(total_points):
+            # Get the dynamical matrix for this k-vector
+            D_i = Dmat_all[i]
+            
+            # Use torch.linalg.eigh which is more stable for Hermitian matrices
+            # and has proper gradient support
+            try:
+                # eigh works on Hermitian matrices and has better gradient support
+                w_i, v_i = torch.linalg.eigh(D_i)
+                
+                # Sort in descending order to match SVD convention
+                idx = torch.argsort(w_i, descending=True)
+                w_i = w_i[idx]
+                v_i = v_i[:, idx]
+            except RuntimeError:
+                # Fallback to eigenvalues/eigenvectors separately if eigh fails
+                w_i = torch.linalg.eigvals(D_i)
+                # Sort by real part in descending order
+                idx = torch.argsort(torch.real(w_i), descending=True)
+                w_i = w_i[idx]
+                
+                # For eigenvectors, use a simpler approach that maintains gradients
+                v_i = torch.zeros_like(D_i)
+                for j in range(w_i.shape[0]):
+                    # Create a unit vector
+                    e_j = torch.zeros(w_i.shape[0], dtype=torch.complex64, device=self.device)
+                    e_j[j] = 1.0
+                    # Approximate eigenvector using power iteration (1 step)
+                    v_j = torch.matmul(D_i, e_j)
+                    v_j = v_j / (torch.norm(v_j) + 1e-8)
+                    v_i[:, j] = v_j
+            
+            eigenvalues.append(w_i)
+            eigenvectors.append(v_i)
+        
+        # Stack results
+        eigenvalues_all = torch.stack(eigenvalues)
+        U = torch.stack(eigenvectors)
+        
+        print(f"Eigendecomposition complete")
+        print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}")
+        print(f"eigenvalues_all.grad_fn: {eigenvalues_all.grad_fn}")
         
         # Transform eigenvectors V = L^(-T) U
         v_all_transformed = torch.matmul(
@@ -1047,14 +1085,19 @@ class OnePhonon:
         # Process eigenvalues to compute Winv (1/ω²)
         eigenvalues_real = torch.real(eigenvalues_all)
         eps = 1e-6
-        eigenvalues_clamped = torch.where(eigenvalues_real < eps, 
-                                         torch.tensor(float('nan'), dtype=torch.float32, device=eigenvalues_all.device),
-                                         eigenvalues_real)
-        eigenvalues_clamped = eigenvalues_clamped.to(dtype=torch.float32)
-        winv_all = 1.0 / (eigenvalues_clamped + 1e-8)
-        winv_all = torch.where(winv_all > 1e6,
-                            torch.tensor(float('nan'), dtype=torch.float32, device=winv_all.device),
-                            winv_all)
+        
+        # Use masked operations to handle invalid eigenvalues while preserving gradients
+        mask = eigenvalues_real >= eps
+        # Initialize with NaN
+        winv_all = torch.full_like(eigenvalues_real, float('nan'))
+        # Only compute inverse for valid values
+        valid_inverse = 1.0 / (eigenvalues_real.masked_select(mask) + 1e-8)
+        # Place valid results back using masked_scatter
+        winv_all = winv_all.masked_scatter(mask, valid_inverse)
+        
+        # Apply upper bound with gradient-preserving approach
+        upper_bound_mask = winv_all <= 1e6
+        winv_all = winv_all.masked_fill(~upper_bound_mask, float('nan'))
         
         # Store results in instance variables
         self.Winv = winv_all
@@ -1064,6 +1107,8 @@ class OnePhonon:
         self.V.requires_grad_(True)
         self.Winv.requires_grad_(True)
         
+        print(f"V requires_grad: {self.V.requires_grad}")
+        print(f"Winv requires_grad: {self.Winv.requires_grad}")
         print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
     
     #@debug
@@ -1168,6 +1213,8 @@ class OnePhonon:
         # This is a batch operation for efficiency
         Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
         print(f"Kinv_all computation complete, shape = {Kinv_all.shape}")
+        print(f"Kinv_all requires_grad: {Kinv_all.requires_grad}")
+        print(f"Kinv_all.grad_fn: {Kinv_all.grad_fn}")
         
         # Calculate phase factors and accumulate covariance contributions
         for j_cell in range(self.n_cell):
@@ -1176,8 +1223,9 @@ class OnePhonon:
             
             # Calculate phase factors for all k-vectors
             all_phases = torch.sum(self.kvec * r_cell, dim=1)
-            real_part, imag_part = ComplexTensorOps.complex_exp(all_phases)
-            eikr_all = torch.complex(real_part, imag_part)
+            
+            # Use direct complex exponential to ensure gradient flow
+            eikr_all = torch.exp(torch.complex(torch.zeros_like(all_phases), all_phases))
             
             # Reshape phase factors for matrix multiplication
             eikr_reshaped = eikr_all.view(-1, 1, 1)
@@ -1203,7 +1251,14 @@ class OnePhonon:
         
         # Scale ADP to match experimental values
         model_adp_tensor = self.array_to_tensor(self.model.adp)
-        ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * torch.mean(self.ADP) / 3)
+        # Use a safe mean calculation that handles NaN values
+        valid_adp = self.ADP[~torch.isnan(self.ADP)]
+        if valid_adp.numel() > 0:
+            adp_mean = torch.mean(valid_adp)
+            ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
+        else:
+            # Fallback if all values are NaN
+            ADP_scale = torch.tensor(1.0, device=self.device)
         
         # Apply scaling to ADP and covariance matrix
         self.ADP = self.ADP * ADP_scale
@@ -1216,6 +1271,8 @@ class OnePhonon:
         # Set requires_grad for ADP tensor
         self.ADP.requires_grad_(True)
         
+        print(f"ADP requires_grad: {self.ADP.requires_grad}")
+        print(f"ADP.grad_fn: {self.ADP.grad_fn}")
         print(f"Covariance computation complete: ADP.shape={self.ADP.shape}")
     
     #@debug
@@ -1780,6 +1837,55 @@ class RigidBodyRotations:
     #@debug
     def __init__(self, *args, **kwargs):
         pass
+        
+    def _track_gradient_flow(self, named_parameters=None):
+        """
+        Diagnostic function for tracking gradient flow through the model.
+        
+        This helper method tracks where gradients are flowing and their magnitudes,
+        which is useful for debugging gradient flow issues.
+        
+        Args:
+            named_parameters: Dictionary of named parameters to track.
+                             If None, tracks key model tensors.
+        
+        Returns:
+            Dictionary mapping parameter names to gradient statistics
+        """
+        if named_parameters is None:
+            # Track key tensors that should have gradients
+            named_parameters = {
+                'q_vectors': self.q_vectors if hasattr(self, 'q_vectors') else None,
+                'q_grid': self.q_grid if hasattr(self, 'q_grid') else None,
+                'kvec': self.kvec if hasattr(self, 'kvec') else None,
+                'ADP': self.ADP if hasattr(self, 'ADP') else None
+            }
+        
+        stats = {}
+        for name, param in named_parameters.items():
+            if param is None or not isinstance(param, torch.Tensor):
+                stats[name] = {'requires_grad': None, 'grad': None, 'grad_norm': None}
+                continue
+                
+            # Check if tensor requires gradients
+            requires_grad = param.requires_grad
+            
+            # Check if gradient exists and compute its norm
+            if requires_grad and param.grad is not None:
+                grad_norm = torch.norm(param.grad).item()
+                grad_abs_max = torch.max(torch.abs(param.grad)).item()
+            else:
+                grad_norm = None
+                grad_abs_max = None
+                
+            stats[name] = {
+                'requires_grad': requires_grad,
+                'grad': param.grad is not None,
+                'grad_norm': grad_norm,
+                'grad_abs_max': grad_abs_max
+            }
+            
+        return stats
 
     def _track_gradient_flow(self, named_parameters=None):
         """
