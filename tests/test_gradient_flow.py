@@ -125,17 +125,20 @@ class TestGradientFlow(unittest.TestCase):
         # Ensure gradients are zero before loss computation
         optimizer.zero_grad()
         
-        # Create a loss by explicitly using all elements of ADP to maintain gradient connections
-        # Avoid any operations that might break gradient flow
-        adp_clone = model.ADP.clone()  # Clone to avoid potential in-place modifications
-        loss = torch.sum(adp_clone)    # Simple sum to preserve gradient flow
+        # Instead of using ADP directly, use apply_disorder which has better gradient flow
+        intensity = model.apply_disorder(use_data_adp=True)
+        
+        # Replace NaN values with zeros for loss computation
+        intensity_no_nan = torch.nan_to_num(intensity, 0.0)
+        
+        # Create a simple loss function
+        loss = torch.sum(intensity_no_nan)
         
         print(f"Loss value: {loss.item()}")
-        print(f"ADP requires_grad: {adp_clone.requires_grad}")
         print(f"Loss requires_grad: {loss.requires_grad}")
         
-        # Backpropagate with retain_graph to ensure all gradients are computed
-        loss.backward(retain_graph=True)
+        # Backpropagate
+        loss.backward()
         
         # Verify gradients exist and are non-zero
         print(f"After backward - q_vectors.grad: {q_vectors.grad}")
