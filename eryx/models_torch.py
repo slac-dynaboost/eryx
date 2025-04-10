@@ -291,6 +291,14 @@ class OnePhonon:
             self.Winv = torch.zeros((total_points,
                                     self.n_asu * self.n_dof_per_asu),
                                    dtype=torch.complex64, device=self.device)
+            
+            # Ensure complex tensors require gradients
+            self.V.requires_grad_(True)
+            self.Winv.requires_grad_(True)
+            
+            # Ensure complex tensors require gradients
+            self.V.requires_grad_(True)
+            self.Winv.requires_grad_(True)
         else:
             # In grid mode, use the dimensions from map_shape
             h_dim, k_dim, l_dim = self.map_shape
