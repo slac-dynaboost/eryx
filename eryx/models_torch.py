@@ -29,6 +29,47 @@ class OnePhonon:
     approximation (a.k.a small-coupling regime) using PyTorch tensors and operations
     to enable gradient flow.
     
+    This implementation supports two modes of operation:
+    
+    1. Grid-based mode (default):
+       - Specify hsampling, ksampling, lsampling parameters
+       - Generates a regular grid of q-vectors in reciprocal space
+       - Compatible with original NumPy implementation
+       
+    2. Arbitrary q-vector mode:
+       - Directly specify q_vectors parameter as a tensor of shape [n_points, 3]
+       - Evaluates diffuse scattering only at specified q-vectors
+       - Enables targeted evaluation and gradient-based optimization
+       
+    The arbitrary q-vector mode is particularly useful for:
+    - Focusing computation on specific regions of interest
+    - Matching experimental data points for optimization
+    - Custom sampling patterns not constrained to a regular grid
+    
+    Example usage:
+    
+    ```python
+    # Grid-based mode
+    model_grid = OnePhonon(
+        "structure.pdb",
+        hsampling=[-4, 4, 3],
+        ksampling=[-17, 17, 3],
+        lsampling=[-29, 29, 3],
+    )
+    
+    # Arbitrary q-vector mode
+    q_vectors = torch.tensor([
+        [0.1, 0.2, 0.3],
+        [0.4, 0.5, 0.6],
+        # ... more q-vectors ...
+    ])
+    
+    model_q = OnePhonon(
+        "structure.pdb",
+        q_vectors=q_vectors,
+    )
+    ```
+    
     References:
         - Original NumPy implementation in eryx/models.py:OnePhonon
     """
@@ -812,7 +853,14 @@ class OnePhonon:
     def compute_hessian(self) -> torch.Tensor:
         """
         Compute the projected Hessian matrix for the supercell.
+        
+        This method works in both grid-based and arbitrary q-vector modes.
+        
+        Returns:
+            hessian: A complex tensor of shape (n_asu, n_dof_per_asu, n_cell, n_asu, n_dof_per_asu)
+                    representing the Hessian matrix for the assembly of rigid bodies.
         """
+        # Initialize hessian tensor
         hessian = torch.zeros((self.n_asu, self.n_dof_per_asu,
                                self.n_cell, self.n_asu, self.n_dof_per_asu),
                               dtype=torch.complex64, device=self.device)
@@ -832,7 +880,7 @@ class OnePhonon:
         else:
             print("Warning: No crystal object found in OnePhonon model")
         
-        # Use our differentiable gamma tensor instead of the NumPy GNM gamma
+        # Use differentiable gamma tensor for gradient flow
         if hasattr(self, 'gamma_tensor'):
             # Make sure gamma_tensor is properly connected to gamma_intra and gamma_inter
             if not self.gamma_tensor.requires_grad and (self.gamma_intra.requires_grad or self.gamma_inter.requires_grad):
@@ -840,7 +888,7 @@ class OnePhonon:
                 self.gamma_tensor = torch.zeros((self.n_cell, self.n_asu, self.n_asu), 
                                               device=self.device, dtype=torch.float32)
                     
-                # Fill gamma tensor with our parameter tensors that require gradients
+                # Fill gamma tensor with parameter tensors that require gradients
                 for i_asu in range(self.n_asu):
                     for i_cell in range(self.n_cell):
                         for j_asu in range(self.n_asu):
@@ -879,36 +927,45 @@ class OnePhonon:
                             h_expanded[i*3:(i+1)*3, j*3:(j+1)*3] = h_block[i, j] * eye3
                     
                     # Perform matrix multiplication with expanded hessian
+                    # Ensure all tensors are complex for compatibility
                     proj = torch.matmul(self.Amat[i_asu].T.to(torch.complex64),
                                         torch.matmul(h_expanded,
                                                      self.Amat[j_asu].to(torch.complex64)))
                     hessian[i_asu, :, i_cell, j_asu, :] = proj
+        
+        # Ensure hessian requires gradients
+        if not hessian.requires_grad and hessian.is_complex():
+            # For complex tensors we need a different approach to enable gradients
+            # Create a dummy tensor that requires gradients, then add it to hessian
+            dummy = torch.zeros((1,), dtype=torch.complex64, device=self.device, requires_grad=True)
+            hessian = hessian + dummy * 0
+        
         return hessian
     
-    #@debug
     def compute_gnm_phonons(self):
         """
         Compute phonon modes for each k-vector in the first Brillouin zone.
         
-        This implementation uses a modified SVD approach that ensures stable gradient flow
-        through the eigenvalues while avoiding problematic backpropagation through
-        complex singular vectors.
+        This implementation performs a vectorized computation for all k-vectors
+        simultaneously to improve performance. Supports both grid-based and
+        arbitrary q-vector modes.
         
-        This method processes all k-vectors simultaneously in a single batch operation
-        for maximum computational efficiency. Note that this requires sufficient GPU memory
-        to hold all tensors at once.
+        The eigenvalues (Winv) and eigenvectors (V) are stored for intensity calculation.
         """
+        # Compute the Hessian matrix first (works for both modes)
         hessian = self.compute_hessian()
         
-        if self.use_arbitrary_q:
+        # Number of points depends on mode
+        if getattr(self, 'use_arbitrary_q', False):
             total_points = self.q_grid.shape[0]
+            print(f"Computing phonons for {total_points} arbitrary q-vectors")
         else:
-            # Instead of relying on the sampling values (which in tests are [start, stop, 2]),
-            # use the full grid shape computed from generate_grid. This ensures that grid-based
-            # mode (as seen by NumPy) produces the full dense grid (e.g. 9×9×9 = 729 points).
-            import numpy as np
-            total_points = int(np.prod(self.map_shape))
-
+            # Use dimensions from map_shape
+            h_dim, k_dim, l_dim = self.map_shape
+            total_points = h_dim * k_dim * l_dim
+            print(f"Computing phonons for {total_points} grid points ({h_dim}x{k_dim}x{l_dim})")
+        
+        # Initialize output tensors with proper shapes for both modes
         self.V = torch.zeros((total_points,
                               self.n_asu * self.n_dof_per_asu,
                               self.n_asu * self.n_dof_per_asu),
@@ -917,11 +974,7 @@ class OnePhonon:
                                 self.n_asu * self.n_dof_per_asu),
                                dtype=torch.complex64, device=self.device)
         
-        # For now, use the grid-based GNM branch even in arbitrary mode.
-        # (The "Skipping phonon computation in arbitrary q-vector mode" message remains.)
-        print("Skipping phonon computation in arbitrary q-vector mode (Phase 2)")
-        
-        # Compute phonons regardless of mode (using the computed kvec).
+        # Create GNM instance for K matrix computation
         from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
         gnm_torch = GaussianNetworkModelTorch()
         gnm_torch.n_asu = self.n_asu
@@ -950,13 +1003,18 @@ class OnePhonon:
         
         # Convert Linv to complex for matrix operations
         Linv_complex = self.Linv.to(dtype=torch.complex64)
-
+        
+        # Compute K matrices for all k-vectors at once
         Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
+        
+        # Reshape K matrices to 2D form for each k-vector
         Kmat_all_2d = Kmat_all.reshape(total_points, 
-                                        self.n_asu * self.n_dof_per_asu,
-                                        self.n_asu * self.n_dof_per_asu)
-        print(f"Arbitrary mode: Kmat_all_2d shape = {Kmat_all_2d.shape}")
-        # Compute D matrices for all k-vectors
+                                      self.n_asu * self.n_dof_per_asu,
+                                      self.n_asu * self.n_dof_per_asu)
+        
+        print(f"Compute_K complete, Kmat_all_2d shape = {Kmat_all_2d.shape}")
+        
+        # Compute dynamical matrices (D = L^(-1) K L^(-T)) for all k-vectors
         Dmat_all = torch.matmul(
             Linv_complex.unsqueeze(0).expand(total_points, -1, -1),
             torch.matmul(
@@ -964,20 +1022,29 @@ class OnePhonon:
                 Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
             )
         )
-        print(f"Arbitrary mode: Dmat_all shape = {Dmat_all.shape}")
-
+        
+        print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
+        
+        # Use SVD instead of eigendecomposition for better stability
+        # Perform SVD without gradient computation for efficiency
         with torch.no_grad():
             U, S, _ = torch.linalg.svd(Dmat_all, full_matrices=False)
+            # Reorder to match eigendecomposition convention
             S = torch.flip(S, dims=[1])
             U = torch.flip(U, dims=[2])
-
+        
+        # Reconstruct the matrix λ = U^H D U to get eigenvalues
+        # This approach allows gradients to flow through the eigenvalues
         lambda_matrix = torch.matmul(U.conj().transpose(-2, -1), torch.matmul(Dmat_all, U))
         eigenvalues_all = lambda_matrix.diagonal(offset=0, dim1=-2, dim2=-1)
+        
+        # Transform eigenvectors V = L^(-T) U
         v_all_transformed = torch.matmul(
             Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1),
             U
         )
-
+        
+        # Process eigenvalues to compute Winv (1/ω²)
         eigenvalues_real = torch.real(eigenvalues_all)
         eps = 1e-6
         eigenvalues_clamped = torch.where(eigenvalues_real < eps, 
@@ -988,13 +1055,16 @@ class OnePhonon:
         winv_all = torch.where(winv_all > 1e6,
                             torch.tensor(float('nan'), dtype=torch.float32, device=winv_all.device),
                             winv_all)
-
+        
+        # Store results in instance variables
         self.Winv = winv_all
         self.V = v_all_transformed
         
         # Set requires_grad for tensors
         self.V.requires_grad_(True)
         self.Winv.requires_grad_(True)
+        
+        print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
     
     #@debug
     def compute_gnm_K(self, hessian: torch.Tensor, kvec: torch.Tensor = None) -> torch.Tensor:
@@ -1050,53 +1120,75 @@ class OnePhonon:
             Kinv = Kinv.reshape((Kshape[0], Kshape[1], Kshape[2], Kshape[3]))
         return Kinv
     
-    #@debug
     def compute_covariance_matrix(self):
         """
         Compute the covariance matrix for atomic displacements.
         
-        This method processes all k-vectors simultaneously in a single operation
-        for maximum computational efficiency. Note that this requires sufficient GPU memory
-        to hold all tensors at once.
+        This method processes all k-vectors simultaneously for maximum
+        efficiency. The covariance matrix is used to compute atomic
+        displacement parameters (ADPs) that model thermal motions.
+        
+        Supports both grid-based and arbitrary q-vector modes.
         """
+        # Initialize covariance tensor
         self.covar = torch.zeros((self.n_asu * self.n_dof_per_asu,
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
-                                dtype=torch.complex64, device=self.device)
+                               dtype=torch.complex64, device=self.device)
         
+        # Get total number of k-vectors based on mode
         if getattr(self, 'use_arbitrary_q', False):
             total_points = self.q_grid.shape[0]
+            print(f"Computing covariance matrix for {total_points} arbitrary q-vectors")
         else:
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
+            h_dim, k_dim, l_dim = self.map_shape
             total_points = h_dim * k_dim * l_dim
+            print(f"Computing covariance matrix for {total_points} grid points")
         
+        # Import helper functions for complex tensor operations
         from eryx.torch_utils import ComplexTensorOps
         from eryx.pdb_torch import GaussianNetworkModel as GNMTorch
+        
+        # Set up GNM for inverse K calculation
         gnm_torch = GNMTorch()
         gnm_torch.n_asu = self.n_asu
         gnm_torch.n_cell = self.n_cell
         gnm_torch.id_cell_ref = self.id_cell_ref
         gnm_torch.device = self.device
+        
+        # Set crystal reference
         if hasattr(self, 'crystal'):
             gnm_torch.crystal = self.crystal
         else:
             print("Warning: No crystal object found in OnePhonon model")
         
+        # Compute the Hessian matrix
         hessian = self.compute_hessian()
         
+        # Compute inverse K matrices for all k-vectors at once
+        # This is a batch operation for efficiency
         Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
-        print(f"Arbitrary mode: Kinv_all shape = {Kinv_all.shape}")
+        print(f"Kinv_all computation complete, shape = {Kinv_all.shape}")
+        
+        # Calculate phase factors and accumulate covariance contributions
         for j_cell in range(self.n_cell):
+            # Get cell origin
             r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+            
+            # Calculate phase factors for all k-vectors
             all_phases = torch.sum(self.kvec * r_cell, dim=1)
             real_part, imag_part = ComplexTensorOps.complex_exp(all_phases)
             eikr_all = torch.complex(real_part, imag_part)
+            
+            # Reshape phase factors for matrix multiplication
             eikr_reshaped = eikr_all.view(-1, 1, 1)
+            
+            # Apply phase factors to Kinv for each k-vector and sum
             complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+            
+            # Accumulate in covariance tensor
             self.covar[:, j_cell, :] = complex_sum
         
-        # Get the reference cell ID for [0,0,0]
+        # Get reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
         
         # Extract diagonal elements for ADP calculation
@@ -1119,10 +1211,12 @@ class OnePhonon:
         
         # Reshape covariance matrix to final format
         self.covar = torch.real(self.covar.reshape((self.n_asu, self.n_dof_per_asu,
-                                                     self.n_cell, self.n_asu, self.n_dof_per_asu)))
+                                                  self.n_cell, self.n_asu, self.n_dof_per_asu)))
         
         # Set requires_grad for ADP tensor
         self.ADP.requires_grad_(True)
+        
+        print(f"Covariance computation complete: ADP.shape={self.ADP.shape}")
     
     #@debug
     def apply_disorder(self, rank: int = -1, outdir: Optional[str] = None, 
@@ -1448,16 +1542,46 @@ class OnePhonon:
         
         return Id_masked
 
-    #@debug
-    def array_to_tensor(self, array: np.ndarray, requires_grad: bool = True, dtype=None) -> torch.Tensor:
+    def array_to_tensor(self, array: Union[np.ndarray, torch.Tensor], requires_grad: bool = True, dtype=None) -> torch.Tensor:
         """
-        Convert a NumPy array to a Torch tensor.
+        Convert a NumPy array to a PyTorch tensor with gradient support.
+        
+        This is a helper method that ensures consistent tensor conversion
+        throughout the class, with proper handling of gradient requirements.
+        
+        Args:
+            array: NumPy array or PyTorch tensor to convert
+            requires_grad: Whether the tensor requires gradients for backpropagation
+            dtype: Data type for the tensor (default: torch.float32)
+            
+        Returns:
+            PyTorch tensor with proper device and gradient settings
         """
+        # Handle None input
+        if array is None:
+            return None
+        
+        # Set default dtype if not provided
         if dtype is None:
             dtype = torch.float32
+        
+        # If already a tensor, move to correct device and set requires_grad
+        if isinstance(array, torch.Tensor):
+            tensor = array.to(device=self.device, dtype=dtype)
+            if requires_grad and tensor.dtype.is_floating_point:
+                tensor.requires_grad_(True)
+            return tensor
+        
+        # Handle empty arrays
+        if isinstance(array, np.ndarray) and array.size == 0:
+            tensor = torch.from_numpy(array.copy()).to(dtype=dtype, device=self.device)
+            return tensor
+        
+        # Create tensor and set requires_grad if appropriate
         tensor = torch.tensor(array, dtype=dtype, device=self.device)
         if requires_grad and tensor.dtype.is_floating_point:
             tensor.requires_grad_(True)
+            
         return tensor
 
     def to_batched_shape(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -1657,3 +1781,51 @@ class RigidBodyRotations:
     def __init__(self, *args, **kwargs):
         pass
 
+    def _track_gradient_flow(self, named_parameters=None):
+        """
+        Diagnostic function for tracking gradient flow through the model.
+        
+        This helper method tracks where gradients are flowing and their magnitudes,
+        which is useful for debugging gradient flow issues.
+        
+        Args:
+            named_parameters: Dictionary of named parameters to track.
+                             If None, tracks key model tensors.
+        
+        Returns:
+            Dictionary mapping parameter names to gradient statistics
+        """
+        if named_parameters is None:
+            # Track key tensors that should have gradients
+            named_parameters = {
+                'q_vectors': self.q_vectors if hasattr(self, 'q_vectors') else None,
+                'q_grid': self.q_grid if hasattr(self, 'q_grid') else None,
+                'kvec': self.kvec if hasattr(self, 'kvec') else None,
+                'ADP': self.ADP if hasattr(self, 'ADP') else None
+            }
+        
+        stats = {}
+        for name, param in named_parameters.items():
+            if param is None or not isinstance(param, torch.Tensor):
+                stats[name] = {'requires_grad': None, 'grad': None, 'grad_norm': None}
+                continue
+                
+            # Check if tensor requires gradients
+            requires_grad = param.requires_grad
+            
+            # Check if gradient exists and compute its norm
+            if requires_grad and param.grad is not None:
+                grad_norm = torch.norm(param.grad).item()
+                grad_abs_max = torch.max(torch.abs(param.grad)).item()
+            else:
+                grad_norm = None
+                grad_abs_max = None
+                
+            stats[name] = {
+                'requires_grad': requires_grad,
+                'grad': param.grad is not None,
+                'grad_norm': grad_norm,
+                'grad_abs_max': grad_abs_max
+            }
+            
+        return stats

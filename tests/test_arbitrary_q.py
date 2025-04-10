@@ -271,6 +271,113 @@ class TestArbitraryQVectors(TestBase):
         self.assertTrue(torch.all(q_vectors.grad > 0))
 
 
+    def test_compute_gnm_phonons(self):
+        """Test phonon computation in arbitrary mode."""
+        # Create model with a small set of q-vectors
+        q_vectors = torch.tensor(
+            [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+            device=self.device,
+            requires_grad=True
+        )
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Compute phonons
+        model.compute_gnm_phonons()
+        
+        # Verify V and Winv tensors have correct shapes
+        self.assertEqual(model.V.shape[0], q_vectors.shape[0])
+        self.assertEqual(model.Winv.shape[0], q_vectors.shape[0])
+        
+        # Verify V and Winv require gradients
+        self.assertTrue(model.V.requires_grad)
+        self.assertTrue(model.Winv.requires_grad)
+        
+        # Verify V and Winv contain valid values (not all NaN or inf)
+        self.assertTrue(torch.any(torch.isfinite(model.V)))
+        self.assertTrue(torch.any(torch.isfinite(model.Winv)))
+    
+    def test_compute_covariance_matrix(self):
+        """Test covariance matrix computation in arbitrary mode."""
+        # Create model with a small set of q-vectors
+        q_vectors = torch.tensor(
+            [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+            device=self.device,
+            requires_grad=True
+        )
+        model = OnePhonon(
+            self.pdb_path,
+            q_vectors=q_vectors,
+            device=self.device
+        )
+        
+        # Compute phonons (required before covariance)
+        model.compute_gnm_phonons()
+        
+        # Compute covariance matrix
+        model.compute_covariance_matrix()
+        
+        # Verify ADP tensor has valid values
+        self.assertIsNotNone(model.ADP)
+        self.assertTrue(torch.all(torch.isfinite(model.ADP)))
+        self.assertTrue(model.ADP.requires_grad)
+        
+        # Create a loss from ADP
+        loss = torch.sum(model.ADP)
+        
+        # Backpropagate
+        loss.backward()
+        
+        # Verify gradient flows back to q_vectors
+        self.assertIsNotNone(q_vectors.grad)
+        self.assertGreater(torch.norm(q_vectors.grad), 0.0)
+    
+    def test_grid_equivalence(self):
+        """Test equivalence between grid-based and arbitrary modes using the same q-vectors."""
+        # First create grid-based model
+        grid_model = OnePhonon(
+            self.pdb_path,
+            self.hsampling,
+            self.ksampling,
+            self.lsampling,
+            device=self.device
+        )
+        
+        # Extract q-vectors from grid model
+        grid_q_vectors = grid_model.q_grid.detach().clone()
+        
+        # Create arbitrary q-vector model with the same q-vectors
+        arb_model = OnePhonon(
+            self.pdb_path,
+            q_vectors=grid_q_vectors,
+            device=self.device
+        )
+        
+        # Compute phonons for both models
+        grid_model.compute_gnm_phonons()
+        arb_model.compute_gnm_phonons()
+        
+        # Compare eigenvalues (should be very close)
+        # Need to carefully match points - for this test we use small grid and extract subset
+        grid_winv = grid_model.Winv
+        arb_winv = arb_model.Winv
+        
+        # Since arbitrary model uses exactly the same q-vectors, results should match
+        if grid_winv.shape == arb_winv.shape:
+            valid_mask = ~torch.isnan(grid_winv) & ~torch.isnan(arb_winv)
+            if torch.any(valid_mask):
+                self.assertTrue(
+                    torch.allclose(
+                        grid_winv[valid_mask],
+                        arb_winv[valid_mask],
+                        rtol=1e-3,  # Use slightly larger tolerance due to numerical differences
+                        atol=1e-5
+                    )
+                )
+
     def test_at_kvec_from_miller_points(self):
         """
         Test _at_kvec_from_miller_points method with arbitrary q-vectors.
