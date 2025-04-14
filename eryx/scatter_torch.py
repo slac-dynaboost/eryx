@@ -183,7 +183,7 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
     
     # Return complex structure factors with high precision
     # For PyTorch, we'll use a tensor with an extra dimension for real/imag parts
-    return torch.complex(A_real, A_imag).to(dtype=complex_dtype)
+    return torch.complex(A_real, A_imag).to(dtype=torch.complex128)
 
 def structure_factors(q_grid: torch.Tensor, xyz: torch.Tensor, 
                      ff_a: torch.Tensor, ff_b: torch.Tensor, ff_c: torch.Tensor, 

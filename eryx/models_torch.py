@@ -1404,15 +1404,8 @@ class OnePhonon:
                     V_idx = V_valid[i]
                     Winv_idx = Winv_valid[i]
                     
-                    # Ensure F and V_idx have the same dtype before matrix multiplication
-                    if F[i].dtype != V_idx.dtype:
-                        print(f"WARNING: dtype mismatch - F: {F[i].dtype}, V_idx: {V_idx.dtype}")
-                        F_i = F[i].to(dtype=self.complex_dtype)
-                    else:
-                        F_i = F[i]
-                    
                     # Compute F·V for all modes at once
-                    FV = torch.matmul(F_i, V_idx)
+                    FV = torch.matmul(F[i], V_idx)
                     
                     # Calculate absolute squared values - ensure real output
                     FV_abs_squared = torch.abs(FV)**2
@@ -1432,15 +1425,8 @@ class OnePhonon:
                     # Get mode for this q-vector
                     V_rank = self.V[idx, :, rank]
                     
-                    # Ensure F and V_rank have the same dtype before matrix multiplication
-                    if F[i].dtype != V_rank.dtype:
-                        print(f"WARNING: dtype mismatch - F: {F[i].dtype}, V_rank: {V_rank.dtype}")
-                        F_i = F[i].to(dtype=self.complex_dtype)
-                    else:
-                        F_i = F[i]
-                    
                     # Compute FV
-                    FV = torch.matmul(F_i, V_rank)
+                    FV = torch.matmul(F[i], V_rank)
                     
                     # Calculate absolute squared value
                     FV_abs_squared = torch.abs(FV)**2
@@ -1568,11 +1554,6 @@ class OnePhonon:
                 V_idx = self.V[idx]
                 Winv_idx = self.Winv[idx]
                 
-                # Ensure F and V_idx have the same dtype before matrix multiplication
-                if F.dtype != V_idx.dtype:
-                    print(f"WARNING: dtype mismatch - F: {F.dtype}, V_idx: {V_idx.dtype}")
-                    F = F.to(dtype=self.complex_dtype)
-                
                 # Compute F·V for all modes at once
                 FV = torch.matmul(F, V_idx)
                 
@@ -1594,16 +1575,11 @@ class OnePhonon:
                                           real_winv)
                 
                 # Weight by eigenvalues and sum - ensure real output
-                weighted_intensity = torch.matmul(FV_abs_squared, real_winv.to(dtype=torch.float32))
+                weighted_intensity = torch.matmul(FV_abs_squared, real_winv.to(dtype=self.real_dtype))
                 Id.index_add_(0, valid_indices, weighted_intensity)
             else:
                 # Process single mode
                 V_rank = self.V[idx, :, rank]
-                
-                # Ensure F and V_rank have the same dtype before matrix multiplication
-                if F.dtype != V_rank.dtype:
-                    print(f"WARNING: dtype mismatch - F: {F.dtype}, V_rank: {V_rank.dtype}")
-                    F = F.to(dtype=self.complex_dtype)
                 
                 FV = torch.matmul(F, V_rank)
                 
