@@ -1075,34 +1075,24 @@ class OnePhonon:
         
         # Stack results
         eigenvalues_all = torch.stack(eigenvalues)
-        U = torch.stack(eigenvectors)
+        v_all = torch.stack(eigenvectors)
         
-        print(f"Eigendecomposition complete")
+        print(f"SVD decomposition complete")
         print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}")
         print(f"eigenvalues_all.grad_fn: {eigenvalues_all.grad_fn}")
         
-        # Transform eigenvectors V = L^(-T) U
+        # Transform eigenvectors V = L^(-T) v (matching NumPy implementation)
         v_all_transformed = torch.matmul(
             Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1),
-            U
+            v_all
         )
         
-        # Process eigenvalues to compute Winv (1/ω²)
-        eigenvalues_real = torch.real(eigenvalues_all)
-        eps = 1e-6
+        # Calculate Winv = 1/w² directly from processed singular values
+        # NaN values from thresholding will propagate correctly
+        winv_all = 1.0 / torch.square(eigenvalues_all)
         
-        # Use masked operations to handle invalid eigenvalues while preserving gradients
-        mask = eigenvalues_real >= eps
-        # Initialize with NaN
-        winv_all = torch.full_like(eigenvalues_real, float('nan'))
-        # Only compute inverse for valid values
-        valid_inverse = 1.0 / (eigenvalues_real.masked_select(mask) + 1e-8)
-        # Place valid results back using masked_scatter
-        winv_all = winv_all.masked_scatter(mask, valid_inverse)
-        
-        # Apply upper bound with gradient-preserving approach
-        upper_bound_mask = winv_all <= 1e6
-        winv_all = winv_all.masked_fill(~upper_bound_mask, float('nan'))
+        # Ensure complex type
+        winv_all = winv_all.to(dtype=torch.complex64)
         
         # Store results in instance variables
         self.Winv = winv_all
