@@ -1161,7 +1161,7 @@ class OnePhonon:
         print_idx = 1  # Choose a non-zero index for detailed prints
         if total_points > print_idx: 
             print(f"\n--- PyTorch Debug Index {print_idx} ---")
-            print(f"PyTorch Kmat_all[{print_idx},0,0]: {Kmat_all[print_idx,0,0]:.8e}")
+            print(f"PyTorch Kmat_all[{print_idx},0,0]: {Kmat_all[print_idx,0,0].item():.8e}")
         # --- Debug Print End -----
         
         # Reshape K matrices to 2D form for each k-vector
@@ -1182,7 +1182,7 @@ class OnePhonon:
         
         # --- Debug Print Start ---
         if total_points > print_idx: 
-            print(f"PyTorch Dmat_all[{print_idx},0,0]: {Dmat_all[print_idx,0,0]:.8e}")
+            print(f"PyTorch Dmat_all[{print_idx},0,0]: {Dmat_all[print_idx,0,0].item():.8e}")
         # --- Debug Print End -----
         
         print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
@@ -1194,7 +1194,7 @@ class OnePhonon:
             w_sq, v_all = torch.linalg.eigh(Dmat_all_hermitian)
             # --- Debug Print Start ---
             if total_points > print_idx: 
-                print(f"PyTorch w_sq (eigh): min={w_sq[print_idx].min():.8e}, max={w_sq[print_idx].max():.8e}")
+                print(f"PyTorch w_sq (eigh): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
             # --- Debug Print End -----
         except torch.linalg.LinAlgError:
             # Fallback to SVD if eigh fails
@@ -1203,14 +1203,14 @@ class OnePhonon:
             w_sq = S_all
             v_all = Vh_all.transpose(-2, -1).conj()
             if total_points > print_idx: 
-                print(f"PyTorch w_sq (SVD): min={w_sq[print_idx].min():.8e}, max={w_sq[print_idx].max():.8e}")
+                print(f"PyTorch w_sq (SVD): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
         
         # Calculate w = sqrt(S), ensure non-negative input
         w = torch.sqrt(w_sq.clamp(min=0.0).to(self.real_dtype))
         
         # --- Debug Print Start ---
         if total_points > print_idx: 
-            print(f"PyTorch w: min={w[print_idx].min():.8e}, max={w[print_idx].max():.8e}")
+            print(f"PyTorch w: min={w[print_idx].min().item():.8e}, max={w[print_idx].max().item():.8e}")
         # --- Debug Print End -----
         
         # Apply NaN thresholding based on w < 1e-6
@@ -1222,7 +1222,7 @@ class OnePhonon:
         import numpy as np
         w_processed_np = w_processed.cpu().detach().numpy()
         if total_points > print_idx: 
-            print(f"PyTorch w_proc: min={np.nanmin(w_processed_np[print_idx]):.8e}, max={np.nanmax(w_processed_np[print_idx]):.8e}, nans={torch.sum(torch.isnan(w_processed[print_idx]))}")
+            print(f"PyTorch w_proc: min={np.nanmin(w_processed_np[print_idx]):.8e}, max={np.nanmax(w_processed_np[print_idx]):.8e}, nans={torch.sum(torch.isnan(w_processed[print_idx])).item()}")
         # --- Debug Print End -----
         
         # Calculate Winv = 1.0 / w_processed**2
@@ -1241,7 +1241,7 @@ class OnePhonon:
         # --- Debug Print Start ---
         winv_all_np = winv_all.cpu().detach().numpy()
         if total_points > print_idx: 
-            print(f"PyTorch winv_all: min={np.nanmin(winv_all_np[print_idx]):.8e}, max={np.nanmax(winv_all_np[print_idx]):.8e}, nans={torch.sum(torch.isnan(winv_all[print_idx]))}")
+            print(f"PyTorch winv_all: min={np.nanmin(winv_all_np[print_idx]):.8e}, max={np.nanmax(winv_all_np[print_idx]):.8e}, nans={torch.sum(torch.isnan(winv_all[print_idx])).item()}")
         # --- Debug Print End -----
         
         # Convert Winv to complex_dtype *after* calculation
