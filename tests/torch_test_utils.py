@@ -318,3 +318,93 @@ class ModelState:
             else:
                 # Set attribute directly
                 setattr(model, attr, value)
+
+
+class GridMappingUtils:
+    """Utilities for mapping between different grid representations."""
+
+    @staticmethod
+    def get_bz_to_full_grid_map(kvec_bz: torch.Tensor, kvec_full: torch.Tensor,
+                                device: torch.device, match_atol: float = 1e-12) -> torch.Tensor:
+        """
+        Finds corresponding full grid indices for Brillouin Zone (BZ) k-vectors by matching coordinates.
+
+        Args:
+            kvec_bz: Tensor of BZ k-vectors, shape [n_bz_points, 3].
+            kvec_full: Tensor of full grid k-vectors, shape [n_full_points, 3].
+            device: The PyTorch device.
+            match_atol: Absolute tolerance for matching k-vector components.
+
+        Returns:
+            Tensor of shape [n_bz_points] containing the corresponding index in the full grid
+            for each BZ point.
+
+        Raises:
+            ValueError: If mapping fails for any BZ point or is ambiguous.
+        """
+        # Ensure tensors are on the correct device and have high precision
+        kvec_bz = kvec_bz.to(device=device, dtype=torch.float64)
+        kvec_full = kvec_full.to(device=device, dtype=torch.float64)
+
+        n_bz_points = kvec_bz.shape[0]
+        full_indices_for_bz = torch.full((n_bz_points,), -1, dtype=torch.long, device=device)
+        found_indices = set() # Keep track of mapped full indices to detect duplicates
+
+        print(f"Mapping {n_bz_points} BZ k-vectors to full grid k-vectors...")
+        for idx_bz in range(n_bz_points):
+            target_k = kvec_bz[idx_bz]
+
+            # Calculate absolute differences (element-wise)
+            # Expand target_k for broadcasting: [3] -> [1, 3]
+            diff = torch.abs(kvec_full - target_k.unsqueeze(0)) # Shape [n_full_points, 3]
+
+            # Find indices where *all* components are close enough
+            # match_mask will have shape [n_full_points]
+            match_mask = torch.all(diff < match_atol, dim=1)
+            matching_indices_full = torch.where(match_mask)[0]
+
+            if matching_indices_full.numel() == 1:
+                idx_full = matching_indices_full[0].item()
+                if idx_full in found_indices:
+                    print(f"Warning: Duplicate mapping found for BZ index {idx_bz} -> Full index {idx_full}. "
+                          f"k_bz={target_k.cpu().numpy()}, k_full={kvec_full[idx_full].cpu().numpy()}")
+                    # Decide how to handle: error or allow? For now, allow but warn.
+                full_indices_for_bz[idx_bz] = idx_full
+                found_indices.add(idx_full)
+            elif matching_indices_full.numel() == 0:
+                # If no exact match, try nearest neighbor as a fallback check
+                distances_sq = torch.sum((kvec_full - target_k)**2, dim=1)
+                idx_full_nn = torch.argmin(distances_sq).item()
+                min_dist_sq = distances_sq[idx_full_nn].item()
+
+                # Check if nearest neighbor distance is extremely small
+                if min_dist_sq < match_atol**2 * 10: # Allow slightly larger tolerance for NN check
+                    print(f"Warning: No exact match for BZ index {idx_bz}. Using nearest neighbor index {idx_full_nn} "
+                          f"(dist_sq={min_dist_sq:.2e}). k_bz={target_k.cpu().numpy()}, k_full_nn={kvec_full[idx_full_nn].cpu().numpy()}")
+                    if idx_full_nn in found_indices:
+                         print(f"Warning: Duplicate mapping found (nearest neighbor) for BZ index {idx_bz} -> Full index {idx_full_nn}")
+                    full_indices_for_bz[idx_bz] = idx_full_nn
+                    found_indices.add(idx_full_nn)
+                else:
+                    # Raise error if no close match found
+                    raise ValueError(f"Mapping failed: No matching full grid index found for BZ index {idx_bz} "
+                                     f"(k_bz={target_k.cpu().numpy()}, min_dist_sq={min_dist_sq:.2e})")
+            else:
+                # Multiple exact matches found - ambiguous
+                raise ValueError(f"Mapping failed: Multiple exact matching full grid indices found for BZ index {idx_bz}: "
+                                 f"{matching_indices_full.cpu().numpy()}. k_bz={target_k.cpu().numpy()}")
+
+
+        # Final verification (optional but recommended)
+        if torch.any(full_indices_for_bz == -1):
+             missing_bz_indices = torch.where(full_indices_for_bz == -1)[0].cpu().numpy()
+             raise ValueError(f"Mapping verification failed: Some BZ indices were not mapped: {missing_bz_indices}")
+        # Check if the number of unique mapped indices is as expected (usually == n_bz_points)
+        # Note: This might not hold if multiple BZ points map to the same full grid point due to symmetry.
+        # if len(found_indices) != n_bz_points:
+        #     print(f"Warning: Number of unique mapped full indices ({len(found_indices)}) "
+        #           f"does not match number of BZ points ({n_bz_points}).")
+
+        print("Successfully computed mapping between BZ indices and full grid indices.")
+        # print(f"Mapping (BZ idx -> Full idx): {full_indices_for_bz.cpu().numpy()}") # Optional print
+        return full_indices_for_bz

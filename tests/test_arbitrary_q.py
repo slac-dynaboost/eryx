@@ -14,9 +14,11 @@ from typing import Optional, List, Tuple, Dict, Any
 from tests.test_base import TestBase
 from eryx.models_torch import OnePhonon
 try:
-    from tests.torch_test_utils import TensorComparison
+    # Import the comparison utils
+    from tests.torch_test_utils import TensorComparison, GridMappingUtils
 except ImportError:
     TensorComparison = None
+    GridMappingUtils = None # Handle case where file might not exist initially
 
 
 
@@ -114,88 +116,45 @@ class TestArbitraryQVectors(TestBase):
         print(f"Comparing results for '{method_name}' using tolerances: {tolerances}")
 
         # Special comparison for eigenvectors (V) in compute_gnm_phonons
-        if method_name == 'compute_gnm_phonons':
-            # Fetch V and Winv attributes from the model instances
-            grid_V = getattr(output_grid, 'V', None)
-            grid_Winv = getattr(output_grid, 'Winv', None)
-            q_V = getattr(output_q, 'V', None)
-            q_Winv = getattr(output_q, 'Winv', None)
+        # THIS SPECIAL CASE IS NOW HANDLED EXPLICITLY IN test_compute_gnm_phonons_equivalence
+        # We keep the generic comparison here.
+        # --- Generic Comparison Logic ---
+        is_grid_tensor = isinstance(output_grid, torch.Tensor)
+        is_q_tensor = isinstance(output_q, torch.Tensor)
 
-            if grid_V is None or q_V is None or grid_Winv is None or q_Winv is None:
-                print(f"Error: Could not retrieve V or Winv attributes for {method_name}")
-                return False
+        shapes_match = True
+        if is_grid_tensor and is_q_tensor:
+            if output_grid.shape != output_q.shape:
+                shapes_match = False
+                attr_name = None
+                if "attribute: " in method_name:
+                    try:
+                        attr_name = method_name.split("attribute: ")[1].split(')')[0]
+                    except IndexError: pass
 
-            # 1. Compare Winv (eigenvalues) directly, handling NaNs
-            try:
-                print(f"  Comparing Winv (shape: {grid_Winv.shape})...")
-                # Use TensorComparison if available, otherwise fallback
-                if TensorComparison:
-                    TensorComparison.assert_tensors_equal(grid_Winv, q_Winv, equal_nan=True, **tolerances)
+                # Check if this attribute is expected to have different shapes
+                # *** NOTE: We no longer expect V/Winv shapes to differ in the direct comparison ***
+                # *** This ATTRIBUTES_WITH_SHAPE_DIFF check might need refinement or removal ***
+                # *** depending on how other tests use _compare_outputs. For now, let's keep it. ***
+                if attr_name and attr_name in TestArbitraryQVectors.ATTRIBUTES_WITH_SHAPE_DIFF:
+                     print(f"  INFO: Shapes differ for attribute '{attr_name}' ({output_grid.shape} vs {output_q.shape}).")
+                     # For V/Winv specifically, we will compare numerically later.
+                     # For other attributes in the list, we might still skip.
+                     # Let's allow the comparison to proceed and potentially fail if numerical check is needed.
+                     pass # Allow comparison to proceed
                 else:
-                    np.testing.assert_allclose(
-                        grid_Winv.detach().cpu().numpy(),
-                        q_Winv.detach().cpu().numpy(),
-                        equal_nan=True, **tolerances
-                    )
-                print("  Winv comparison successful.")
-            except AssertionError as e:
-                print(f"  Winv comparison FAILED: {e}")
-                return False  # Fail early if eigenvalues don't match
+                    print(f"  ERROR: Unexpected shape mismatch for '{method_name}'. Grid: {output_grid.shape}, Q: {output_q.shape}")
+                    # Fall through to numpy conversion and assertion, which will fail clearly
+        elif type(output_grid) != type(output_q):
+            print(f"  ERROR: Type mismatch for '{method_name}'. Grid: {type(output_grid)}, Q: {type(output_q)}")
+            shapes_match = False
 
-            # 2. Compare V (eigenvectors) using projection matrices P = V @ V.H
-            try:
-                print(f"  Comparing V (shape: {grid_V.shape}) via projection matrix...")
-                grid_P = grid_V @ grid_V.conj().transpose(-1, -2)
-                q_P = q_V @ q_V.conj().transpose(-1, -2)
-                if TensorComparison:
-                    TensorComparison.assert_tensors_equal(grid_P, q_P, equal_nan=True, **tolerances)
-                else:
-                    np.testing.assert_allclose(
-                        grid_P.detach().cpu().numpy(),
-                        q_P.detach().cpu().numpy(),
-                        equal_nan=True, **tolerances
-                    )
-                print("  V (projection matrix) comparison successful.")
-                return True  # Both Winv and V (projection) matched
-            except AssertionError as e:
-                print(f"  V (projection matrix) comparison FAILED: {e}")
-                return False
-        else:
-            # --- General Comparison Logic for other methods/attributes ---
-            # Check if both outputs are tensors for shape comparison
-            is_grid_tensor = isinstance(output_grid, torch.Tensor)
-            is_q_tensor = isinstance(output_q, torch.Tensor)
-
-            # Check shapes *before* converting, only if both are tensors
-            shapes_match = True
-            if is_grid_tensor and is_q_tensor:
-                if output_grid.shape != output_q.shape:
-                    shapes_match = False
-                    # Extract attribute name if comparing attributes
-                    attr_name = None
-                    if "attribute: " in method_name: # Check if method_name indicates an attribute comparison
-                        try:
-                            attr_name = method_name.split("attribute: ")[1].split(')')[0]
-                        except IndexError:
-                            pass # Keep attr_name as None if parsing fails
-
-                    # Check if this attribute is expected to have different shapes
-                    if attr_name and attr_name in TestArbitraryQVectors.ATTRIBUTES_WITH_SHAPE_DIFF:
-                        print(f"  INFO: Shapes differ for attribute '{attr_name}' as expected ({output_grid.shape} vs {output_q.shape}). Skipping numerical comparison.")
-                        return True # Treat expected shape difference as success for this check
-                    else:
-                        print(f"  ERROR: Unexpected shape mismatch for '{method_name}'. Grid: {output_grid.shape}, Q: {output_q.shape}")
-                        # Fall through to numpy conversion and assertion, which will fail clearly
-            elif type(output_grid) != type(output_q):
-                # Handle cases where one is tensor and other is not, or types differ
-                print(f"  ERROR: Type mismatch for '{method_name}'. Grid: {type(output_grid)}, Q: {type(output_q)}")
-                shapes_match = False # Treat type mismatch effectively as shape mismatch
-
-            # Convert tensors to NumPy for comparison using allclose
+        # Convert tensors to NumPy for comparison using allclose
+        try:
             if is_grid_tensor:
                 output_grid_np = output_grid.detach().cpu().numpy()
             elif isinstance(output_grid, (np.ndarray, int, float, bool, tuple, list)):
-                output_grid_np = np.array(output_grid)  # Handle non-tensor outputs if needed
+                output_grid_np = np.array(output_grid)
             else:
                 print(f"  Unsupported type for grid output: {type(output_grid)}")
                 return False
@@ -207,28 +166,34 @@ class TestArbitraryQVectors(TestBase):
             else:
                 print(f"  Unsupported type for q output: {type(output_q)}")
                 return False
+        except Exception as e:
+             print(f" Error converting to NumPy for comparison: {e}")
+             return False
 
-            # If shapes didn't match for an *unexpected* attribute, the assertion below will fail clearly.
-            if not shapes_match:
-                print(f"  Comparison FAILED for '{method_name}' due to unexpected shape/type mismatch.")
-                return False
 
-            # Perform comparison
-            try:
-                print(f"  Grid Shape: {output_grid_np.shape}, Q Shape: {output_q_np.shape}")
-                print(f"  Grid dtype: {output_grid_np.dtype}, Q dtype: {output_q_np.dtype}")
-                np.testing.assert_allclose(output_grid_np, output_q_np, equal_nan=True, **tolerances)
-                print(f"  Comparison successful for '{method_name}'.")
-                return True
-            except AssertionError as e:
-                # Calculate max difference for better debugging info
-                try:
-                    abs_diff = np.abs(output_grid_np - output_q_np)
-                    max_diff = np.nanmax(abs_diff)
-                    print(f"  Comparison FAILED for '{method_name}'. Max difference: {max_diff}\n  Details: {e}")
-                except (TypeError, ValueError):  # Handle non-numeric types or further shape issues during subtraction
-                    print(f"  Comparison FAILED for '{method_name}'. Error during difference calculation.\n  Details: {e}")
-                return False
+        if not shapes_match and method_name != 'compute_gnm_phonons': # Allow shape mismatch only for phonon test handled separately
+            print(f"  Comparison FAILED for '{method_name}' due to unexpected shape/type mismatch.")
+            return False
+
+        # Perform comparison
+        try:
+            print(f"  Grid Shape: {output_grid_np.shape}, Q Shape: {output_q_np.shape}")
+            print(f"  Grid dtype: {output_grid_np.dtype}, Q dtype: {output_q_np.dtype}")
+            # Use the TensorComparison utility for assertion
+            TensorComparison.assert_tensors_equal(
+                 output_grid_np, output_q_np, equal_nan=True, **tolerances,
+                 msg=f"Comparison failed for {method_name}"
+            )
+            print(f"  Comparison successful for '{method_name}'.")
+            return True
+        except AssertionError as e:
+            # Error message is already detailed by assert_tensors_equal
+            print(f"  Comparison FAILED for '{method_name}'. Details:\n  {e}")
+            return False
+        except Exception as e:
+             # Catch other potential errors during comparison
+             print(f"  Comparison FAILED for '{method_name}' with unexpected error: {e}")
+             return False
     
     def run_method_equivalence_test(self, target_method_name: str):
         """
@@ -747,11 +712,112 @@ class TestArbitraryQVectors(TestBase):
     def test_Linv_equivalence(self):
         """Test equivalence of the Linv calculation (_build_M)."""
         self.run_method_equivalence_test('_build_M')
-        
+
+    # Modify test_compute_gnm_phonons_equivalence
     def test_compute_gnm_phonons_equivalence(self):
-        """Test execution and expected shape diffs for compute_gnm_phonons."""
-        self.run_method_equivalence_test('compute_gnm_phonons')
-        
+        """Test numerical equivalence of compute_gnm_phonons."""
+        print(f"\n===== Testing Numerical Equivalence for: compute_gnm_phonons =====")
+        if TensorComparison is None or GridMappingUtils is None:
+            self.skipTest("Required test utilities (TensorComparison, GridMappingUtils) not available.")
+
+        # --- 1. Initialization ---
+        print("Initializing grid-based model (model_grid)...")
+        model_grid = OnePhonon(
+            pdb_path=self.pdb_path,
+            hsampling=self.hsampling, ksampling=self.ksampling, lsampling=self.lsampling,
+            device=self.device, **self.common_params
+        )
+        model_grid.real_dtype = torch.float64
+        model_grid.complex_dtype = torch.complex128
+
+        print("Extracting q-grid from grid model...")
+        q_vectors_from_grid = model_grid.q_grid.clone().detach().to(dtype=torch.float64)
+
+        print("Initializing arbitrary q-vector model (model_q)...")
+        model_q = OnePhonon(
+            pdb_path=self.pdb_path,
+            q_vectors=q_vectors_from_grid,
+            hsampling=self.hsampling, ksampling=self.ksampling, lsampling=self.lsampling, # Pass sampling params
+            device=self.device, **self.common_params
+        )
+        model_q.real_dtype = torch.float64
+        model_q.complex_dtype = torch.complex128
+
+        # --- 2. Execute Phonon Calculation ---
+        # Note: compute_gnm_phonons is called during __init__ for model_grid
+        # We need to explicitly call it for model_q if it wasn't called during its init
+        # (Check if _setup_phonons already calls it based on model type 'gnm')
+        # Let's assume it was called or call it explicitly for safety
+        if not hasattr(model_q, 'V') or model_q.V is None:
+             print("Explicitly calling compute_gnm_phonons on model_q...")
+             model_q.compute_gnm_phonons()
+        print("Phonon calculation assumed complete for both models.")
+
+
+        # --- 3. Get BZ to Full Grid Mapping ---
+        try:
+            full_indices_for_bz = GridMappingUtils.get_bz_to_full_grid_map(
+                model_grid.kvec, model_q.kvec, self.device
+            )
+        except Exception as e:
+            self.fail(f"Failed to get BZ-to-Full-Grid map: {e}")
+
+        # --- 4. Extract and Subset Tensors ---
+        V_grid = model_grid.V      # Shape [n_bz_points, N, N]
+        Winv_grid = model_grid.Winv # Shape [n_bz_points, N]
+
+        V_q_full = model_q.V        # Shape [n_full_points, N, N]
+        Winv_q_full = model_q.Winv   # Shape [n_full_points, N]
+
+        # Ensure tensors have the expected complex dtype before subsetting
+        V_grid = V_grid.to(dtype=torch.complex128)
+        Winv_grid = Winv_grid.to(dtype=torch.complex128)
+        V_q_full = V_q_full.to(dtype=torch.complex128)
+        Winv_q_full = Winv_q_full.to(dtype=torch.complex128)
+
+        # Subset the full grid tensors using the mapped indices
+        V_q_subset = V_q_full[full_indices_for_bz]     # Shape [n_bz_points, N, N]
+        Winv_q_subset = Winv_q_full[full_indices_for_bz] # Shape [n_bz_points, N]
+
+        # --- 5. Perform Numerical Comparison ---
+        comparison_passed = True
+        tolerances = self._get_comparison_tolerances('compute_gnm_phonons')
+        print(f"Comparing Winv numerically using tolerances: {tolerances}")
+
+        # Compare Winv directly (handle NaNs)
+        try:
+            TensorComparison.assert_tensors_equal(
+                Winv_grid, Winv_q_subset, equal_nan=True, **tolerances,
+                msg="Winv comparison FAILED"
+            )
+            print("  Winv comparison successful.")
+        except AssertionError as e:
+            print(f"  Winv comparison FAILED: {e}")
+            comparison_passed = False
+
+        # Compare V using projection matrices P = V @ V.H
+        print(f"\nComparing V via projection matrix P = V @ V.H using tolerances: {tolerances}")
+        try:
+            # Calculate projection matrices (ensure complex conjugate transpose .H)
+            grid_P = V_grid @ V_grid.H
+            q_P = V_q_subset @ V_q_subset.H
+
+            TensorComparison.assert_tensors_equal(
+                grid_P, q_P, equal_nan=True, **tolerances, # Use equal_nan for safety
+                msg="V (projection matrix) comparison FAILED"
+            )
+            print("  V (projection matrix) comparison successful.")
+        except AssertionError as e:
+            print(f"  V (projection matrix) comparison FAILED: {e}")
+            comparison_passed = False
+        except Exception as e: # Catch potential dtype/shape errors in matmul
+             print(f"  Error calculating/comparing projection matrices: {e}")
+             comparison_passed = False
+
+
+        self.assertTrue(comparison_passed, "Numerical equivalence test failed for compute_gnm_phonons. See logs above.")
+        print(f"===== Numerical Equivalence Test PASSED for: compute_gnm_phonons =====")
+
     @unittest.skip("Arbitrary-q mode no longer calculates self.covar/self.ADP directly in this method")
     def test_compute_covariance_matrix_equivalence(self):
         """Test equivalence of compute_covariance_matrix."""
@@ -813,9 +879,15 @@ class TestArbitraryQVectors(TestBase):
         print("BZ-averaged ADP tensors match successfully.")
         print("===== BZ-Averaged ADP Equivalence Test PASSED =====")
 
+    # Keep test_apply_disorder_equivalence, but it should now PASS if the above passes.
     def test_apply_disorder_equivalence(self):
         """Test equivalence of the final apply_disorder method."""
+        # Now that compute_gnm_phonons is verified numerically (for corresponding points),
+        # this test should pass if the indexing within apply_disorder is correct.
         self.run_method_equivalence_test('apply_disorder')
+
+
+    # ... (other existing tests like test_Amat_equivalence, test_Linv_equivalence etc.) ...
 
 if __name__ == '__main__':
     unittest.main()
