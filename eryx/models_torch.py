@@ -1042,36 +1042,26 @@ class OnePhonon:
             # Get the dynamical matrix for this k-vector
             D_i = Dmat_all[i]
             
-            # Use torch.linalg.eigh which is more stable for Hermitian matrices
-            # and has proper gradient support
-            try:
-                # eigh works on Hermitian matrices and has better gradient support
-                w_i, v_i = torch.linalg.eigh(D_i)
-                
-                # Sort in descending order to match SVD convention
-                idx = torch.argsort(w_i, descending=True)
-                w_i = w_i[idx]
-                v_i = v_i[:, idx]
-            except RuntimeError:
-                # Fallback to eigenvalues/eigenvectors separately if eigh fails
-                w_i = torch.linalg.eigvals(D_i)
-                # Sort by real part in descending order
-                idx = torch.argsort(torch.real(w_i), descending=True)
-                w_i = w_i[idx]
-                
-                # For eigenvectors, use a simpler approach that maintains gradients
-                v_i = torch.zeros_like(D_i)
-                for j in range(w_i.shape[0]):
-                    # Create a unit vector
-                    e_j = torch.zeros(w_i.shape[0], dtype=torch.complex64, device=self.device)
-                    e_j[j] = 1.0
-                    # Approximate eigenvector using power iteration (1 step)
-                    v_j = torch.matmul(D_i, e_j)
-                    v_j = v_j / (torch.norm(v_j) + 1e-8)
-                    v_i[:, j] = v_j
+            # Use SVD to match NumPy implementation
+            U_i, S_i, Vh_i = torch.linalg.svd(D_i, full_matrices=False)
             
-            eigenvalues.append(w_i)
-            eigenvectors.append(v_i)
+            # Apply threshold to singular values (equivalent to NumPy w < 1e-6)
+            eps = 1e-6
+            w_processed = torch.where(
+                S_i < eps,
+                torch.tensor(float('nan'), device=S_i.device, dtype=S_i.dtype),
+                S_i
+            )
+            
+            # Reverse order to match NumPy descending order
+            w_processed = torch.flip(w_processed, dims=[-1])
+            Vh_flipped = torch.flip(Vh_i, dims=[-1])
+            
+            # Get right singular vectors by taking conjugate transpose of flipped Vh
+            v_flipped = Vh_flipped.transpose(-2, -1).conj()
+            
+            eigenvalues.append(w_processed)
+            eigenvectors.append(v_flipped)
         
         # Stack results
         eigenvalues_all = torch.stack(eigenvalues)
