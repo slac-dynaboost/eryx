@@ -104,22 +104,22 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
     References:
         - Original implementation: eryx/scatter.py:structure_factors_batch
     """
-    # Use high precision
-    dtype = torch.float64
+    # Use high precision consistently
+    real_dtype = torch.float64
     complex_dtype = torch.complex128
     
     # Ensure all input tensors have consistent high precision
-    q_grid = q_grid.to(dtype=dtype)
-    xyz = xyz.to(dtype=dtype)
-    ff_a = ff_a.to(dtype=dtype)
-    ff_b = ff_b.to(dtype=dtype)
-    ff_c = ff_c.to(dtype=dtype)
+    q_grid = q_grid.to(dtype=real_dtype)
+    xyz = xyz.to(dtype=real_dtype)
+    ff_a = ff_a.to(dtype=real_dtype)
+    ff_b = ff_b.to(dtype=real_dtype)
+    ff_c = ff_c.to(dtype=real_dtype)
     
     if U is not None:
-        U = U.to(dtype=dtype)
+        U = U.to(dtype=real_dtype)
     
     if project_on_components is not None:
-        project_on_components = project_on_components.to(dtype=dtype)
+        project_on_components = project_on_components.to(dtype=real_dtype)
         
     # Import ComplexTensorOps for optimized complex operations
     from eryx.torch_utils import ComplexTensorOps
