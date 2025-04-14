@@ -1672,6 +1672,16 @@ class OnePhonon:
                         print(f"Winv_idx shape: {Winv_idx.shape}, dtype: {Winv_idx.dtype}")
                         print(f"V_idx[0,0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
                         print(f"Winv_idx[0] (real): {Winv_idx[0].real.item():.6e}")
+                        
+                        # Add detailed input prints for structure_factors
+                        for i_asu in range(self.n_asu):
+                            print(f"  ARB-Q MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
+                            q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
+                            print(f"    q_vector: {q_for_sf.cpu().numpy()}")
+                            print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].cpu().numpy()}")
+                            print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e}")
+                            print(f"    ADP[0]: {ADP[0].item():.6e}")
+                            print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e}")
                     
                     # Always ensure F has the correct complex dtype before matmul with V
                     F_i = F[i]
