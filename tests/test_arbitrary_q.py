@@ -740,6 +740,10 @@ class TestArbitraryQVectors(TestBase):
     def test_kvec_brillouin_equivalence(self):
         """Test equivalence of _build_kvec_Brillouin method."""
         self.run_method_equivalence_test('_build_kvec_Brillouin')
+        
+    def test_apply_disorder_equivalence(self):
+        """Test equivalence of the final apply_disorder method."""
+        self.run_method_equivalence_test('apply_disorder')
 
 if __name__ == '__main__':
     unittest.main()
