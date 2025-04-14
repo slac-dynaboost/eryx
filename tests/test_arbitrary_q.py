@@ -13,6 +13,10 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from tests.test_base import TestBase
 from eryx.models_torch import OnePhonon
+try:
+    from tests.torch_test_utils import TensorComparison
+except ImportError:
+    TensorComparison = None
 
 
 
