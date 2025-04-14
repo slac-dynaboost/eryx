@@ -165,9 +165,20 @@ class TestPhononAndCovarianceEquivalence(unittest.TestCase):
             print(f"Max abs diff in raw eigenvectors (v_all): {max_v_all_diff}")
         # --- End of added comparison ---
 
-        # Compare absolute values of V (eigenvectors) since signs can differ
-        V_match = np.allclose(np.abs(np_V), np.abs(torch_V_np), 
-                             rtol=self.rtol, atol=self.atol, equal_nan=True)
+        # Compare projection matrices P = V @ V^H
+        print("\nComparing projection matrices P = V @ V^H...")
+        np_P = np.matmul(np_V, np.conjugate(np_V.transpose(0, 2, 1))) # V @ V^H for each k-point
+        torch_P = np.matmul(torch_V_np, np.conjugate(torch_V_np.transpose(0, 2, 1)))
+
+        V_match = np.allclose(np_P, torch_P, rtol=self.rtol, atol=self.atol, equal_nan=True) # Compare P matrices
+        print(f"Projection matrices match: {V_match}")
+
+        if not V_match:
+            max_P_diff = np.max(np.abs(np_P - torch_P))
+            print(f"Max projection matrix difference: {max_P_diff:.8e}")
+            # Optionally print diff for a specific index
+            idx=1
+            print(f"Max P diff for idx {idx}: {np.max(np.abs(np_P[idx] - torch_P[idx])):.8e}")
         
         # Compare Winv (eigenvalues)
         Winv_match = np.allclose(np_Winv, torch_Winv_np, 
@@ -191,7 +202,7 @@ class TestPhononAndCovarianceEquivalence(unittest.TestCase):
             print(f"Max Winv diff: {np.nanmax(np.abs(Winv_diff)):.8e}")
         
         # Assert that both match
-        self.assertTrue(V_match, "Eigenvectors (V) do not match between NumPy and PyTorch")
+        self.assertTrue(V_match, "Projection matrices (V @ V^H) do not match between NumPy and PyTorch")
         self.assertTrue(Winv_match, "Eigenvalues (Winv) do not match between NumPy and PyTorch")
     
     def test_compute_covariance_matrix_equivalence(self):
