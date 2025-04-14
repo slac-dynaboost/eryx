@@ -132,61 +132,71 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
     if U is None:
         U = torch.zeros(n_atoms, device=xyz.device, dtype=real_dtype)
     
-    # Compute form factors efficiently
+    # Compute form factors efficiently - ensure high precision
     fj = compute_form_factors(q_grid, ff_a, ff_b, ff_c)  # [n_points, n_atoms]
+    fj = fj.to(dtype=real_dtype)
     
     # Compute q·r for all q-vectors and all atoms efficiently
     # q_grid: [n_points, 3], xyz: [n_atoms, 3]
     # Result: [n_points, n_atoms]
     q_dot_r = torch.matmul(q_grid, xyz.transpose(0, 1))
+    q_dot_r = q_dot_r.to(dtype=real_dtype)
     
     # Compute complex exponentials e^(i*q·r) efficiently
     real_part, imag_part = ComplexTensorOps.complex_exp(q_dot_r)
+    real_part = real_part.to(dtype=real_dtype)
+    imag_part = imag_part.to(dtype=real_dtype)
     
     # Calculate Debye-Waller factors
     # qUq = |q|^2 * U
     q_squared = torch.sum(q_grid * q_grid, dim=1, keepdim=True)  # [n_points, 1]
-    dwf = torch.exp(-0.5 * q_squared * U.unsqueeze(0))
+    q_squared = q_squared.to(dtype=real_dtype)
+    
+    # Ensure U is properly shaped and has correct dtype
+    U_expanded = U.unsqueeze(0).to(dtype=real_dtype) if U is not None else torch.zeros_like(q_squared, dtype=real_dtype)
+    dwf = torch.exp(-0.5 * q_squared * U_expanded)
+    dwf = dwf.to(dtype=real_dtype)
     
     # Combine form factors, phase factors, and DW factors
     # Form structure factors: f_j * e^(iq·r) * e^(-0.5*qUq)
-    A_real = fj * real_part * dwf
-    A_imag = fj * imag_part * dwf
+    A_real = (fj * real_part * dwf).to(dtype=real_dtype)
+    A_imag = (fj * imag_part * dwf).to(dtype=real_dtype)
     
     # Handle compute_qF option: multiply by q-vectors
     if compute_qF:
         # Reshape for broadcasting: (n_points, n_atoms, 1)
-        A_real = A_real.unsqueeze(-1)
-        A_imag = A_imag.unsqueeze(-1)
+        A_real = A_real.unsqueeze(-1).to(dtype=real_dtype)
+        A_imag = A_imag.unsqueeze(-1).to(dtype=real_dtype)
         
         # Broadcast with q: (n_points, 1, 3) -> (n_points, n_atoms, 3)
-        q_expanded = q_grid.unsqueeze(1)
+        q_expanded = q_grid.unsqueeze(1).to(dtype=real_dtype)
         
         # Multiply complex structure factors by q-vectors
-        A_real_q = A_real * q_expanded
-        A_imag_q = A_imag * q_expanded
+        A_real_q = (A_real * q_expanded).to(dtype=real_dtype)
+        A_imag_q = (A_imag * q_expanded).to(dtype=real_dtype)
         
         # Reshape to (n_points, n_atoms*3)
-        A_real = A_real_q.reshape(A_real_q.shape[0], -1)
-        A_imag = A_imag_q.reshape(A_imag_q.shape[0], -1)
+        A_real = A_real_q.reshape(A_real_q.shape[0], -1).to(dtype=real_dtype)
+        A_imag = A_imag_q.reshape(A_imag_q.shape[0], -1).to(dtype=real_dtype)
     
     # Handle optional projection onto components
     if project_on_components is not None:
         # Matricial product: (n_points, n_atoms) × (n_atoms, n_components)
         # Ensure consistent dtype before matrix multiplication
-        A_real = torch.matmul(A_real, project_on_components.to(dtype=A_real.dtype))
-        A_imag = torch.matmul(A_imag, project_on_components.to(dtype=A_imag.dtype))
+        project_components_float64 = project_on_components.to(dtype=real_dtype)
+        A_real = torch.matmul(A_real, project_components_float64).to(dtype=real_dtype)
+        A_imag = torch.matmul(A_imag, project_components_float64).to(dtype=real_dtype)
     
     # Handle atom summation option
     if sum_over_atoms:
-        A_real = torch.sum(A_real, dim=1)
-        A_imag = torch.sum(A_imag, dim=1)
+        A_real = torch.sum(A_real, dim=1).to(dtype=real_dtype)
+        A_imag = torch.sum(A_imag, dim=1).to(dtype=real_dtype)
     
     # Ensure A_real and A_imag are float64 before creating complex tensor
-    A_real = A_real.to(dtype=torch.float64)
-    A_imag = A_imag.to(dtype=torch.float64)
+    A_real = A_real.to(dtype=real_dtype)
+    A_imag = A_imag.to(dtype=real_dtype)
     
-    # Return complex structure factors with high precision
+    # Return complex structure factors with high precision (complex128)
     return torch.complex(A_real, A_imag)
 
 def structure_factors(q_grid: torch.Tensor, xyz: torch.Tensor, 
