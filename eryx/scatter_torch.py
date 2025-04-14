@@ -181,9 +181,9 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
         A_real = torch.sum(A_real, dim=1)
         A_imag = torch.sum(A_imag, dim=1)
     
-    # Return complex structure factors
+    # Return complex structure factors with high precision
     # For PyTorch, we'll use a tensor with an extra dimension for real/imag parts
-    return torch.complex(A_real, A_imag)
+    return torch.complex(A_real, A_imag).to(dtype=complex_dtype)
 
 def structure_factors(q_grid: torch.Tensor, xyz: torch.Tensor, 
                      ff_a: torch.Tensor, ff_b: torch.Tensor, ff_c: torch.Tensor, 
@@ -214,19 +214,32 @@ def structure_factors(q_grid: torch.Tensor, xyz: torch.Tensor,
     """
     # Ensure all inputs are PyTorch tensors on the same device
     device = q_grid.device
+    # Use high precision for all inputs
+    dtype = torch.float64
     
     if not isinstance(xyz, torch.Tensor):
-        xyz = torch.tensor(xyz, dtype=torch.float32, device=device)
+        xyz = torch.tensor(xyz, dtype=dtype, device=device)
     if not isinstance(ff_a, torch.Tensor):
-        ff_a = torch.tensor(ff_a, dtype=torch.float32, device=device)
+        ff_a = torch.tensor(ff_a, dtype=dtype, device=device)
     if not isinstance(ff_b, torch.Tensor):
-        ff_b = torch.tensor(ff_b, dtype=torch.float32, device=device)
+        ff_b = torch.tensor(ff_b, dtype=dtype, device=device)
     if not isinstance(ff_c, torch.Tensor):
-        ff_c = torch.tensor(ff_c, dtype=torch.float32, device=device)
+        ff_c = torch.tensor(ff_c, dtype=dtype, device=device)
     if U is not None and not isinstance(U, torch.Tensor):
-        U = torch.tensor(U, dtype=torch.float32, device=device)
+        U = torch.tensor(U, dtype=dtype, device=device)
     if project_on_components is not None and not isinstance(project_on_components, torch.Tensor):
-        project_on_components = torch.tensor(project_on_components, dtype=torch.float32, device=device)
+        project_on_components = torch.tensor(project_on_components, dtype=dtype, device=device)
+    
+    # Ensure all tensor inputs are high precision
+    q_grid = q_grid.to(dtype=dtype)
+    xyz = xyz.to(dtype=dtype)
+    ff_a = ff_a.to(dtype=dtype)
+    ff_b = ff_b.to(dtype=dtype)
+    ff_c = ff_c.to(dtype=dtype)
+    if U is not None:
+        U = U.to(dtype=dtype)
+    if project_on_components is not None:
+        project_on_components = project_on_components.to(dtype=dtype)
     
     # Process all q-vectors in a single operation
     return structure_factors_batch(

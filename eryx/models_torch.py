@@ -1365,18 +1365,28 @@ class OnePhonon:
             # Process all ASUs
             for i_asu in range(self.n_asu):
                 asu = asu_data[i_asu]
+                # Ensure all inputs to structure_factors are high precision
+                q_vectors = self.q_grid[valid_indices].to(dtype=self.real_dtype)
+                xyz = asu['xyz'].to(dtype=self.real_dtype)
+                ff_a = asu['ff_a'].to(dtype=self.real_dtype)
+                ff_b = asu['ff_b'].to(dtype=self.real_dtype)
+                ff_c = asu['ff_c'].to(dtype=self.real_dtype)
+                adp = ADP.to(dtype=self.real_dtype)
+                project = asu['project'].to(dtype=self.real_dtype)
+                
+                # Compute structure factors with high precision inputs
                 F[:, i_asu, :] = structure_factors(
-                    self.q_grid[valid_indices],
-                    asu['xyz'],
-                    asu['ff_a'],
-                    asu['ff_b'],
-                    asu['ff_c'],
-                    U=ADP,
+                    q_vectors,
+                    xyz,
+                    ff_a,
+                    ff_b,
+                    ff_c,
+                    U=adp,
                     n_processes=self.n_processes,
                     compute_qF=True,
-                    project_on_components=asu['project'],
+                    project_on_components=project,
                     sum_over_atoms=False
-                )
+                ).to(dtype=self.complex_dtype)  # Ensure complex128 output
             
             # Reshape for matrix operations
             F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
@@ -1394,8 +1404,15 @@ class OnePhonon:
                     V_idx = V_valid[i]
                     Winv_idx = Winv_valid[i]
                     
+                    # Ensure F and V_idx have the same dtype before matrix multiplication
+                    if F[i].dtype != V_idx.dtype:
+                        print(f"WARNING: dtype mismatch - F: {F[i].dtype}, V_idx: {V_idx.dtype}")
+                        F_i = F[i].to(dtype=self.complex_dtype)
+                    else:
+                        F_i = F[i]
+                    
                     # Compute F·V for all modes at once
-                    FV = torch.matmul(F[i], V_idx)
+                    FV = torch.matmul(F_i, V_idx)
                     
                     # Calculate absolute squared values - ensure real output
                     FV_abs_squared = torch.abs(FV)**2
@@ -1415,8 +1432,15 @@ class OnePhonon:
                     # Get mode for this q-vector
                     V_rank = self.V[idx, :, rank]
                     
+                    # Ensure F and V_rank have the same dtype before matrix multiplication
+                    if F[i].dtype != V_rank.dtype:
+                        print(f"WARNING: dtype mismatch - F: {F[i].dtype}, V_rank: {V_rank.dtype}")
+                        F_i = F[i].to(dtype=self.complex_dtype)
+                    else:
+                        F_i = F[i]
+                    
                     # Compute FV
-                    FV = torch.matmul(F[i], V_rank)
+                    FV = torch.matmul(F_i, V_rank)
                     
                     # Calculate absolute squared value
                     FV_abs_squared = torch.abs(FV)**2
@@ -1512,18 +1536,28 @@ class OnePhonon:
             # Process all ASUs with pre-computed data
             for i_asu in range(self.n_asu):
                 asu = asu_data[i_asu]
+                # Ensure all inputs to structure_factors are high precision
+                q_vectors = self.q_grid[valid_indices].to(dtype=self.real_dtype)
+                xyz = asu['xyz'].to(dtype=self.real_dtype)
+                ff_a = asu['ff_a'].to(dtype=self.real_dtype)
+                ff_b = asu['ff_b'].to(dtype=self.real_dtype)
+                ff_c = asu['ff_c'].to(dtype=self.real_dtype)
+                adp = ADP.to(dtype=self.real_dtype)
+                project = asu['project'].to(dtype=self.real_dtype)
+                
+                # Compute structure factors with high precision inputs
                 F[:, i_asu, :] = structure_factors(
-                    self.q_grid[valid_indices],
-                    asu['xyz'],
-                    asu['ff_a'],
-                    asu['ff_b'],
-                    asu['ff_c'],
-                    U=ADP,
+                    q_vectors,
+                    xyz,
+                    ff_a,
+                    ff_b,
+                    ff_c,
+                    U=adp,
                     n_processes=self.n_processes,
                     compute_qF=True,
-                    project_on_components=asu['project'],
+                    project_on_components=project,
                     sum_over_atoms=False
-                )
+                ).to(dtype=self.complex_dtype)  # Ensure complex128 output
                 
             # Reshape for matrix operations
             F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
@@ -1533,6 +1567,11 @@ class OnePhonon:
                 # Get eigenvectors and eigenvalues for this k-vector
                 V_idx = self.V[idx]
                 Winv_idx = self.Winv[idx]
+                
+                # Ensure F and V_idx have the same dtype before matrix multiplication
+                if F.dtype != V_idx.dtype:
+                    print(f"WARNING: dtype mismatch - F: {F.dtype}, V_idx: {V_idx.dtype}")
+                    F = F.to(dtype=self.complex_dtype)
                 
                 # Compute F·V for all modes at once
                 FV = torch.matmul(F, V_idx)
@@ -1560,6 +1599,12 @@ class OnePhonon:
             else:
                 # Process single mode
                 V_rank = self.V[idx, :, rank]
+                
+                # Ensure F and V_rank have the same dtype before matrix multiplication
+                if F.dtype != V_rank.dtype:
+                    print(f"WARNING: dtype mismatch - F: {F.dtype}, V_rank: {V_rank.dtype}")
+                    F = F.to(dtype=self.complex_dtype)
+                
                 FV = torch.matmul(F, V_rank)
                 
                 # Calculate absolute squared values - ensure real output
