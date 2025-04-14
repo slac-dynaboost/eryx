@@ -1161,7 +1161,11 @@ class OnePhonon:
         print_idx = 1  # Choose a non-zero index for detailed prints
         if total_points > print_idx: 
             print(f"\n--- PyTorch Debug Index {print_idx} ---")
-            print(f"PyTorch Kmat_all[{print_idx},0,0]: {Kmat_all[print_idx,0,0].item():.8e}")
+            # Print first element of the matrix at index print_idx
+            if Kmat_all.dim() >= 3:
+                print(f"PyTorch Kmat_all[{print_idx},0,0]: {Kmat_all[print_idx,0,0].item() if Kmat_all[print_idx,0,0].numel() == 1 else Kmat_all[print_idx,0,0][0,0].item():.8e}")
+            else:
+                print(f"PyTorch Kmat_all shape: {Kmat_all.shape}")
         # --- Debug Print End -----
         
         # Reshape K matrices to 2D form for each k-vector
@@ -1182,7 +1186,11 @@ class OnePhonon:
         
         # --- Debug Print Start ---
         if total_points > print_idx: 
-            print(f"PyTorch Dmat_all[{print_idx},0,0]: {Dmat_all[print_idx,0,0].item():.8e}")
+            # Print first element of the matrix at index print_idx
+            if Dmat_all.dim() >= 3:
+                print(f"PyTorch Dmat_all[{print_idx},0,0]: {Dmat_all[print_idx,0,0].item() if Dmat_all[print_idx,0,0].numel() == 1 else Dmat_all[print_idx,0,0][0,0].item():.8e}")
+            else:
+                print(f"PyTorch Dmat_all shape: {Dmat_all.shape}")
         # --- Debug Print End -----
         
         print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
