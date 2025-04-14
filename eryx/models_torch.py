@@ -1054,6 +1054,9 @@ class OnePhonon:
         
         The eigenvalues (Winv) and eigenvectors (V) are stored for intensity calculation.
         """
+        debug_idx = 1 # Index to print detailed debug info for (e.g., BZ index 1)
+        print(f"\n[compute_gnm_phonons] DEBUG_IDX set to: {debug_idx}")
+
         # Compute the Hessian matrix first (works for both modes)
         hessian = self.compute_hessian()
         
@@ -1173,6 +1176,12 @@ class OnePhonon:
             D_i = Dmat_all[i]
             D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
 
+            if i == debug_idx:
+                print(f"\n--- DEBUG Phonon Loop (i={i}) ---")
+                print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
+                if D_i_hermitian.numel() > 0:
+                    print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
+
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
                 try:
@@ -1183,9 +1192,21 @@ class OnePhonon:
                      n_dof = D_i_hermitian.shape[0]
                      v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
 
+            if i == debug_idx:
+                print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
+                if v_i_no_grad.numel() > 0:
+                    print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
+                    print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
+
             # Flip eigenvectors to match descending eigenvalue order later
             v_flipped_no_grad = torch.flip(v_i_no_grad, dims=[-1])
             eigenvectors_detached_list.append(v_flipped_no_grad)
+
+            if i == debug_idx:
+                print(f"  v_flipped_no_grad shape: {v_flipped_no_grad.shape}, dtype: {v_flipped_no_grad.dtype}")
+                if v_flipped_no_grad.numel() > 0:
+                    print(f"  v_flipped_no_grad[0,0]: {v_flipped_no_grad[0,0].item()}")
+                    print(f"  v_flipped_no_grad[0,-1]: {v_flipped_no_grad[0,-1].item()}")
 
             # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
             current_eigenvalues = []
@@ -1201,6 +1222,12 @@ class OnePhonon:
 
             eigenvalues_tensor = torch.stack(current_eigenvalues) # Real eigenvalues
 
+            if i == debug_idx:
+                print(f"  eigenvalues_tensor (recomputed) shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
+                if eigenvalues_tensor.numel() > 0:
+                    print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
+                    print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
+
             # 3. Process eigenvalues (thresholding, flipping)
             eps = 1e-6
             eigenvalues_processed = torch.where(
@@ -1208,9 +1235,25 @@ class OnePhonon:
                 torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
                 eigenvalues_tensor
             )
+
+            if i == debug_idx:
+                print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+                if eigenvalues_processed.numel() > 0:
+                    print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+                    print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+                    print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
+
             # Flip eigenvalues to match descending order (as SVD would give)
             eigenvalues_processed_flipped = torch.flip(eigenvalues_processed, dims=[-1])
             eigenvalues_all_list.append(eigenvalues_processed_flipped)
+
+            if i == debug_idx:
+                print(f"  eigenvalues_processed_flipped shape: {eigenvalues_processed_flipped.shape}, dtype: {eigenvalues_processed_flipped.dtype}")
+                if eigenvalues_processed_flipped.numel() > 0:
+                    print(f"  eigenvalues_processed_flipped[0]: {eigenvalues_processed_flipped[0].item()}")
+                    print(f"  eigenvalues_processed_flipped[-1]: {eigenvalues_processed_flipped[-1].item()}")
+                print(f"--- End DEBUG Phonon Loop (i={i}) ---")
+
 
         # Stack results
         eigenvalues_all = torch.stack(eigenvalues_all_list)  # Differentiable eigenvalues
@@ -1220,11 +1263,33 @@ class OnePhonon:
         print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}") # Should be True
         print(f"v_all_detached requires_grad: {v_all_detached.requires_grad}") # Should be False
 
+        if total_points > debug_idx:
+             print(f"\n--- DEBUG After Loop (idx={debug_idx}) ---")
+             print(f"  eigenvalues_all[{debug_idx}] shape: {eigenvalues_all[debug_idx].shape}, dtype: {eigenvalues_all[debug_idx].dtype}")
+             if eigenvalues_all[debug_idx].numel() > 0:
+                  print(f"  eigenvalues_all[{debug_idx}, 0]: {eigenvalues_all[debug_idx, 0].item()}")
+                  print(f"  eigenvalues_all[{debug_idx}, -1]: {eigenvalues_all[debug_idx, -1].item()}")
+             print(f"  v_all_detached[{debug_idx}] shape: {v_all_detached[debug_idx].shape}, dtype: {v_all_detached[debug_idx].dtype}")
+             if v_all_detached[debug_idx].numel() > 0:
+                  print(f"  v_all_detached[{debug_idx}, 0, 0]: {v_all_detached[debug_idx, 0, 0].item()}")
+                  print(f"  v_all_detached[{debug_idx}, 0, -1]: {v_all_detached[debug_idx, 0, -1].item()}")
+             print(f"  Linv_complex.H shape: {Linv_complex.H.shape}, dtype: {Linv_complex.H.dtype}") # Shape/dtype only
+             if Linv_complex.H.numel() > 0:
+                  print(f"  Linv_complex.H[0,0]: {Linv_complex.H[0,0].item()}")
+
+
         # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
+        Linv_H_batch = Linv_complex.H.unsqueeze(0).expand(total_points, -1, -1)
         self.V = torch.matmul(
-            Linv_complex.H.unsqueeze(0).expand(total_points, -1, -1),
+            Linv_H_batch,
             v_all_detached # Use the detached eigenvectors here
         )
+
+        if total_points > debug_idx:
+             print(f"  self.V[{debug_idx}] (calculated) shape: {self.V[debug_idx].shape}, dtype: {self.V[debug_idx].dtype}")
+             if self.V[debug_idx].numel() > 0:
+                  print(f"  self.V[{debug_idx}, 0, 0]: {self.V[debug_idx, 0, 0].item()}")
+                  print(f"  self.V[{debug_idx}, 0, -1]: {self.V[debug_idx, 0, -1].item()}")
 
         # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
         eps_div = 1e-8
@@ -1233,7 +1298,23 @@ class OnePhonon:
             torch.tensor(float('nan'), device=eigenvalues_all.device, dtype=self.real_dtype),
             1.0 / (eigenvalues_all + eps_div)
         )
+
+        if total_points > debug_idx:
+             print(f"  winv_all[{debug_idx}] (calculated) shape: {winv_all[debug_idx].shape}, dtype: {winv_all[debug_idx].dtype}")
+             if winv_all[debug_idx].numel() > 0:
+                  print(f"  winv_all[{debug_idx}, 0]: {winv_all[debug_idx, 0].item()}")
+                  print(f"  winv_all[{debug_idx}, -1]: {winv_all[debug_idx, -1].item()}")
+                  print(f"  NaN count in winv_all[{debug_idx}]: {torch.isnan(winv_all[debug_idx]).sum().item()}")
+
         self.Winv = winv_all.to(dtype=self.complex_dtype) # Cast to complex
+
+        if total_points > debug_idx:
+             print(f"  self.Winv[{debug_idx}] (final) shape: {self.Winv[debug_idx].shape}, dtype: {self.Winv[debug_idx].dtype}")
+             if self.Winv[debug_idx].numel() > 0:
+                  print(f"  self.Winv[{debug_idx}, 0]: {self.Winv[debug_idx, 0].item()}")
+                  print(f"  self.Winv[{debug_idx}, -1]: {self.Winv[debug_idx, -1].item()}")
+             print(f"--- End DEBUG After Loop (idx={debug_idx}) ---")
+
 
         # Ensure requires_grad is set correctly for Winv (V is handled by using detached vecs)
         if not self.Winv.requires_grad and eigenvalues_all.requires_grad:
