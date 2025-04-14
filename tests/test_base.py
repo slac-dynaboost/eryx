@@ -66,6 +66,12 @@ class TestBase(unittest.TestCase):
         
         # Always set device attribute for OnePhonon models
         obj.device = self.device
+        
+        # Set default dtype attributes if not in state
+        if 'real_dtype' not in state:
+            obj.real_dtype = torch.float32  # Default to float32 for Phase 1/2
+        if 'complex_dtype' not in state:
+            obj.complex_dtype = torch.complex64  # Default to complex64 for Phase 1/2
             
         # Set all attributes from state dictionary
         for attr_name, attr_value in state.items():

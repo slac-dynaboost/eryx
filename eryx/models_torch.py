@@ -1012,10 +1012,12 @@ class OnePhonon:
             total_points = self.q_grid.shape[0]
             print(f"Computing phonons for {total_points} arbitrary q-vectors")
         else:
-            # Use dimensions from map_shape
-            h_dim, k_dim, l_dim = self.map_shape
-            total_points = h_dim * k_dim * l_dim
-            print(f"Computing phonons for {total_points} grid points ({h_dim}x{k_dim}x{l_dim})")
+            # Use Brillouin zone sampling dimensions instead of map_shape
+            h_dim_bz = int(self.hsampling[2])
+            k_dim_bz = int(self.ksampling[2])
+            l_dim_bz = int(self.lsampling[2])
+            total_points = h_dim_bz * k_dim_bz * l_dim_bz
+            print(f"Computing phonons for {total_points} grid points based on BZ sampling ({h_dim_bz}x{k_dim_bz}x{l_dim_bz})")
         
         # Initialize output tensors with proper shapes for both modes
         self.V = torch.zeros((total_points,
