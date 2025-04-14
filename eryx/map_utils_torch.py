@@ -36,7 +36,8 @@ def generate_grid(A_inv: torch.Tensor, hsampling: Tuple[float, float, float],
         - Original implementation: eryx/map_utils.py:generate_grid
     """
     # Ensure high precision
-    A_inv = A_inv.to(dtype=torch.float64)
+    real_dtype = torch.float64
+    A_inv = A_inv.to(dtype=real_dtype)
     # Calculate steps for each dimension matching the NumPy implementation:
     # hsteps = oversampling * (hmax - hmin) + 1
     hsteps = int(hsampling[2] * (hsampling[1] - hsampling[0]) + 1)
@@ -44,9 +45,9 @@ def generate_grid(A_inv: torch.Tensor, hsampling: Tuple[float, float, float],
     lsteps = int(lsampling[2] * (lsampling[1] - lsampling[0]) + 1)
     
     # Create linspace for each dimension with high precision
-    h_grid = torch.linspace(hsampling[0], hsampling[1], hsteps, dtype=torch.float64, device=A_inv.device)
-    k_grid = torch.linspace(ksampling[0], ksampling[1], ksteps, dtype=torch.float64, device=A_inv.device)
-    l_grid = torch.linspace(lsampling[0], lsampling[1], lsteps, dtype=torch.float64, device=A_inv.device)
+    h_grid = torch.linspace(hsampling[0], hsampling[1], hsteps, dtype=real_dtype, device=A_inv.device)
+    k_grid = torch.linspace(ksampling[0], ksampling[1], ksteps, dtype=real_dtype, device=A_inv.device)
+    l_grid = torch.linspace(lsampling[0], lsampling[1], lsteps, dtype=real_dtype, device=A_inv.device)
     
     # Create meshgrid - using indexing='ij' to match NumPy's default behavior
     h_mesh, k_mesh, l_mesh = torch.meshgrid(h_grid, k_grid, l_grid, indexing='ij')
@@ -55,7 +56,7 @@ def generate_grid(A_inv: torch.Tensor, hsampling: Tuple[float, float, float],
     map_shape = (h_mesh.size(0), k_mesh.size(1), l_mesh.size(2))
     
     # Reshape and reorder dimensions to match NumPy version
-    hkl_grid = torch.stack([h_mesh.flatten(), k_mesh.flatten(), l_mesh.flatten()], dim=1).to(dtype=torch.float64)
+    hkl_grid = torch.stack([h_mesh.flatten(), k_mesh.flatten(), l_mesh.flatten()], dim=1).to(dtype=real_dtype)
     
     if return_hkl:
         return hkl_grid, map_shape
@@ -187,8 +188,9 @@ def compute_resolution(cell: torch.Tensor, hkl: torch.Tensor) -> torch.Tensor:
     contains the Miller indices.
     """
     # Ensure high precision
-    cell = cell.to(dtype=torch.float64)
-    hkl = hkl.to(dtype=torch.float64)
+    real_dtype = torch.float64
+    cell = cell.to(dtype=real_dtype)
+    hkl = hkl.to(dtype=real_dtype)
     # Extract cell parameters
     a, b, c = cell[0], cell[1], cell[2]
     alpha, beta, gamma = torch.deg2rad(cell[3]), torch.deg2rad(cell[4]), torch.deg2rad(cell[5])
@@ -261,8 +263,9 @@ def get_dq_map(A_inv: torch.Tensor, hkl_grid: torch.Tensor) -> torch.Tensor:
         - Original implementation: eryx/map_utils.py:get_dq_map
     """
     # Ensure high precision
-    A_inv = A_inv.to(dtype=torch.float64)
-    hkl_grid = hkl_grid.to(dtype=torch.float64)
+    real_dtype = torch.float64
+    A_inv = A_inv.to(dtype=real_dtype)
+    hkl_grid = hkl_grid.to(dtype=real_dtype)
     # Find closest integral hkl points using torch.round
     hkl_closest = torch.round(hkl_grid)
     

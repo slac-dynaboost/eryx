@@ -732,11 +732,15 @@ class OnePhonon:
         Returns:
             Centered value in range [-L/2, L/2)
         """
-        # Implementation that exactly matches NumPy behavior
-        result = ((x - L/2) % L) - L/2
-        
-        # Convert to float division as in the original
-        return float(int(result)) / L
+        # Ensure L is treated as float for initial division/modulo consistent with NumPy
+        L_float = float(L)
+        # Calculate intermediate result using float division for L/2
+        # Python's % behavior matches NumPy for positive x
+        intermediate = ((float(x) - L_float / 2.0) % L_float) - L_float / 2.0
+        # Cast to int, then float for the final division (matching original NumPy)
+        result_val = float(int(intermediate)) / L_float
+        # Return as float64
+        return result_val
     
     def _at_kvec_from_miller_points(self, indices_or_batch: Union[Tuple[int, int, int], torch.Tensor, int]) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
@@ -1404,15 +1408,8 @@ class OnePhonon:
                     V_idx = V_valid[i]
                     Winv_idx = Winv_valid[i]
                     
-                    # Ensure F and V_idx have the same dtype before matrix multiplication
-                    if F[i].dtype != V_idx.dtype:
-                        print(f"WARNING: dtype mismatch - F: {F[i].dtype}, V_idx: {V_idx.dtype}")
-                        F_i = F[i].to(dtype=self.complex_dtype)
-                    else:
-                        F_i = F[i]
-                    
                     # Compute F·V for all modes at once
-                    FV = torch.matmul(F_i, V_idx)
+                    FV = torch.matmul(F[i], V_idx)
                     
                     # Calculate absolute squared values - ensure real output
                     FV_abs_squared = torch.abs(FV)**2
@@ -1432,15 +1429,8 @@ class OnePhonon:
                     # Get mode for this q-vector
                     V_rank = self.V[idx, :, rank]
                     
-                    # Ensure F and V_rank have the same dtype before matrix multiplication
-                    if F[i].dtype != V_rank.dtype:
-                        print(f"WARNING: dtype mismatch - F: {F[i].dtype}, V_rank: {V_rank.dtype}")
-                        F_i = F[i].to(dtype=self.complex_dtype)
-                    else:
-                        F_i = F[i]
-                    
                     # Compute FV
-                    FV = torch.matmul(F_i, V_rank)
+                    FV = torch.matmul(F[i], V_rank)
                     
                     # Calculate absolute squared value
                     FV_abs_squared = torch.abs(FV)**2
@@ -1568,11 +1558,6 @@ class OnePhonon:
                 V_idx = self.V[idx]
                 Winv_idx = self.Winv[idx]
                 
-                # Ensure F and V_idx have the same dtype before matrix multiplication
-                if F.dtype != V_idx.dtype:
-                    print(f"WARNING: dtype mismatch - F: {F.dtype}, V_idx: {V_idx.dtype}")
-                    F = F.to(dtype=self.complex_dtype)
-                
                 # Compute F·V for all modes at once
                 FV = torch.matmul(F, V_idx)
                 
@@ -1599,11 +1584,6 @@ class OnePhonon:
             else:
                 # Process single mode
                 V_rank = self.V[idx, :, rank]
-                
-                # Ensure F and V_rank have the same dtype before matrix multiplication
-                if F.dtype != V_rank.dtype:
-                    print(f"WARNING: dtype mismatch - F: {F.dtype}, V_rank: {V_rank.dtype}")
-                    F = F.to(dtype=self.complex_dtype)
                 
                 FV = torch.matmul(F, V_rank)
                 
