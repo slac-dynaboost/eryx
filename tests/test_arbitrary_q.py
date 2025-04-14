@@ -263,6 +263,9 @@ class TestArbitraryQVectors(TestBase):
         model_q = OnePhonon(
             pdb_path=self.pdb_path,
             q_vectors=q_vectors_from_grid,  # Use the extracted q-grid
+            hsampling=self.hsampling,        # Pass sampling params for ADP calculation
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
             device=self.device, **self.common_params
         )
         model_q.real_dtype = torch.float64
