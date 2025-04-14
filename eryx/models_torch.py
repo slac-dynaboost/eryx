@@ -840,6 +840,7 @@ class OnePhonon:
         
         # Grid-based mode implementation
         # Calculate full grid dimensions based on sampling parameters
+        # These should match the dimensions used in _setup
         hsteps = int(self.hsampling[2] * (self.hsampling[1] - self.hsampling[0]) + 1)
         ksteps = int(self.ksampling[2] * (self.ksampling[1] - self.ksampling[0]) + 1)
         lsteps = int(self.lsampling[2] * (self.lsampling[1] - self.lsampling[0]) + 1)
@@ -2095,6 +2096,11 @@ class OnePhonon:
         
         # Calculate flat indices: flat_idx = h_idx * (k_dim * l_dim) + k_idx * l_dim + l_idx
         flat_indices = h_indices * (k_dim * l_dim) + k_indices * l_dim + l_indices
+        
+        # Debug output for verification
+        if h_indices.numel() > 0:
+            print(f"_3d_to_flat_indices: Example conversion: h={h_indices[0]}, k={k_indices[0]}, l={l_indices[0]} -> flat_idx={flat_indices[0]}")
+        print(f"_3d_to_flat_indices: Converted 3D indices to flat indices with shape {flat_indices.shape}")
         
         return flat_indices
 
