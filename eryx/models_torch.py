@@ -1397,19 +1397,16 @@ class OnePhonon:
                 adp = ADP.to(dtype=self.real_dtype)
                 project = asu['project'].to(dtype=self.real_dtype)
                 
-                # Compute structure factors with high precision inputs
-                F[:, i_asu, :] = structure_factors(
-                    q_vectors,
-                    xyz,
-                    ff_a,
-                    ff_b,
-                    ff_c,
-                    U=adp,
-                    n_processes=self.n_processes,
-                    compute_qF=True,
-                    project_on_components=project,
-                    sum_over_atoms=False
-                ).to(dtype=self.complex_dtype)  # Ensure complex128 output
+                # Compute structure factors (expects float64 inputs, returns complex128)
+                sf_result = structure_factors(
+                    q_vectors, xyz, ff_a, ff_b, ff_c, U=adp,
+                    n_processes=self.n_processes, compute_qF=True,
+                    project_on_components=project, sum_over_atoms=False
+                )
+                # Assign result to F slice
+                F[:, i_asu, :] = sf_result
+                # Assert F's dtype after assignment
+                assert F.dtype == self.complex_dtype, f"F dtype after assignment (ASU {i_asu}) is {F.dtype}, expected {self.complex_dtype}"
             
             # Reshape for matrix operations
             F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu)) # complex128
