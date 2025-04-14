@@ -1425,7 +1425,8 @@ class OnePhonon:
                                 print(f"DEBUG Grid Mode: Cell {j_cell}, kvec[{debug_idx}]: {kvec.detach().cpu().numpy()}")
                             
                             # Accumulate contribution to covariance tensor
-                            self.covar[:, j_cell, :] += Kinv * eikr / total_points
+                            # No division by total_points to match arbitrary-q mode behavior
+                            self.covar[:, j_cell, :] += Kinv * eikr
         
         # Get reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
