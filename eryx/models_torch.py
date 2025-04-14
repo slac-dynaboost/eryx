@@ -207,10 +207,10 @@ class OnePhonon:
         if getattr(self, 'use_arbitrary_q', False):
             # In arbitrary q-vector mode, use the provided q_vectors directly.
             logging.debug("[_setup] Using user-provided q_vectors.")
-            self.q_grid = self.q_vectors
+            self.q_grid = self.q_vectors.to(dtype=self.real_dtype)
             
             # Derive hkl_grid from q_vectors using q = 2π * A_inv^T * hkl  => hkl = (1/(2π)) * q * (A_inv^T)^{-1}
-            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
             scaling_factor = 1.0 / (2.0 * torch.pi)
             A_inv_T_inv = torch.inverse(A_inv_tensor.T)
             self.hkl_grid = torch.matmul(self.q_grid * scaling_factor, A_inv_T_inv)
