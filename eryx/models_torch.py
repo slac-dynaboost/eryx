@@ -143,6 +143,10 @@ class OnePhonon:
         self.ksampling = ksampling
         self.lsampling = lsampling
         
+        # Set high precision as default for grid mode
+        self.real_dtype = torch.float64
+        self.complex_dtype = torch.complex128
+        
         # Validate inputs
         if q_vectors is not None:
             # Validate q_vectors
@@ -221,19 +225,19 @@ class OnePhonon:
                                                      self.ksampling,
                                                      self.lsampling,
                                                      return_hkl=True)
-            self.hkl_grid = torch.tensor(hkl_grid, dtype=torch.float32, device=self.device)
+            self.hkl_grid = torch.tensor(hkl_grid, dtype=self.real_dtype, device=self.device)
             logging.debug(f"[_setup] grid-based map_shape={self.map_shape}, "
                           f"hkl_grid.shape={self.hkl_grid.shape} ")
 
             # Calculate q_grid using matrix multiplication
             self.q_grid = 2 * torch.pi * torch.matmul(
-                torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device).T,
+                torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device).T,
                 self.hkl_grid.T
             ).T
         
         # Compute resolution mask using PyTorch functions
         from eryx.map_utils_torch import compute_resolution
-        cell_tensor = torch.tensor(self.model.cell, dtype=torch.float32, device=self.device)
+        cell_tensor = torch.tensor(self.model.cell, dtype=self.real_dtype, device=self.device)
         resolution = compute_resolution(cell_tensor, self.hkl_grid)
         logging.debug(f"[_setup] resolution computed, shape={resolution.shape}")
         self.res_mask = resolution > res_limit
@@ -276,14 +280,14 @@ class OnePhonon:
         """
         # Store parameters as tensors with gradients
         if isinstance(gamma_intra, torch.Tensor):
-            self.gamma_intra = gamma_intra
+            self.gamma_intra = gamma_intra.to(dtype=self.real_dtype)
         else:
-            self.gamma_intra = torch.tensor(gamma_intra, dtype=torch.float32, device=self.device, requires_grad=True)
+            self.gamma_intra = torch.tensor(gamma_intra, dtype=self.real_dtype, device=self.device, requires_grad=True)
             
         if isinstance(gamma_inter, torch.Tensor):
-            self.gamma_inter = gamma_inter
+            self.gamma_inter = gamma_inter.to(dtype=self.real_dtype)
         else:
-            self.gamma_inter = torch.tensor(gamma_inter, dtype=torch.float32, device=self.device, requires_grad=True)
+            self.gamma_inter = torch.tensor(gamma_inter, dtype=self.real_dtype, device=self.device, requires_grad=True)
         
         # Setup GNM from NP implementation for initialization only
         self.gnm = GaussianNetworkModel(pdb_path, gnm_cutoff, 
@@ -292,7 +296,7 @@ class OnePhonon:
         
         # Create a differentiable gamma tensor that matches the GNM structure
         self.gamma_tensor = torch.zeros((self.n_cell, self.n_asu, self.n_asu), 
-                                       device=self.device, dtype=torch.float32)
+                                       device=self.device, dtype=self.real_dtype)
         
         # Fill it like the original build_gamma method, but with our parameter tensors
         for i_asu in range(self.n_asu):
@@ -321,17 +325,17 @@ class OnePhonon:
             logging.debug(f"[_setup_phonons] Arbitrary mode: q_grid.shape={self.q_grid.shape}, total_points={total_points}")
             
             # Initialize tensors based on number of q-vectors
-            self.kvec = torch.zeros((total_points, 3), device=self.device)
-            self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
+            self.kvec = torch.zeros((total_points, 3), dtype=self.real_dtype, device=self.device)
+            self.kvec_norm = torch.zeros((total_points, 1), dtype=self.real_dtype, device=self.device)
             
             # Initialize V and Winv tensors with batched shape
             self.V = torch.zeros((total_points,
                                 self.n_asu * self.n_dof_per_asu,
                                 self.n_asu * self.n_dof_per_asu),
-                              dtype=torch.complex64, device=self.device)
+                              dtype=self.complex_dtype, device=self.device)
             self.Winv = torch.zeros((total_points,
                                     self.n_asu * self.n_dof_per_asu),
-                                   dtype=torch.complex64, device=self.device)
+                                   dtype=self.complex_dtype, device=self.device)
             
             # Ensure complex tensors require gradients
             self.V.requires_grad_(True)
@@ -347,17 +351,17 @@ class OnePhonon:
             logging.debug(f"[_setup_phonons] Grid mode: map_shape={self.map_shape}, total_points={total_points}")
             
             # Initialize tensors for grid mode
-            self.kvec = torch.zeros((total_points, 3), device=self.device)
-            self.kvec_norm = torch.zeros((total_points, 1), device=self.device)
+            self.kvec = torch.zeros((total_points, 3), dtype=self.real_dtype, device=self.device)
+            self.kvec_norm = torch.zeros((total_points, 1), dtype=self.real_dtype, device=self.device)
             
             # Initialize V and Winv tensors with batched shape
             self.V = torch.zeros((total_points,
                                 self.n_asu * self.n_dof_per_asu,
                                 self.n_asu * self.n_dof_per_asu),
-                              dtype=torch.complex64, device=self.device)
+                              dtype=self.complex_dtype, device=self.device)
             self.Winv = torch.zeros((total_points,
                                     self.n_asu * self.n_dof_per_asu),
-                                   dtype=torch.complex64, device=self.device)
+                                   dtype=self.complex_dtype, device=self.device)
         
         # Common initialization for both modes
         self._build_A()
@@ -388,31 +392,31 @@ class OnePhonon:
         if self.group_by == 'asu':
             # Initialize Amat with zeros, using float64 for better precision
             self.Amat = torch.zeros((self.n_asu, self.n_dof_per_asu_actual, self.n_dof_per_asu), 
-                                   device=self.device, dtype=torch.float64)
+                                   device=self.device, dtype=self.real_dtype)
             
             # Create identity matrix for translations
-            Adiag = torch.eye(3, device=self.device, dtype=torch.float64)
+            Adiag = torch.eye(3, device=self.device, dtype=self.real_dtype)
             
             for i_asu in range(self.n_asu):
                 # Get coordinates from model directly - simplest reliable approach
                 if hasattr(self.model, 'xyz'):
                     if isinstance(self.model.xyz, torch.Tensor):
-                        xyz = self.model.xyz[i_asu].to(dtype=torch.float64)
+                        xyz = self.model.xyz[i_asu].to(dtype=self.real_dtype)
                     else:
-                        xyz = torch.tensor(self.model.xyz[i_asu], dtype=torch.float64, device=self.device)
+                        xyz = torch.tensor(self.model.xyz[i_asu], dtype=self.real_dtype, device=self.device)
                 else:
                     # Fallback to zeros if no coordinates available
-                    xyz = torch.zeros((self.n_atoms_per_asu, 3), device=self.device, dtype=torch.float64)
+                    xyz = torch.zeros((self.n_atoms_per_asu, 3), device=self.device, dtype=self.real_dtype)
                 
                 # Center coordinates properly
                 xyz = xyz - xyz.mean(dim=0, keepdim=True)
                 
                 # Initialize Atmp once per asymmetric unit (outside the atom loop)
-                Atmp = torch.zeros((3, 3), device=self.device, dtype=torch.float64)
+                Atmp = torch.zeros((3, 3), device=self.device, dtype=self.real_dtype)
                 
                 # Initialize Atmp once per asymmetric unit (outside the atom loop)
                 # This allows cumulative updates across atoms, matching NumPy implementation
-                Atmp = torch.zeros((3, 3), device=self.device, dtype=torch.float64)
+                Atmp = torch.zeros((3, 3), device=self.device, dtype=self.real_dtype)
                 
                 # Process each atom
                 for i_atom in range(self.n_atoms_per_asu):
@@ -443,9 +447,8 @@ class OnePhonon:
                 print(f"DEBUG _build_A: Amat min: {self.Amat.min().item()}, max: {self.Amat.max().item()}")
                 print(f"DEBUG _build_A: Amat mean: {self.Amat.mean().item()}, std: {self.Amat.std().item()}")
             
-            # Convert back to float32 for consistency with the rest of the model
-            # while preserving the higher-precision computation
-            self.Amat = self.Amat.to(dtype=torch.float32)
+            # Keep high precision
+            # Do NOT convert back to float32
             
             # Set requires_grad after construction
             self.Amat.requires_grad_(True)
@@ -469,8 +472,8 @@ class OnePhonon:
             M_reg = M_allatoms + eps
             self.Linv = 1.0 / torch.sqrt(M_reg)
             
-            # Convert back to float32 for consistency
-            self.Linv = self.Linv.to(dtype=torch.float32)
+            # Keep high precision
+            # Do NOT convert back to float32
         else:
             # Project the all-atom mass matrix for rigid body case
             Mmat = self._project_M(M_allatoms)
@@ -505,8 +508,9 @@ class OnePhonon:
                     S = torch.clamp(S, min=1e-8)
                     self.Linv = U @ torch.diag(1.0 / torch.sqrt(S)) @ V
             
-            # Convert back to float32 for consistency
-            self.Linv = self.Linv.to(dtype=torch.float32)
+            # Keep high precision
+            # Do NOT convert back to float32
+            self.Linv = self.Linv.to(dtype=self.complex_dtype)
             self.Linv.requires_grad_(True)
     
     #@debug
@@ -517,8 +521,8 @@ class OnePhonon:
         Returns:
             torch.Tensor of shape (n_asu, n_dof_per_asu_actual, n_asu, n_dof_per_asu_actual)
         """
-        # Use float64 for better precision
-        dtype = torch.float64
+        # Use high precision
+        dtype = self.real_dtype
         
         # Create mass array - default to ones as fallback
         mass_array = torch.ones(self.n_asu * self.n_atoms_per_asu, dtype=dtype, device=self.device)
@@ -637,11 +641,8 @@ class OnePhonon:
         Returns:
             Mmat: Projected mass matrix of shape (n_asu, n_dof_per_asu, n_asu, n_dof_per_asu)
         """
-        # Use the same precision as M_allatoms for consistency
-        if isinstance(M_allatoms, torch.Tensor):
-            dtype = M_allatoms.dtype
-        else:
-            dtype = torch.float64
+        # Use high precision
+        dtype = self.real_dtype
         
         # Ensure M_allatoms is a tensor
         if not isinstance(M_allatoms, torch.Tensor):
@@ -697,9 +698,9 @@ class OnePhonon:
             
             # Convert hkl_grid to k-vectors
             if isinstance(self.model.A_inv, torch.Tensor):
-                A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=torch.float32, device=self.device)
+                A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=self.real_dtype, device=self.device)
             else:
-                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=torch.float32, device=self.device)
+                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
             
             # Compute kvec directly from hkl_grid
             self.kvec = torch.matmul(self.hkl_grid, A_inv_tensor)
@@ -868,7 +869,7 @@ class OnePhonon:
         # Initialize hessian tensor
         hessian = torch.zeros((self.n_asu, self.n_dof_per_asu,
                                self.n_cell, self.n_asu, self.n_dof_per_asu),
-                              dtype=torch.complex64, device=self.device)
+                              dtype=self.complex_dtype, device=self.device)
         
         # Create a GaussianNetworkModel instance for Hessian calculation
         from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
@@ -915,7 +916,7 @@ class OnePhonon:
         hessian_allatoms = gnm_torch.compute_hessian()
         
         # Create identity matrix for Kronecker product
-        eye3 = torch.eye(3, device=self.device, dtype=torch.complex64)
+        eye3 = torch.eye(3, device=self.device, dtype=self.complex_dtype)
         
         for i_cell in range(self.n_cell):
             for i_asu in range(self.n_asu):
@@ -924,7 +925,7 @@ class OnePhonon:
                     # This expands each element of the hessian into a 3x3 block
                     h_block = hessian_allatoms[i_asu, :, i_cell, j_asu, :]
                     h_expanded = torch.zeros((h_block.shape[0] * 3, h_block.shape[1] * 3), 
-                                            dtype=torch.complex64, device=self.device)
+                                            dtype=self.complex_dtype, device=self.device)
                     
                     # Manually implement the Kronecker product
                     for i in range(h_block.shape[0]):
@@ -933,16 +934,16 @@ class OnePhonon:
                     
                     # Perform matrix multiplication with expanded hessian
                     # Ensure all tensors are complex for compatibility
-                    proj = torch.matmul(self.Amat[i_asu].T.to(torch.complex64),
+                    proj = torch.matmul(self.Amat[i_asu].T.to(self.complex_dtype),
                                         torch.matmul(h_expanded,
-                                                     self.Amat[j_asu].to(torch.complex64)))
+                                                     self.Amat[j_asu].to(self.complex_dtype)))
                     hessian[i_asu, :, i_cell, j_asu, :] = proj
         
         # Ensure hessian requires gradients
         if not hessian.requires_grad and hessian.is_complex():
             # For complex tensors we need a different approach to enable gradients
             # Create a dummy tensor that requires gradients, then add it to hessian
-            dummy = torch.zeros((1,), dtype=torch.complex64, device=self.device, requires_grad=True)
+            dummy = torch.zeros((1,), dtype=self.complex_dtype, device=self.device, requires_grad=True)
             hessian = hessian + dummy * 0
         
         return hessian
@@ -1007,7 +1008,7 @@ class OnePhonon:
             gnm_torch.asu_neighbors = self.gnm.asu_neighbors
         
         # Convert Linv to complex for matrix operations
-        Linv_complex = self.Linv.to(dtype=torch.complex64)
+        Linv_complex = self.Linv.to(dtype=self.complex_dtype)
         
         # Compute K matrices for all k-vectors at once
         Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
@@ -1163,7 +1164,7 @@ class OnePhonon:
         # Initialize covariance tensor
         self.covar = torch.zeros((self.n_asu * self.n_dof_per_asu,
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
-                               dtype=torch.complex64, device=self.device)
+                               dtype=self.complex_dtype, device=self.device)
         
         # Get total number of k-vectors based on mode
         if getattr(self, 'use_arbitrary_q', False):
@@ -1184,6 +1185,8 @@ class OnePhonon:
         gnm_torch.n_cell = self.n_cell
         gnm_torch.id_cell_ref = self.id_cell_ref
         gnm_torch.device = self.device
+        gnm_torch.real_dtype = self.real_dtype
+        gnm_torch.complex_dtype = self.complex_dtype
         
         # Set crystal reference
         if hasattr(self, 'crystal'):
@@ -1293,17 +1296,17 @@ class OnePhonon:
         
         # Prepare ADPs
         if use_data_adp:
-            ADP = torch.tensor(self.model.adp[0], dtype=torch.float32, device=self.device) / (8 * torch.pi * torch.pi)
+            ADP = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device) / (8 * torch.pi * torch.pi)
         else:
             if hasattr(self, "ADP"):
-                ADP = self.ADP.to(dtype=torch.float32, device=self.device)
+                ADP = self.ADP.to(dtype=self.real_dtype, device=self.device)
             else:
                 # fallback if not computed
-                ADP = torch.ones(self.n_atoms_per_asu, device=self.device, dtype=torch.float32)
+                ADP = torch.ones(self.n_atoms_per_asu, device=self.device, dtype=self.real_dtype)
         logging.debug(f"[apply_disorder] ADP shape= {self.ADP.shape if hasattr(self,'ADP') else '(none)'}")
         
         # Initialize intensity tensor
-        Id = torch.zeros(self.q_grid.shape[0], dtype=torch.float32, device=self.device)
+        Id = torch.zeros(self.q_grid.shape[0], dtype=self.real_dtype, device=self.device)
         logging.debug(f"[apply_disorder] q_grid.size={self.q_grid.shape[0]} total points. res_mask sum={int(self.res_mask.sum())}.")
         
         # Get total number of k-vectors
@@ -1329,7 +1332,7 @@ class OnePhonon:
             valid_indices = torch.where(self.res_mask)[0]
             if valid_indices.numel() == 0:
                 # If no valid indices, return array of NaNs
-                Id_masked = torch.full((n_points,), float('nan'), device=self.device)
+                Id_masked = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
                 
                 # Save results if outdir is provided
                 if outdir is not None:
@@ -1354,7 +1357,7 @@ class OnePhonon:
             
             # Compute structure factors for all valid q-vectors
             F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
-                          dtype=torch.complex64, device=self.device)
+                          dtype=self.complex_dtype, device=self.device)
             
             # Import structure_factors function
             from eryx.scatter_torch import structure_factors
@@ -1404,7 +1407,7 @@ class OnePhonon:
                         real_winv = Winv_idx
                     
                     # Weight by eigenvalues and sum - ensure real output
-                    intensity[i] = torch.sum(FV_abs_squared * real_winv.to(dtype=torch.float32))
+                    intensity[i] = torch.sum(FV_abs_squared * real_winv.to(dtype=self.real_dtype))
             else:
                 # Process single mode
                 intensity = torch.zeros(valid_indices.numel(), device=self.device)
@@ -1425,10 +1428,10 @@ class OnePhonon:
                         real_winv = self.Winv[idx, rank]
                     
                     # Compute intensity
-                    intensity[i] = FV_abs_squared * real_winv.to(dtype=torch.float32)
+                    intensity[i] = FV_abs_squared * real_winv.to(dtype=self.real_dtype)
             
             # Build full result array
-            Id = torch.full((n_points,), float('nan'), device=self.device)
+            Id = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
             Id[valid_indices] = intensity
             
             # Apply resolution mask (redundant but kept for consistency)
@@ -1598,7 +1601,7 @@ class OnePhonon:
         Args:
             array: NumPy array or PyTorch tensor to convert
             requires_grad: Whether the tensor requires gradients for backpropagation
-            dtype: Data type for the tensor (default: torch.float32)
+            dtype: Data type for the tensor (default: torch.float64)
             
         Returns:
             PyTorch tensor with proper device and gradient settings
@@ -1609,7 +1612,11 @@ class OnePhonon:
         
         # Set default dtype if not provided
         if dtype is None:
-            dtype = torch.float32
+            dtype = torch.float64
+            
+        # Handle complex arrays
+        if isinstance(array, np.ndarray) and np.iscomplexobj(array):
+            dtype = torch.complex128
         
         # If already a tensor, move to correct device and set requires_grad
         if isinstance(array, torch.Tensor):

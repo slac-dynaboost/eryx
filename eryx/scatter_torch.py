@@ -34,6 +34,11 @@ def compute_form_factors(q_grid: torch.Tensor, ff_a: torch.Tensor,
     References:
         - Original implementation: eryx/scatter.py:compute_form_factors
     """
+    # Ensure high precision
+    q_grid = q_grid.to(dtype=torch.float64)
+    ff_a = ff_a.to(dtype=torch.float64)
+    ff_b = ff_b.to(dtype=torch.float64)
+    ff_c = ff_c.to(dtype=torch.float64)
     # Compute q^2 / (16π^2) for each q-vector
     # Shape: [n_points, 1]
     q_squared = torch.sum(q_grid * q_grid, dim=1, keepdim=True) / (16 * torch.pi * torch.pi)
@@ -98,14 +103,11 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
     References:
         - Original implementation: eryx/scatter.py:structure_factors_batch
     """
-    # Determine the primary dtype to use (prefer float64 if any input is float64)
-    dtype = torch.float32
-    for tensor in [q_grid, xyz, ff_a, ff_b, ff_c]:
-        if tensor.dtype == torch.float64:
-            dtype = torch.float64
-            break
+    # Use high precision
+    dtype = torch.float64
+    complex_dtype = torch.complex128
     
-    # Ensure all input tensors have consistent dtype
+    # Ensure all input tensors have consistent high precision
     q_grid = q_grid.to(dtype=dtype)
     xyz = xyz.to(dtype=dtype)
     ff_a = ff_a.to(dtype=dtype)
