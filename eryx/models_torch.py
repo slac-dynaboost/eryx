@@ -1206,11 +1206,15 @@ class OnePhonon:
                      n_dof = D_i_hermitian.shape[0]
                      v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
 
-            if i == debug_idx:
+            # --- Debug Print Trigger ---
+            if is_target_idx:
                 print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
                 if v_i_no_grad.numel() > 0:
                     print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
                     print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
+                    debug_data_grid['v_00'] = v_i_no_grad[0,0].item()
+                    debug_data_grid['v_0N'] = v_i_no_grad[0,-1].item()
+            # --- End Debug Print Trigger ---
 
             # Flip eigenvectors to match descending eigenvalue order later
             v_flipped_no_grad = torch.flip(v_i_no_grad, dims=[-1])
@@ -1270,12 +1274,16 @@ class OnePhonon:
             eigenvalues_processed_flipped = torch.flip(eigenvalues_processed, dims=[-1])
             eigenvalues_all_list.append(eigenvalues_processed_flipped)
 
-            if i == debug_idx:
+            # --- Debug Print Trigger ---
+            if is_target_idx:
                 print(f"  eigenvalues_processed_flipped shape: {eigenvalues_processed_flipped.shape}, dtype: {eigenvalues_processed_flipped.dtype}")
                 if eigenvalues_processed_flipped.numel() > 0:
                     print(f"  eigenvalues_processed_flipped[0]: {eigenvalues_processed_flipped[0].item()}")
                     print(f"  eigenvalues_processed_flipped[-1]: {eigenvalues_processed_flipped[-1].item()}")
-                print(f"--- End DEBUG Phonon Loop (i={i}) ---")
+                    debug_data_grid['eig_pf0'] = eigenvalues_processed_flipped[0].item()
+                    debug_data_grid['eig_pfN'] = eigenvalues_processed_flipped[-1].item()
+                print(f"--- End DEBUG Phonon Loop (Grid Mode i={i}) ---")
+             # --- End Debug Print Trigger ---
 
 
         # Stack results
@@ -1285,6 +1293,28 @@ class OnePhonon:
         print(f"Recomputed eigenvalues using eigh complete")
         print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}") # Should be True
         print(f"v_all_detached requires_grad: {v_all_detached.requires_grad}") # Should be False
+
+        # --- Debug Print Trigger (Arbitrary-Q Mode) ---
+        is_arb_q_mode = getattr(self, 'use_arbitrary_q', False)
+        if is_arb_q_mode and DEBUG_IDX_FULL < eigenvalues_all.shape[0]:
+            print(f"\n--- DEBUG Arb-Q After Loop (idx={DEBUG_IDX_FULL}) ---")
+            print(f"  eigenvalues_all[{DEBUG_IDX_FULL}] shape: {eigenvalues_all[DEBUG_IDX_FULL].shape}, dtype: {eigenvalues_all[DEBUG_IDX_FULL].dtype}")
+            if eigenvalues_all[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  eigenvalues_all[{DEBUG_IDX_FULL}, 0]: {eigenvalues_all[DEBUG_IDX_FULL, 0].item()}")
+                print(f"  eigenvalues_all[{DEBUG_IDX_FULL}, -1]: {eigenvalues_all[DEBUG_IDX_FULL, -1].item()}")
+                nan_count_arb = torch.isnan(eigenvalues_all[DEBUG_IDX_FULL]).sum().item()
+                print(f"  NaN count in eigenvalues_all[{DEBUG_IDX_FULL}]: {nan_count_arb}")
+                debug_data_arbq['eig_pf0'] = eigenvalues_all[DEBUG_IDX_FULL, 0].item()
+                debug_data_arbq['eig_pfN'] = eigenvalues_all[DEBUG_IDX_FULL, -1].item()
+                debug_data_arbq['nan_count'] = nan_count_arb
+
+            print(f"  v_all_detached[{DEBUG_IDX_FULL}] shape: {v_all_detached[DEBUG_IDX_FULL].shape}, dtype: {v_all_detached[DEBUG_IDX_FULL].dtype}")
+            if v_all_detached[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, 0]: {v_all_detached[DEBUG_IDX_FULL, 0, 0].item()}")
+                print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, -1]: {v_all_detached[DEBUG_IDX_FULL, 0, -1].item()}")
+                debug_data_arbq['vf_00'] = v_all_detached[DEBUG_IDX_FULL, 0, 0].item()
+                debug_data_arbq['vf_0N'] = v_all_detached[DEBUG_IDX_FULL, 0, -1].item()
+        # --- End Debug Print Trigger ---
 
         if total_points > debug_idx:
              print(f"\n--- DEBUG After Loop (idx={debug_idx}) ---")
@@ -1315,28 +1345,66 @@ class OnePhonon:
                   print(f"  self.V[{debug_idx}, 0, -1]: {self.V[debug_idx, 0, -1].item()}")
 
         # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
-        eps_div = 1e-8
+        eps_div = 1e-8 # Use a small epsilon for division stability
         winv_all = torch.where(
             torch.isnan(eigenvalues_all),
             torch.tensor(float('nan'), device=eigenvalues_all.device, dtype=self.real_dtype),
-            1.0 / (eigenvalues_all + eps_div)
+            1.0 / torch.maximum(eigenvalues_all, torch.tensor(eps_div, device=eigenvalues_all.device)) # Use maximum instead of adding
+            #1.0 / (eigenvalues_all + eps_div)
         )
-
-        if total_points > debug_idx:
-             print(f"  winv_all[{debug_idx}] (calculated) shape: {winv_all[debug_idx].shape}, dtype: {winv_all[debug_idx].dtype}")
-             if winv_all[debug_idx].numel() > 0:
-                  print(f"  winv_all[{debug_idx}, 0]: {winv_all[debug_idx, 0].item()}")
-                  print(f"  winv_all[{debug_idx}, -1]: {winv_all[debug_idx, -1].item()}")
-                  print(f"  NaN count in winv_all[{debug_idx}]: {torch.isnan(winv_all[debug_idx]).sum().item()}")
-
         self.Winv = winv_all.to(dtype=self.complex_dtype) # Cast to complex
 
-        if total_points > debug_idx:
-             print(f"  self.Winv[{debug_idx}] (final) shape: {self.Winv[debug_idx].shape}, dtype: {self.Winv[debug_idx].dtype}")
-             if self.Winv[debug_idx].numel() > 0:
-                  print(f"  self.Winv[{debug_idx}, 0]: {self.Winv[debug_idx, 0].item()}")
-                  print(f"  self.Winv[{debug_idx}, -1]: {self.Winv[debug_idx, -1].item()}")
-             print(f"--- End DEBUG After Loop (idx={debug_idx}) ---")
+        # --- Debug Print Trigger (Both Modes) ---
+        # Grid Mode: Check if i == DEBUG_IDX_BZ was set in the loop's debug_data_grid
+        if is_grid_mode and DEBUG_IDX_BZ < self.V.shape[0]:
+            print(f"\n--- DEBUG Final Grid (idx={DEBUG_IDX_BZ}) ---")
+            print(f"  Linv_complex.H shape: {Linv_H_batch[DEBUG_IDX_BZ].shape}, dtype: {Linv_H_batch[DEBUG_IDX_BZ].dtype}")
+            if Linv_H_batch[DEBUG_IDX_BZ].numel() > 0:
+                print(f"  Linv_complex.H[0,0]: {Linv_H_batch[DEBUG_IDX_BZ, 0, 0].item()}")
+            if v_all_detached[DEBUG_IDX_BZ].numel() > 0:
+                print(f"  v_all_detached[{DEBUG_IDX_BZ}, 0, 0]: {v_all_detached[DEBUG_IDX_BZ, 0, 0].item()}")
+            print(f"  self.V[{DEBUG_IDX_BZ}] (calculated) shape: {self.V[DEBUG_IDX_BZ].shape}, dtype: {self.V[DEBUG_IDX_BZ].dtype}")
+            if self.V[DEBUG_IDX_BZ].numel() > 0:
+                print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
+                print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
+            print(f"  winv_all[{DEBUG_IDX_BZ}] (calculated) shape: {winv_all[DEBUG_IDX_BZ].shape}, dtype: {winv_all[DEBUG_IDX_BZ].dtype}")
+            if winv_all[DEBUG_IDX_BZ].numel() > 0:
+                print(f"  winv_all[{DEBUG_IDX_BZ}, 0]: {winv_all[DEBUG_IDX_BZ, 0].item()}")
+                print(f"  winv_all[{DEBUG_IDX_BZ}, -1]: {winv_all[DEBUG_IDX_BZ, -1].item()}")
+                nan_count_final = torch.isnan(winv_all[DEBUG_IDX_BZ]).sum().item()
+                print(f"  NaN count in winv_all[{DEBUG_IDX_BZ}]: {nan_count_final}")
+            print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
+            if self.Winv[DEBUG_IDX_BZ].numel() > 0:
+                print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
+                print(f"  self.Winv[{DEBUG_IDX_BZ}, -1]: {self.Winv[DEBUG_IDX_BZ, -1].item()}")
+
+        # Arbitrary-Q Mode: Check if DEBUG_IDX_FULL exists
+        if is_arb_q_mode and DEBUG_IDX_FULL < self.V.shape[0]:
+            print(f"\n--- DEBUG Final Arb-Q (idx={DEBUG_IDX_FULL}) ---")
+            print(f"  Linv_complex.H shape: {Linv_H_batch[DEBUG_IDX_FULL].shape}, dtype: {Linv_H_batch[DEBUG_IDX_FULL].dtype}")
+            if Linv_H_batch[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  Linv_complex.H[0,0]: {Linv_H_batch[DEBUG_IDX_FULL, 0, 0].item()}")
+            # Use the previously stored debug value for v_all_detached if available
+            if 'vf_00' in debug_data_arbq and v_all_detached[DEBUG_IDX_FULL].numel() > 0:
+                 print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, 0] (from storage): {debug_data_arbq['vf_00']}")
+            elif v_all_detached[DEBUG_IDX_FULL].numel() > 0:
+                 print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, 0]: {v_all_detached[DEBUG_IDX_FULL, 0, 0].item()}") # Fallback
+
+            print(f"  self.V[{DEBUG_IDX_FULL}] (calculated) shape: {self.V[DEBUG_IDX_FULL].shape}, dtype: {self.V[DEBUG_IDX_FULL].dtype}")
+            if self.V[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  self.V[{DEBUG_IDX_FULL}, 0, 0]: {self.V[DEBUG_IDX_FULL, 0, 0].item()}")
+                print(f"  self.V[{DEBUG_IDX_FULL}, 0, -1]: {self.V[DEBUG_IDX_FULL, 0, -1].item()}")
+            print(f"  winv_all[{DEBUG_IDX_FULL}] (calculated) shape: {winv_all[DEBUG_IDX_FULL].shape}, dtype: {winv_all[DEBUG_IDX_FULL].dtype}")
+            if winv_all[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  winv_all[{DEBUG_IDX_FULL}, 0]: {winv_all[DEBUG_IDX_FULL, 0].item()}")
+                print(f"  winv_all[{DEBUG_IDX_FULL}, -1]: {winv_all[DEBUG_IDX_FULL, -1].item()}")
+                nan_count_final_arb = torch.isnan(winv_all[DEBUG_IDX_FULL]).sum().item()
+                print(f"  NaN count in winv_all[{DEBUG_IDX_FULL}]: {nan_count_final_arb}")
+            print(f"  self.Winv[{DEBUG_IDX_FULL}] (final) shape: {self.Winv[DEBUG_IDX_FULL].shape}, dtype: {self.Winv[DEBUG_IDX_FULL].dtype}")
+            if self.Winv[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  self.Winv[{DEBUG_IDX_FULL}, 0]: {self.Winv[DEBUG_IDX_FULL, 0].item()}")
+                print(f"  self.Winv[{DEBUG_IDX_FULL}, -1]: {self.Winv[DEBUG_IDX_FULL, -1].item()}")
+        # --- End Modifications ---
 
 
         # Ensure requires_grad is set correctly for Winv (V is handled by using detached vecs)
