@@ -107,7 +107,38 @@ def run_arbitrary_q_mode(
             gamma_intra=gamma_intra,
             gamma_inter=gamma_inter
         )
+        
+        # Explicitly calculate phonon modes (skipped during initialization in arbitrary q-vector mode)
+        logging.info("Explicitly calculating phonon modes for arbitrary q-vector mode...")
+        try:
+            # Calculate phonon modes (eigenvectors and eigenvalues)
+            model_arb_q.compute_gnm_phonons()
+            logging.info("Phonon modes calculated successfully.")
+            
+            # Check if covariance matrix method exists and call it if available
+            if hasattr(model_arb_q, 'compute_covariance_matrix'):
+                model_arb_q.compute_covariance_matrix()
+                logging.info("Covariance matrix calculated successfully.")
+        except Exception as e:
+            logging.error(f"Error during explicit phonon calculation: {e}")
+            logging.warning("Continuing execution, but intensity values may be incorrect.")
+        
         logging.info("Model initialized. Calculating intensity...")
+        
+        # Verify phonon tensors exist and contain non-zero values
+        if hasattr(model_arb_q, 'V') and hasattr(model_arb_q, 'Winv'):
+            v_nonzero = torch.count_nonzero(torch.abs(model_arb_q.V)).item() if model_arb_q.V is not None else 0
+            winv_nonzero = torch.count_nonzero(~torch.isnan(model_arb_q.Winv)).item() if model_arb_q.Winv is not None else 0
+            
+            logging.info(f"Phonon eigenvectors (V) shape: {model_arb_q.V.shape if model_arb_q.V is not None else 'None'}")
+            logging.info(f"Phonon eigenvalues (Winv) shape: {model_arb_q.Winv.shape if model_arb_q.Winv is not None else 'None'}")
+            logging.info(f"Non-zero elements - V: {v_nonzero}, Winv: {winv_nonzero}")
+            
+            if v_nonzero == 0 or winv_nonzero == 0:
+                logging.warning("Phonon tensors contain zeros or NaNs only. Intensity values may be incorrect.")
+        else:
+            logging.warning("Phonon tensors (V and/or Winv) are missing. Intensity values may be incorrect.")
+            
         Id_arb_q = model_arb_q.apply_disorder(use_data_adp=use_data_adp)
         logging.info(f"Intensity calculated, shape: {Id_arb_q.shape}")
         return Id_arb_q
@@ -281,6 +312,11 @@ def main():
             device=device
         )
 
+        # Note on arbitrary q-vector mode:
+        # By default, OnePhononTorch skips phonon calculations in arbitrary q-vector mode during initialization.
+        # This can lead to zero intensities if not addressed. The run_arbitrary_q_mode function below
+        # explicitly calls the necessary phonon calculation methods to ensure correct intensity values.
+        
         # --- Run Arbitrary-Q Mode ---
         Id_arb_q = run_arbitrary_q_mode(
             pdb_path=args.pdb,
