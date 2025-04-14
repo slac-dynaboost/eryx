@@ -1216,23 +1216,16 @@ class OnePhonon:
         )
         self.Winv = winv_all.to(dtype=self.complex_dtype) # Cast to complex
 
-        # Ensure requires_grad is set correctly
-        self.V.requires_grad_(False) # Explicitly set V to not require grad
+        # Ensure requires_grad is set correctly for Winv (V is handled by using detached vecs)
         if not self.Winv.requires_grad and eigenvalues_all.requires_grad:
              self.Winv = self.Winv + 0 * eigenvalues_all.sum().to(self.complex_dtype) # Reconnect if needed
-             self.Winv.requires_grad_(True)
 
-        print(f"V requires_grad: {self.V.requires_grad}")
-        print(f"Winv requires_grad: {self.Winv.requires_grad}")
+        print(f"V requires_grad: {self.V.requires_grad}") # Should be False now
+        print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
         print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
         
-        # Set requires_grad for tensors
-        self.V.requires_grad_(True)
+        # Set requires_grad for Winv tensor only (V is already handled)
         self.Winv.requires_grad_(True)
-        
-        print(f"V requires_grad: {self.V.requires_grad}")
-        print(f"Winv requires_grad: {self.Winv.requires_grad}")
-        print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
     
     #@debug
     def compute_gnm_K(self, hessian: torch.Tensor, kvec: torch.Tensor = None) -> torch.Tensor:
