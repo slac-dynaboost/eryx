@@ -1679,10 +1679,10 @@ class OnePhonon:
             asu_data = []
             for i_asu in range(self.n_asu):
                 asu_data.append({
-                    'xyz': self.array_to_tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32),
-                    'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=torch.float32),
-                    'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=torch.float32),
-                    'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=torch.float32),
+                    'xyz': self.array_to_tensor(self.crystal.get_asu_xyz(i_asu), dtype=self.real_dtype),
+                    'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=self.real_dtype),
+                    'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=self.real_dtype),
+                    'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=self.real_dtype),
                     'project': self.Amat[i_asu]
                 })
             
@@ -1703,8 +1703,23 @@ class OnePhonon:
                         V_k = self.V[idx].to(self.complex_dtype)  # shape [n_dof, n_dof]
                         Winv_k = self.Winv[idx].to(self.complex_dtype)  # shape [n_dof]
                         
+                        # Debug print for specific BZ point
+                        if dh == 0 and dk == 1 and dl == 0:
+                            print(f"\n--- PyTorch Debug for BZ point (0,1,0) ---")
+                            print(f"BZ flat index: {idx}")
+                            print(f"V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
+                            print(f"Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
+                            print(f"V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.8e}")
+                            print(f"Winv_k[0]: {Winv_k[0].item():.8e}")
+                        
                         # Get q-indices for this k-vector point
                         q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
+                        
+                        # Debug print for specific BZ point
+                        if dh == 0 and dk == 1 and dl == 0:
+                            print(f"q_indices shape: {q_indices.shape}")
+                            if q_indices.numel() > 0:
+                                print(f"First few q_indices: {q_indices[:5].cpu().numpy()}")
                         
                         # Skip if no q-indices found
                         if q_indices.numel() == 0:
@@ -1721,7 +1736,7 @@ class OnePhonon:
                         # Compute structure factors for all ASUs in parallel
                         # Initialize F with the CORRECT high-precision complex dtype
                         F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
-                                      dtype=self.complex_dtype, device=self.device) # <--- FIXED DTYPE HERE
+                                      dtype=self.complex_dtype, device=self.device)
                         
                         # Process all ASUs with pre-computed data
                         for i_asu in range(self.n_asu):
@@ -1743,19 +1758,17 @@ class OnePhonon:
                             )
                             # Assign result to F slice with explicit dtype cast
                             F[:, i_asu, :] = sf_result.to(self.complex_dtype)
-                            # Assert F's dtype after assignment
-                            assert F.dtype == self.complex_dtype, f"F dtype after assignment (ASU {i_asu}) is {F.dtype}, expected {self.complex_dtype}"
                         
                         # Reshape for matrix operations
-                        F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu)) # complex128
-                        assert F.dtype == self.complex_dtype, f"Reshaped F dtype is {F.dtype}, expected {self.complex_dtype}"
+                        F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
+                        
+                        # Debug print for specific BZ point
+                        if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
+                            print(f"F shape: {F.shape}, dtype: {F.dtype}")
+                            print(f"F[0,0] (abs): {torch.abs(F[0,0]).item() if F.numel() > 0 else 'empty':.8e}")
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
-                            # Verify dtypes before matrix multiplication
-                            assert F.dtype == self.complex_dtype, f"F dtype is {F.dtype}, expected {self.complex_dtype}"
-                            assert V_k.dtype == self.complex_dtype, f"V_k dtype is {V_k.dtype}, expected {self.complex_dtype}"
-                            
                             # Compute F·V for all modes at once
                             FV = torch.matmul(F, V_k)
                             
@@ -1764,18 +1777,28 @@ class OnePhonon:
                             
                             # Extract real part of eigenvalues
                             real_winv = Winv_k.real if torch.is_complex(Winv_k) else Winv_k
-                            real_winv = real_winv.to(torch.float32)
+                            real_winv = real_winv.to(self.real_dtype)
+                            
+                            # Debug print for specific BZ point
+                            if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
+                                print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
+                                print(f"FV_abs_squared shape: {FV_abs_squared.shape}")
+                                print(f"real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}")
+                                print(f"FV[0,0] (abs): {torch.abs(FV[0,0]).item() if FV.numel() > 0 else 'empty':.8e}")
+                                print(f"FV_abs_squared[0,0]: {FV_abs_squared[0,0].item() if FV_abs_squared.numel() > 0 else 'empty':.8e}")
+                                print(f"real_winv[0]: {real_winv[0].item() if real_winv.numel() > 0 else 'empty':.8e}")
                             
                             # Weight by eigenvalues and sum
                             intensity_contribution = torch.sum(FV_abs_squared * real_winv, dim=1)
+                            
+                            # Debug print for specific BZ point
+                            if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
+                                print(f"intensity_contribution shape: {intensity_contribution.shape}")
+                                print(f"intensity_contribution[0]: {intensity_contribution[0].item() if intensity_contribution.numel() > 0 else 'empty':.8e}")
                         else:
                             # Get specific mode
                             V_k_rank = V_k[:, rank]
                             Winv_k_rank = Winv_k[rank]
-                            
-                            # Verify dtypes before matrix multiplication
-                            assert F.dtype == self.complex_dtype, f"F dtype is {F.dtype}, expected {self.complex_dtype}"
-                            assert V_k_rank.dtype == self.complex_dtype, f"V_k_rank dtype is {V_k_rank.dtype}, expected {self.complex_dtype}"
                             
                             # Compute FV for single mode
                             FV = torch.matmul(F, V_k_rank)
@@ -1785,7 +1808,7 @@ class OnePhonon:
                             
                             # Extract real part of eigenvalue
                             real_winv = Winv_k_rank.real if torch.is_complex(Winv_k_rank) else Winv_k_rank
-                            real_winv = real_winv.to(torch.float32)
+                            real_winv = real_winv.to(self.real_dtype)
                             
                             # Compute intensity
                             intensity_contribution = FV_abs_squared * real_winv
@@ -2072,11 +2095,6 @@ class OnePhonon:
         
         # Calculate flat indices: flat_idx = h_idx * (k_dim * l_dim) + k_idx * l_dim + l_idx
         flat_indices = h_indices * (k_dim * l_dim) + k_indices * l_dim + l_indices
-        
-        # Debug output for verification
-        if h_indices.numel() > 0:
-            print(f"_3d_to_flat_indices: Example conversion: h={h_indices[0]}, k={k_indices[0]}, l={l_indices[0]} -> flat_idx={flat_indices[0]}")
-        print(f"_3d_to_flat_indices: Converted 3D indices to flat indices with shape {flat_indices.shape}")
         
         return flat_indices
 

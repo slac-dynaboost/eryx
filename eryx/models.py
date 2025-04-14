@@ -566,8 +566,29 @@ class OnePhonon:
             for dk in range(self.ksampling[2]):
                 for dl in range(self.lsampling[2]):
 
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"\n--- NumPy Debug for BZ point (0,1,0) ---")
+                        print(f"V[0,1,0] shape: {self.V[0,1,0].shape}")
+                        print(f"Winv[0,1,0] shape: {self.Winv[0,1,0].shape}")
+                        print(f"V[0,1,0][0,0] (abs): {np.abs(self.V[0,1,0][0,0]):.8e}")
+                        print(f"Winv[0,1,0][0]: {self.Winv[0,1,0][0]:.8e}")
+                    
                     q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
+                    
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"q_indices shape: {q_indices.shape}")
+                        if q_indices.size > 0:
+                            print(f"First few q_indices: {q_indices[:5]}")
+                    
                     q_indices = q_indices[self.res_mask[q_indices]]
+                    
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"valid q_indices shape: {q_indices.shape}")
+                        if q_indices.size > 0:
+                            print(f"First few valid q_indices: {q_indices[:5]}")
 
                     F = np.zeros((q_indices.shape[0],
                                   self.n_asu,
@@ -588,11 +609,31 @@ class OnePhonon:
                             sum_over_atoms=False)
                     F = F.reshape((q_indices.shape[0],
                                    self.n_asu * self.n_dof_per_asu))
+                    
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0 and q_indices.size > 0:
+                        print(f"F shape: {F.shape}")
+                        print(f"F[0,0] (abs): {np.abs(F[0,0]):.8e}" if F.size > 0 else "F is empty")
 
                     if rank == -1:
-                        Id[q_indices] += np.dot(
-                            np.square(np.abs(np.dot(F, self.V[dh, dk, dl]))),
-                            self.Winv[dh, dk, dl])
+                        # Debug print for specific BZ point
+                        if dh == 0 and dk == 1 and dl == 0 and q_indices.size > 0:
+                            FV = np.dot(F, self.V[dh, dk, dl])
+                            FV_abs_squared = np.square(np.abs(FV))
+                            print(f"FV shape: {FV.shape}")
+                            print(f"FV_abs_squared shape: {FV_abs_squared.shape}")
+                            print(f"Winv shape: {self.Winv[dh, dk, dl].shape}")
+                            print(f"FV[0,0] (abs): {np.abs(FV[0,0]):.8e}" if FV.size > 0 else "FV is empty")
+                            print(f"FV_abs_squared[0,0]: {FV_abs_squared[0,0]:.8e}" if FV_abs_squared.size > 0 else "FV_abs_squared is empty")
+                            print(f"Winv[0]: {self.Winv[dh, dk, dl][0]:.8e}")
+                            intensity = np.dot(FV_abs_squared, self.Winv[dh, dk, dl])
+                            print(f"intensity shape: {intensity.shape}")
+                            print(f"intensity[0]: {intensity[0]:.8e}" if intensity.size > 0 else "intensity is empty")
+                            Id[q_indices] += intensity
+                        else:
+                            Id[q_indices] += np.dot(
+                                np.square(np.abs(np.dot(F, self.V[dh, dk, dl]))),
+                                self.Winv[dh, dk, dl])
                     else:
                         Id[q_indices] += np.square(
                             np.abs(np.dot(F, self.V[dh,dk,dl,:,rank]))) * \
