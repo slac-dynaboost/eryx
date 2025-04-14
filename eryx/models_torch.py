@@ -492,6 +492,10 @@ class OnePhonon:
             Mmat = self._project_M(M_allatoms)
             Mmat = Mmat.reshape((self.n_asu * self.n_dof_per_asu, self.n_asu * self.n_dof_per_asu))
             
+            # Debug print for reshaped Mmat
+            print(f"\nPyTorch reshaped Mmat shape: {Mmat.shape}")
+            print(f"PyTorch reshaped Mmat[0,0]: {Mmat[0,0].item()}")
+            
             # Robust regularization - single value that works
             eps = 1e-6
             eye = torch.eye(Mmat.shape[0], device=self.device, dtype=Mmat.dtype)
@@ -502,6 +506,7 @@ class OnePhonon:
                 # Try standard Cholesky decomposition first
                 L = torch.linalg.cholesky(Mmat_reg)
                 self.Linv = torch.linalg.inv(L)
+                print(f"PyTorch Cholesky L[0,0]: {L[0,0].item()}")
             except RuntimeError as e:
                 # Print diagnostic info
                 print(f"Cholesky decomposition failed: {e}")
@@ -514,12 +519,18 @@ class OnePhonon:
                     L = torch.linalg.cholesky(Mmat_reg)
                     self.Linv = torch.linalg.inv(L)
                     print("Succeeded with stronger regularization")
+                    print(f"PyTorch Cholesky L[0,0] (stronger reg): {L[0,0].item()}")
                 except RuntimeError:
                     # Final fallback to SVD approach
                     print("Falling back to SVD decomposition")
                     U, S, V = torch.linalg.svd(Mmat_reg, full_matrices=False)
                     S = torch.clamp(S, min=1e-8)
                     self.Linv = U @ torch.diag(1.0 / torch.sqrt(S)) @ V
+                    print(f"PyTorch SVD U[0,0]: {U[0,0].item()}, S[0]: {S[0].item()}")
+            
+            # Debug print for Linv
+            print(f"PyTorch Linv shape: {self.Linv.shape}")
+            print(f"PyTorch Linv[0,0]: {self.Linv[0,0].item()}")
             
             # Keep high precision
             # Do NOT convert back to float32
@@ -638,12 +649,18 @@ class OnePhonon:
         M_allatoms = M_block_diag.reshape(self.n_asu, self.n_dof_per_asu_actual,
                                         self.n_asu, self.n_dof_per_asu_actual)
         
+        # Debug prints for M_allatoms
+        print(f"\nPyTorch M_allatoms shape: {M_allatoms.shape}")
+        print(f"PyTorch M_allatoms diag[0:5]: {torch.diagonal(M_allatoms[0,:,0,:]).cpu().numpy()[0:5]}")
+        if M_allatoms.shape[0] > 1 and M_allatoms.shape[2] > 1:
+            print(f"PyTorch M_allatoms[0,0,1,0]: {M_allatoms[0,0,1,0].item()}")
+        
         # Set requires_grad
         M_allatoms.requires_grad_(True)
         
         return M_allatoms
     
-    ##@debug
+    #@debug
     def _project_M(self, M_allatoms: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
         """
         Project all-atom mass matrix M_0 using the A matrix: M = A.T M_0 A
@@ -676,6 +693,13 @@ class OnePhonon:
                     Amat[i_asu].T,
                     torch.matmul(M_allatoms[i_asu, :, j_asu, :], Amat[j_asu])
                 )
+        
+        # Debug prints for Mmat
+        print(f"\nPyTorch Mmat shape: {Mmat.shape}")
+        if Mmat.shape[0] > 0 and Mmat.shape[2] > 0:
+            print(f"PyTorch Mmat[0,0,0,0]: {Mmat[0,0,0,0].item()}")
+            if Mmat.shape[1] > 1 and Mmat.shape[3] > 1:
+                print(f"PyTorch Mmat[0,1,0,1]: {Mmat[0,1,0,1].item()}")
         
         return Mmat
     
