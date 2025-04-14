@@ -1296,6 +1296,9 @@ class OnePhonon:
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
                                dtype=self.complex_dtype, device=self.device)
         
+        # Define debug index for comparison
+        debug_idx = 1
+        
         # Get total number of k-vectors based on mode
         if getattr(self, 'use_arbitrary_q', False):
             total_points = self.q_grid.shape[0]
@@ -1330,53 +1333,106 @@ class OnePhonon:
         # Compute the Hessian matrix
         hessian = self.compute_hessian()
         
-        # Compute inverse K matrices for all k-vectors at once
-        # This is a batch operation for efficiency
-        Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
-        print(f"Kinv_all computation complete, shape = {Kinv_all.shape}")
-        print(f"Kinv_all requires_grad: {Kinv_all.requires_grad}")
-        print(f"Kinv_all.grad_fn: {Kinv_all.grad_fn}")
-        
-        # Debug print for specific k-vector
-        print_idx = 1  # Choose a non-zero index for detailed prints
-        if total_points > print_idx:
-            print(f"\n--- PyTorch Kinv Debug Index {print_idx} ---")
-            print(f"Kinv[{print_idx},0,0]: {Kinv_all[print_idx,0,0].item():.8e}")
-        
-        # Calculate phase factors and accumulate covariance contributions
-        for j_cell in range(self.n_cell):
-            # Get cell origin
-            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+        if getattr(self, 'use_arbitrary_q', False):
+            # Arbitrary-q mode
+            # Compute inverse K matrices for all k-vectors at once
+            # This is a batch operation for efficiency
+            Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
+            print(f"Kinv_all computation complete, shape = {Kinv_all.shape}")
+            print(f"Kinv_all requires_grad: {Kinv_all.requires_grad}")
+            print(f"Kinv_all.grad_fn: {Kinv_all.grad_fn}")
             
-            # Calculate phase factors for all k-vectors
-            all_phases = torch.sum(self.kvec * r_cell, dim=1)
+            # Debug print for specific k-vector
+            if total_points > debug_idx:
+                print(f"\n--- PyTorch Kinv Debug Index {debug_idx} ---")
+                print(f"DEBUG Arbitrary-Q: Kinv[{debug_idx}, 0, 0]: {Kinv_all[debug_idx,0,0].item():.8e}")
+                print(f"DEBUG Arbitrary-Q: Kinv[{debug_idx}, 5, 5]: {Kinv_all[debug_idx,5,5].item():.8e}")
             
-            # Use complex exponential with exact NumPy-compatible behavior
-            # eikr = exp(i * phase) = cos(phase) + i*sin(phase)
-            cos_phases = torch.cos(all_phases)
-            sin_phases = torch.sin(all_phases)
-            eikr_all = torch.complex(cos_phases, sin_phases)
-            
-            # Debug print for specific phase
-            if total_points > print_idx and j_cell < 3:
-                print(f"Cell {j_cell} phase[{print_idx}]: {all_phases[print_idx].item():.8e}")
-                print(f"Cell {j_cell} eikr[{print_idx}]: {eikr_all[print_idx].item()}")
-            
-            # Reshape phase factors for matrix multiplication
-            eikr_reshaped = eikr_all.view(-1, 1, 1)
-            
-            # Apply phase factors to Kinv for each k-vector and sum
-            complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
-            
-            # Debug print for accumulated sum
-            if j_cell < 3:
-                print(f"Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
-            
-            # Accumulate in covariance tensor
-            self.covar[:, j_cell, :] = complex_sum
+            # Calculate phase factors and accumulate covariance contributions
+            for j_cell in range(self.n_cell):
+                # Get cell origin
+                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+                
+                # Calculate phase factors for all k-vectors
+                all_phases = torch.sum(self.kvec * r_cell, dim=1)
+                
+                # Use complex exponential with exact NumPy-compatible behavior
+                # eikr = exp(i * phase) = cos(phase) + i*sin(phase)
+                cos_phases = torch.cos(all_phases)
+                sin_phases = torch.sin(all_phases)
+                eikr_all = torch.complex(cos_phases, sin_phases)
+                
+                # Debug print for specific phase
+                if total_points > debug_idx and j_cell < 3:
+                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, eikr[{debug_idx}]: {eikr_all[debug_idx].item()}")
+                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, phase[{debug_idx}]: {all_phases[debug_idx].item():.8e}")
+                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, r_cell: {r_cell.detach().cpu().numpy()}")
+                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, kvec[{debug_idx}]: {self.kvec[debug_idx].detach().cpu().numpy()}")
+                
+                # Reshape phase factors for matrix multiplication
+                eikr_reshaped = eikr_all.view(-1, 1, 1)
+                
+                # Apply phase factors to Kinv for each k-vector and sum
+                complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+                
+                # Debug print for accumulated sum
+                if j_cell < 3:
+                    print(f"Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
+                
+                # Accumulate in covariance tensor
+                self.covar[:, j_cell, :] = complex_sum
+        else:
+            # Grid-based mode
+            # Loop over Brillouin zone points
+            for dh in range(h_dim_bz):
+                for dk in range(k_dim_bz):
+                    for dl in range(l_dim_bz):
+                        # Calculate the flat Brillouin zone index
+                        idx = self._3d_to_flat_indices_bz(
+                            torch.tensor([dh], device=self.device, dtype=torch.long),
+                            torch.tensor([dk], device=self.device, dtype=torch.long),
+                            torch.tensor([dl], device=self.device, dtype=torch.long)
+                        ).item()
+                        
+                        # Get k-vector for this index
+                        kvec = self.kvec[idx]
+                        
+                        # Compute Kinv for this specific k-vector
+                        Kinv = gnm_torch.compute_Kinv(hessian, kvec.unsqueeze(0), reshape=False)[0]
+                        
+                        # Debug print for our chosen debug index
+                        if idx == debug_idx:
+                            print(f"\nDEBUG Grid Mode: Matched debug_idx={debug_idx} at (dh,dk,dl)=({dh},{dk},{dl})")
+                            print(f"DEBUG Grid Mode: Kinv[{debug_idx}, 0, 0]: {Kinv[0, 0].item():.8e}")
+                            print(f"DEBUG Grid Mode: Kinv[{debug_idx}, 5, 5]: {Kinv[5, 5].item():.8e}")
+                        
+                        # Process each cell
+                        for j_cell in range(self.n_cell):
+                            # Get cell origin
+                            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+                            
+                            # Calculate phase
+                            phase = torch.sum(kvec * r_cell)
+                            cos_phase = torch.cos(phase)
+                            sin_phase = torch.sin(phase)
+                            eikr = torch.complex(cos_phase, sin_phase)
+                            
+                            # Debug print for our chosen debug index
+                            if idx == debug_idx and j_cell < 3:
+                                print(f"DEBUG Grid Mode: Cell {j_cell}, eikr[{debug_idx}]: {eikr.item()}")
+                                print(f"DEBUG Grid Mode: Cell {j_cell}, phase[{debug_idx}]: {phase.item():.8e}")
+                                print(f"DEBUG Grid Mode: Cell {j_cell}, r_cell: {r_cell.detach().cpu().numpy()}")
+                                print(f"DEBUG Grid Mode: Cell {j_cell}, kvec[{debug_idx}]: {kvec.detach().cpu().numpy()}")
+                            
+                            # Accumulate contribution to covariance tensor
+                            self.covar[:, j_cell, :] += Kinv * eikr / total_points
         
         # Get reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
+        
+        # Debug print for final covar values
+        print(f"\nDEBUG {'Arbitrary-Q' if getattr(self, 'use_arbitrary_q', False) else 'Grid Mode'}: Final covar[0,0,0]: {self.covar[0, 0, 0].item()}")
+        print(f"DEBUG {'Arbitrary-Q' if getattr(self, 'use_arbitrary_q', False) else 'Grid Mode'}: Final covar[5,0,5]: {self.covar[5, 0, 5].item()}")
         
         # Extract diagonal elements for ADP calculation
         # Use .real attribute instead of torch.real() to preserve gradient flow
