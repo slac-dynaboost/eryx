@@ -28,7 +28,7 @@ class TestApplyDisorderEquivalence(unittest.TestCase):
     def setUp(self):
         """Set up test parameters and models."""
         # Use a small PDB file for testing
-        self.pdb_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pdbs", "5zck.pdb")
+        self.pdb_path = os.path.join(os.path.dirname(__file__), "pdbs", "5zck.pdb")
         
         # Use minimal sampling parameters for faster testing
         self.hsampling = [-1, 1, 2]  # min, max, steps
