@@ -25,11 +25,7 @@ class TestPhase1Precision(unittest.TestCase):
         # Define common parameters for both models
         # Try to find a suitable PDB file from the available ones in the repository
         possible_paths = [
-            os.path.join(os.path.dirname(__file__), 'pdbs', '193l.pdb'),
-            os.path.join(os.path.dirname(__file__), 'pdbs', '2ol9.pdb'),
             os.path.join(os.path.dirname(__file__), 'pdbs', '5zck.pdb'),
-            os.path.join(os.path.dirname(__file__), 'pdbs', '7n2h.pdb'),
-            os.path.join(os.path.dirname(__file__), 'pdbs', 'histidine.pdb')
         ]
         
         self.pdb_path = None
