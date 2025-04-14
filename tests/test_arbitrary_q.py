@@ -737,6 +737,14 @@ class TestArbitraryQVectors(TestBase):
         self.assertTrue(torch.all(result_3d == test_tensor_3d))
         self.assertEqual(result_3d.shape, test_tensor_3d.shape)
     
+    def test_Amat_equivalence(self):
+        """Test equivalence of the Amat calculation (_build_A)."""
+        self.run_method_equivalence_test('_build_A')
+        
+    def test_Linv_equivalence(self):
+        """Test equivalence of the Linv calculation (_build_M)."""
+        self.run_method_equivalence_test('_build_M')
+        
     def test_kvec_brillouin_equivalence(self):
         """Test equivalence of _build_kvec_Brillouin method."""
         self.run_method_equivalence_test('_build_kvec_Brillouin')
