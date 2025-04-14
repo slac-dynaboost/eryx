@@ -1702,6 +1702,17 @@ class OnePhonon:
                     # Add debug print for specific indices
                     if i < 3:  # Print first few indices for debugging
                         print(f"Arbitrary-q mode: idx={idx}, intensity[{i}]={intensity[i].item():.8e}")
+                    
+                    # Add detailed debug for specific q-indices that match the grid mode debug indices
+                    if 'debug_q_indices' in locals() and idx in debug_q_indices:
+                        print(f"\n--- Detailed Debug for Arbitrary-q mode at idx={idx} ---")
+                        print(f"V_rank shape: {V_rank.shape}, dtype: {V_rank.dtype}")
+                        print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
+                        print(f"F_i[0] (abs): {torch.abs(F_i[0]).item():.8e}")
+                        print(f"FV (abs): {torch.abs(FV).item():.8e}")
+                        print(f"FV_abs_squared: {FV_abs_squared.item():.8e}")
+                        print(f"real_winv: {real_winv_float64.item():.8e}")
+                        print(f"Final intensity: {intensity[i].item():.8e}")
             
             # Build full result array
             Id = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
@@ -1785,6 +1796,8 @@ class OnePhonon:
                             print(f"q_indices shape: {q_indices.shape}")
                             if q_indices.numel() > 0:
                                 print(f"First few q_indices: {q_indices[:5].cpu().numpy()}")
+                                # Store these indices for comparison with arbitrary-q mode
+                                debug_q_indices = q_indices[:5].cpu().numpy()
                         
                         # Skip if no q-indices found
                         if q_indices.numel() == 0:
@@ -1831,6 +1844,8 @@ class OnePhonon:
                         if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
                             print(f"F shape: {F.shape}, dtype: {F.dtype}")
                             print(f"F[0,0] (abs): {torch.abs(F[0,0]).item() if F.numel() > 0 else 'empty':.8e}")
+                            print(f"valid_indices shape: {valid_indices.shape}")
+                            print(f"First few valid_indices: {valid_indices[:5].cpu().numpy()}")
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
@@ -1852,6 +1867,13 @@ class OnePhonon:
                                 print(f"FV[0,0] (abs): {torch.abs(FV[0,0]).item() if FV.numel() > 0 else 'empty':.8e}")
                                 print(f"FV_abs_squared[0,0]: {FV_abs_squared[0,0].item() if FV_abs_squared.numel() > 0 else 'empty':.8e}")
                                 print(f"real_winv[0]: {real_winv[0].item() if real_winv.numel() > 0 else 'empty':.8e}")
+                                
+                                # Print a few more values for detailed comparison
+                                for i in range(min(5, FV.shape[1])):
+                                    print(f"  Grid mode: FV[0,{i}] (abs): {torch.abs(FV[0,i]).item():.8e}")
+                                    print(f"  Grid mode: FV_abs_squared[0,{i}]: {FV_abs_squared[0,i].item():.8e}")
+                                    print(f"  Grid mode: real_winv[{i}]: {real_winv[i].item():.8e}")
+                                    print(f"  Grid mode: contribution[0,{i}]: {(FV_abs_squared[0,i] * real_winv[i]).item():.8e}")
                             
                             # Weight by eigenvalues and sum
                             intensity_contribution = torch.sum(FV_abs_squared * real_winv, dim=1)
@@ -1860,6 +1882,7 @@ class OnePhonon:
                             if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
                                 print(f"intensity_contribution shape: {intensity_contribution.shape}")
                                 print(f"intensity_contribution[0]: {intensity_contribution[0].item() if intensity_contribution.numel() > 0 else 'empty':.8e}")
+                                print(f"Adding intensity to Id at indices: {valid_indices[:5].cpu().numpy()}")
                         else:
                             # Get specific mode
                             V_k_rank = V_k[:, rank]

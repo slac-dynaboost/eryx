@@ -22,7 +22,7 @@ except ImportError:
 
 class TestArbitraryQVectors(TestBase):
     """Test case for arbitrary q-vector input support."""
-    ATTRIBUTES_WITH_SHAPE_DIFF = {'kvec', 'kvec_norm', 'V', 'Winv'}
+    ATTRIBUTES_WITH_SHAPE_DIFF = {'kvec', 'kvec_norm', 'V', 'Winv', 'covar', 'ADP'}
     
     def setUp(self):
         """Set up test environment."""
