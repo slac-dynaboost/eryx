@@ -1161,7 +1161,7 @@ class OnePhonon:
         print_idx = 1  # Choose a non-zero index for detailed prints
         if total_points > print_idx: 
             print(f"\n--- PyTorch Debug Index {print_idx} ---")
-            # Print first element of the matrix at index print_idx
+            # Correctly index the Kmat_all tensor (5D) and then call .item()
             if Kmat_all.dim() >= 3:
                 print(f"PyTorch Kmat_all[{print_idx},0,0]: {Kmat_all[print_idx,0,0].item() if Kmat_all[print_idx,0,0].numel() == 1 else Kmat_all[print_idx,0,0][0,0].item():.8e}")
             else:
@@ -1195,6 +1195,9 @@ class OnePhonon:
         
         print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
         print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
+        
+        # Initialize v_all before the try block to avoid UnboundLocalError
+        v_all = None
         
         # Try to use eigh first (more stable for Hermitian matrices)
         Dmat_all_hermitian = 0.5 * (Dmat_all + Dmat_all.transpose(-2, -1).conj())
@@ -1255,12 +1258,16 @@ class OnePhonon:
         # Convert Winv to complex_dtype *after* calculation
         self.Winv = winv_all.to(dtype=self.complex_dtype)
         
-        # Get right singular vectors v from Vh (v = Vh^H)
-        v_all = Vh_all.transpose(-2, -1).conj()  # Should be complex128
-        
-        # Transform eigenvectors V = L^(-T) @ v
-        # Perform the batched matmul: V = Linv_T_batch @ v_all
-        self.V = torch.bmm(Linv_T_batch, v_all)
+        # Ensure v_all is assigned before using it
+        if v_all is not None:
+            # Transform eigenvectors V = L^(-T) @ v
+            # Perform the batched matmul: V = Linv_T_batch @ v_all
+            self.V = torch.bmm(Linv_T_batch, v_all)
+        else:
+            # This case should ideally not happen if eigh/svd worked
+            print("ERROR: v_all was not assigned during eigendecomposition!")
+            # Assign zeros or raise error? Assigning zeros for now.
+            self.V = torch.zeros_like(self.V)
         
         # Set requires_grad for tensors
         self.V.requires_grad_(True)
