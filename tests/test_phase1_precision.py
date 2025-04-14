@@ -23,12 +23,23 @@ class TestPhase1Precision(unittest.TestCase):
     def setUp(self):
         """Set up test parameters."""
         # Define common parameters for both models
-        self.pdb_path = os.path.join(os.path.dirname(__file__), 'data', 'test_structure.pdb')
-        if not os.path.exists(self.pdb_path):
-            # Use a fallback path for testing
-            self.pdb_path = os.path.join(os.path.dirname(__file__), '..', 'examples', 'data', '1ubq.pdb')
-            if not os.path.exists(self.pdb_path):
-                raise FileNotFoundError(f"Could not find test PDB file at {self.pdb_path}")
+        # Try to find a suitable PDB file from the available ones in the repository
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), 'pdbs', '193l.pdb'),
+            os.path.join(os.path.dirname(__file__), 'pdbs', '2ol9.pdb'),
+            os.path.join(os.path.dirname(__file__), 'pdbs', '5zck.pdb'),
+            os.path.join(os.path.dirname(__file__), 'pdbs', '7n2h.pdb'),
+            os.path.join(os.path.dirname(__file__), 'pdbs', 'histidine.pdb')
+        ]
+        
+        self.pdb_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.pdb_path = path
+                break
+                
+        if self.pdb_path is None:
+            raise FileNotFoundError(f"Could not find any suitable PDB file for testing")
         
         # Define sampling parameters
         self.hsampling = [-4, 4, 3]
