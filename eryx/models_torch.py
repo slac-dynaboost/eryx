@@ -1372,19 +1372,12 @@ class OnePhonon:
                 # Reshape phase factors for matrix multiplication
                 eikr_reshaped = eikr_all.view(-1, 1, 1)
                 
-                # Apply phase factors to Kinv for each k-vector and sum
-                complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
-                
-                # Divide by the number of k-points to get the average
-                num_k_points = Kinv_all.shape[0]  # Get the number of k-points from the batch dimension
-                if num_k_points > 0:
-                    average_contribution = complex_sum / num_k_points
-                else:
-                    average_contribution = complex_sum  # Avoid division by zero if Kinv_all is empty
+                # Calculate the average contribution across all k-points for this cell offset
+                # using torch.mean over the batch dimension (dim=0)
+                average_contribution = torch.mean(Kinv_all * eikr_reshaped, dim=0)
                 
                 # Debug print for accumulated sum
                 if j_cell < 3:
-                    print(f"Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
                     print(f"Cell {j_cell} average_contribution[0,0]: {average_contribution[0,0].item()}")
                 
                 # Accumulate in covariance tensor
