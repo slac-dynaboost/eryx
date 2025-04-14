@@ -110,18 +110,18 @@ def run_arbitrary_q_mode(
         
         # Explicitly calculate phonon modes (skipped during initialization in arbitrary q-vector mode)
         logging.info("Explicitly calculating phonon modes for arbitrary q-vector mode...")
-        try:
-            # Calculate phonon modes (eigenvectors and eigenvalues)
-            model_arb_q.compute_gnm_phonons()
-            logging.info("Phonon modes calculated successfully.")
-            
-            # Check if covariance matrix method exists and call it if available
-            if hasattr(model_arb_q, 'compute_covariance_matrix'):
-                model_arb_q.compute_covariance_matrix()
-                logging.info("Covariance matrix calculated successfully.")
-        except Exception as e:
-            logging.error(f"Error during explicit phonon calculation: {e}")
-            logging.warning("Continuing execution, but intensity values may be incorrect.")
+#        try:
+#            # Calculate phonon modes (eigenvectors and eigenvalues)
+#            model_arb_q.compute_gnm_phonons()
+#            logging.info("Phonon modes calculated successfully.")
+#            
+#            # Check if covariance matrix method exists and call it if available
+#            if hasattr(model_arb_q, 'compute_covariance_matrix'):
+#                model_arb_q.compute_covariance_matrix()
+#                logging.info("Covariance matrix calculated successfully.")
+#        except Exception as e:
+#            logging.error(f"Error during explicit phonon calculation: {e}")
+#            logging.warning("Continuing execution, but intensity values may be incorrect.")
         
         logging.info("Model initialized. Calculating intensity...")
         

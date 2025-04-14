@@ -388,11 +388,8 @@ class OnePhonon:
         
         if model == 'gnm':
             # Skip full phonon computation in arbitrary mode for now
-            if getattr(self, 'use_arbitrary_q', False):
-                logging.debug("[_setup_phonons] Skipping full phonon computation in arbitrary q-vector mode")
-            else:
-                self.compute_gnm_phonons()
-                self.compute_covariance_matrix()
+            self.compute_gnm_phonons()
+            self.compute_covariance_matrix()
         else:
             self.compute_rb_phonons()
         
