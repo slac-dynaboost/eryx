@@ -1262,9 +1262,23 @@ class OnePhonon:
 
         # Ensure v_all is assigned before using it
         if v_all is not None:
+             # --- Debug V Calculation ---
+             if total_points > print_idx:
+                 # Print absolute value for comparison consistency
+                 print(f"PyTorch v_all[{print_idx},0,0] (abs): {torch.abs(v_all[print_idx,0,0]).item():.8e}")
+                 print(f"PyTorch Linv_T_batch[{print_idx},0,0]: {Linv_T_batch[print_idx,0,0].item():.8e}")
+             # --- End Debug V ---
+
              # Transform eigenvectors V = L^(-T) @ v
              # Perform the batched matmul: V = Linv_T_batch @ v_all
-             self.V = torch.bmm(Linv_T_batch, v_all) # complex128
+             # Ensure both operands are complex128 before bmm
+             self.V = torch.bmm(Linv_T_batch.to(self.complex_dtype), v_all.to(self.complex_dtype)) # complex128
+             
+             # --- Debug Final V ---
+             if total_points > print_idx:
+                 # Print absolute value for comparison consistency
+                 print(f"PyTorch Final V[{print_idx},0,0] (abs): {torch.abs(self.V[print_idx,0,0]).item():.8e}")
+             # --- End Debug Final V ---
         else:
              # This case should ideally not happen if eigh/svd worked
              print("ERROR: v_all was not assigned during eigendecomposition!")
