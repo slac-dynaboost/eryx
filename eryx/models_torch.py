@@ -1403,8 +1403,8 @@ class OnePhonon:
                     n_processes=self.n_processes, compute_qF=True,
                     project_on_components=project, sum_over_atoms=False
                 )
-                # Assign result to F slice
-                F[:, i_asu, :] = sf_result
+                # Assign result to F slice with explicit dtype cast
+                F[:, i_asu, :] = sf_result.to(self.complex_dtype)
                 # Assert F's dtype after assignment
                 assert F.dtype == self.complex_dtype, f"F dtype after assignment (ASU {i_asu}) is {F.dtype}, expected {self.complex_dtype}"
             
@@ -1415,15 +1415,15 @@ class OnePhonon:
             # Apply disorder model depending on rank parameter
             if rank == -1:
                 # Get eigenvectors and eigenvalues for all valid points
-                V_valid = self.V[valid_indices]  # shape: [n_valid, n_dof, n_dof]
-                Winv_valid = self.Winv[valid_indices]  # shape: [n_valid, n_dof]
+                V_valid = self.V[valid_indices].to(self.complex_dtype)  # shape: [n_valid, n_dof, n_dof]
+                Winv_valid = self.Winv[valid_indices].to(self.complex_dtype)  # shape: [n_valid, n_dof]
                 
                 # Process each point
                 intensity = torch.zeros(valid_indices.numel(), device=self.device, dtype=self.real_dtype)
                 for i, idx in enumerate(valid_indices):
                     # Get eigenvectors and eigenvalues for this q-vector
-                    V_idx = V_valid[i]
-                    Winv_idx = Winv_valid[i]
+                    V_idx = V_valid[i].to(self.complex_dtype)
+                    Winv_idx = Winv_valid[i].to(self.complex_dtype)
                     
                     # Always ensure F has the correct complex dtype before matmul with V
                     F_i = F[i]
@@ -1536,8 +1536,8 @@ class OnePhonon:
                         ).item()
                         
                         # Get phonon modes for this k-vector
-                        V_k = self.V[idx]  # shape [n_dof, n_dof]
-                        Winv_k = self.Winv[idx]  # shape [n_dof]
+                        V_k = self.V[idx].to(self.complex_dtype)  # shape [n_dof, n_dof]
+                        Winv_k = self.Winv[idx].to(self.complex_dtype)  # shape [n_dof]
                         
                         # Get q-indices for this k-vector point
                         q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
@@ -1577,8 +1577,8 @@ class OnePhonon:
                                 n_processes=self.n_processes, compute_qF=True,
                                 project_on_components=project, sum_over_atoms=False
                             )
-                            # Assign result to F slice
-                            F[:, i_asu, :] = sf_result
+                            # Assign result to F slice with explicit dtype cast
+                            F[:, i_asu, :] = sf_result.to(self.complex_dtype)
                             # Assert F's dtype after assignment
                             assert F.dtype == self.complex_dtype, f"F dtype after assignment (ASU {i_asu}) is {F.dtype}, expected {self.complex_dtype}"
                         
