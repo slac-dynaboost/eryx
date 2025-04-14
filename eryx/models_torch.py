@@ -1595,7 +1595,7 @@ class OnePhonon:
                     real_winv = self.Winv[idx, rank].to(dtype=torch.float32)
                 
                 # Compute weighted intensity - ensure real output
-                weighted_intensity = FV_abs_squared * real_winv
+                weighted_intensity = FV_abs_squared * real_winv.to(dtype=self.real_dtype)
                 Id.index_add_(0, valid_indices, weighted_intensity)
         
         # Apply resolution mask
