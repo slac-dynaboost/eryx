@@ -550,11 +550,14 @@ class OnePhonon:
             
             # Debug print for Linv
             print(f"PyTorch Linv shape: {self.Linv.shape}")
+            print(f"PyTorch Linv dtype: {self.Linv.dtype}")
             print(f"PyTorch Linv[0,0]: {self.Linv[0,0].item()}")
+            
+            # Ensure Linv is float64 (real_dtype)
+            self.Linv = self.Linv.to(dtype=self.real_dtype)
             
             # Keep high precision
             # Do NOT convert back to float32
-            self.Linv = self.Linv.to(dtype=self.complex_dtype)
             self.Linv.requires_grad_(True)
     
     #@debug
