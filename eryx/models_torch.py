@@ -1937,6 +1937,16 @@ class OnePhonon:
                                     print(f"--- GRID MODE (idx={idx}, q_idx={target_q_idx}, pos={pos}) ---")
                                     print(f"F shape: {F.shape}, dtype: {F.dtype}")
                                     print(f"F[{pos}, 0] (abs): {torch.abs(F[pos, 0]).item():.6e}")
+                                    
+                                    # Add detailed input prints for structure_factors
+                                    for i_asu in range(self.n_asu):
+                                        print(f"  GRID MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
+                                        q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
+                                        print(f"    q_vector: {q_for_sf.cpu().numpy()}")
+                                        print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].cpu().numpy()}")
+                                        print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e}")
+                                        print(f"    ADP[0]: {ADP[0].item():.6e}")
+                                        print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e}")
                                 else:
                                     print(f"--- GRID MODE (idx={idx}): target_q_idx={target_q_idx} not found in valid_indices for this BZ point.")
                             
