@@ -1143,111 +1143,88 @@ class OnePhonon:
         # Initialize v_all *outside* the try block
         v_all = None
         
-        # Make Dmat_all exactly Hermitian to match NumPy behavior
-        Dmat_all_hermitian = 0.5 * (Dmat_all + Dmat_all.transpose(-2, -1).conj())
-        
-        try:
-            # Use eigh for Hermitian matrices - matches NumPy behavior exactly
-            w_sq, v_all = torch.linalg.eigh(Dmat_all_hermitian)
-            # --- Debug Print Start ---
-            if total_points > print_idx: 
-                print(f"PyTorch w_sq (eigh): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
-            # --- Debug Print End -----
-        except torch.linalg.LinAlgError:
-            # Fallback to SVD if eigh fails
-            print(f"Warning: PyTorch eigh failed for {total_points} matrices, falling back to SVD")
-            U_all, S_all, Vh_all = torch.linalg.svd(Dmat_all_hermitian, full_matrices=False)
-            w_sq = S_all
-            v_all = Vh_all.transpose(-2, -1).conj()
-            if total_points > print_idx: 
-                print(f"PyTorch w_sq (SVD): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
-        
-        # Calculate w = sqrt(S), ensure non-negative input
-        # Use exactly the same precision and clamping as NumPy
-        w = torch.sqrt(torch.clamp(w_sq, min=0.0).to(self.real_dtype))
-        
-        # --- Debug Print Start ---
-        if total_points > print_idx: 
-            print(f"PyTorch w: min={w[print_idx].min().item():.8e}, max={w[print_idx].max().item():.8e}")
-        # --- Debug Print End -----
-        
-        # Apply NaN thresholding based on w < 1e-6 - exactly match NumPy behavior
-        eps = 1e-6
-        nan_tensor = torch.tensor(float('nan'), device=w.device, dtype=self.real_dtype)
-        w_processed = torch.where(w < eps, nan_tensor, w)
-        
-        # --- Debug Print Start ---
-        import numpy as np
-        w_processed_np = w_processed.cpu().detach().numpy()
-        if total_points > print_idx: 
-            print(f"PyTorch w_proc: min={np.nanmin(w_processed_np[print_idx]):.8e}, max={np.nanmax(w_processed_np[print_idx]):.8e}, nans={torch.sum(torch.isnan(w_processed[print_idx])).item()}")
-        # --- Debug Print End -----
-        
-        # Calculate Winv = 1.0 / w_processed**2
-        # Square first, then divide - exactly match NumPy behavior
-        w_processed_sq = torch.square(w_processed)
-        
-        # --- Debug Print Start ---
-        w_processed_sq_np = w_processed_sq.cpu().detach().numpy()
-        if total_points > print_idx: 
-            print(f"PyTorch w_proc_sq: min={np.nanmin(w_processed_sq_np[print_idx]):.8e}, max={np.nanmax(w_processed_sq_np[print_idx]):.8e}")
-        # --- Debug Print End -----
-        
-        # Handle division by zero exactly like NumPy - NaN propagation
-        # Don't use clamp here to match NumPy behavior exactly
-        winv_all = torch.zeros_like(w_processed_sq)
-        valid_mask = ~torch.isnan(w_processed_sq) & (w_processed_sq > 0)
-        winv_all[valid_mask] = 1.0 / w_processed_sq[valid_mask]
-        winv_all[~valid_mask] = float('nan')
-        
-        # --- Debug Print Start ---
-        winv_all_np = winv_all.cpu().detach().numpy()
-        if total_points > print_idx: 
-            print(f"PyTorch winv_all: min={np.nanmin(winv_all_np[print_idx]):.8e}, max={np.nanmax(winv_all_np[print_idx]):.8e}, nans={torch.sum(torch.isnan(winv_all[print_idx])).item()}")
-        # --- Debug Print End -----
-        
-        # Convert Winv to complex_dtype *after* calculation
-        self.Winv = winv_all.to(dtype=self.complex_dtype)
+        print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
+        print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
 
-        # Ensure v_all is assigned before using it
-        if v_all is not None:
-             # --- Debug V Calculation ---
-             if total_points > print_idx:
-                 # Print absolute value for comparison consistency
-                 print(f"PyTorch v_all[{print_idx},0,0] (abs): {torch.abs(v_all[print_idx,0,0]).item():.8e}")
-                 # Print from self.Linv which is float64
-                 print(f"PyTorch self.Linv.T[0,0]: {self.Linv.T[0,0].item():.8e}") 
-                 print(f"PyTorch v_all dtype: {v_all.dtype}")
-             # --- End Debug V ---
+        eigenvalues_all_list = []
+        eigenvectors_detached_list = [] # Store detached eigenvectors
 
-             # --- Start OPTION B Implementation ---
-             # Transform eigenvectors V = L^(-H) @ v using manual complex multiplication
-             # Get Linv.T as float64 (real_dtype) - for real matrices T and H are the same
-             Linv_T_batch_real = self.Linv.T.unsqueeze(0).expand(total_points, -1, -1) # Shape: [batch, N, N], dtype: float64
+        # Process each matrix individually
+        for i in range(total_points):
+            D_i = Dmat_all[i]
+            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
 
-             # Separate real and imaginary parts of v_all (which is complex128)
-             v_all_real = v_all.real.to(self.real_dtype) # Shape: [batch, N, N], dtype: float64
-             v_all_imag = v_all.imag.to(self.real_dtype) # Shape: [batch, N, N], dtype: float64
+            # 1. Get eigenvectors WITHOUT gradient tracking using eigh
+            with torch.no_grad():
+                try:
+                    # We only need the eigenvectors (v_i) here
+                    _, v_i_no_grad = torch.linalg.eigh(D_i_hermitian)
+                except torch._C._LinAlgError as e:
+                     print(f"Warning: eigh failed for matrix {i} in no_grad context. Using identity. Error: {e}")
+                     n_dof = D_i_hermitian.shape[0]
+                     v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
 
-             # Perform multiplications: Linv.T is real, so (L.T @ v_real) + i*(L.T @ v_imag)
-             V_real = torch.bmm(Linv_T_batch_real, v_all_real) # float64 @ float64 -> float64
-             V_imag = torch.bmm(Linv_T_batch_real, v_all_imag) # float64 @ float64 -> float64
+            # Flip eigenvectors to match descending eigenvalue order later
+            v_flipped_no_grad = torch.flip(v_i_no_grad, dims=[-1])
+            eigenvectors_detached_list.append(v_flipped_no_grad)
 
-             # Combine back to complex128
-             self.V = torch.complex(V_real, V_imag)
-             # --- End OPTION B Implementation ---
-             
-             # --- Debug Final V ---
-             if total_points > print_idx:
-                 # Print absolute value for comparison consistency
-                 print(f"PyTorch Final V[{print_idx},0,0] (abs): {torch.abs(self.V[print_idx,0,0]).item():.8e}")
-                 print(f"PyTorch Final V dtype: {self.V.dtype}")
-             # --- End Debug Final V ---
-        else:
-             # This case should ideally not happen if eigh/svd worked
-             print("ERROR: v_all was not assigned during eigendecomposition!")
-             # Assign zeros or raise error? Assigning zeros for now.
-             self.V = torch.zeros_like(self.V)
+            # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
+            current_eigenvalues = []
+            n_modes = v_i_no_grad.shape[1]
+            for mode_idx in range(n_modes):
+                # Use the DETACHED eigenvector from the no_grad calculation
+                v_mode_no_grad = v_i_no_grad[:, mode_idx:mode_idx+1] # Shape [n_dof, 1]
+                # Calculate lambda = v.H @ D @ v (This IS differentiable w.r.t D_i)
+                # Use the original D_i (which has grad info), not D_i_hermitian if grads matter
+                lambda_mode = torch.matmul(torch.matmul(v_mode_no_grad.H, D_i), v_mode_no_grad)
+                # Result should be real, take real part for safety & correct dtype
+                current_eigenvalues.append(lambda_mode[0, 0].real)
+
+            eigenvalues_tensor = torch.stack(current_eigenvalues) # Real eigenvalues
+
+            # 3. Process eigenvalues (thresholding, flipping)
+            eps = 1e-6
+            eigenvalues_processed = torch.where(
+                eigenvalues_tensor < eps,
+                torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
+                eigenvalues_tensor
+            )
+            # Flip eigenvalues to match descending order (as SVD would give)
+            eigenvalues_processed_flipped = torch.flip(eigenvalues_processed, dims=[-1])
+            eigenvalues_all_list.append(eigenvalues_processed_flipped)
+
+        # Stack results
+        eigenvalues_all = torch.stack(eigenvalues_all_list)  # Differentiable eigenvalues
+        v_all_detached = torch.stack(eigenvectors_detached_list) # Non-differentiable eigenvectors
+
+        print(f"Recomputed eigenvalues using eigh complete")
+        print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}") # Should be True
+        print(f"v_all_detached requires_grad: {v_all_detached.requires_grad}") # Should be False
+
+        # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
+        self.V = torch.matmul(
+            Linv_complex.H.unsqueeze(0).expand(total_points, -1, -1),
+            v_all_detached # Use the detached eigenvectors here
+        )
+
+        # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
+        eps_div = 1e-8
+        winv_all = torch.where(
+            torch.isnan(eigenvalues_all),
+            torch.tensor(float('nan'), device=eigenvalues_all.device, dtype=self.real_dtype),
+            1.0 / (eigenvalues_all + eps_div)
+        )
+        self.Winv = winv_all.to(dtype=self.complex_dtype) # Cast to complex
+
+        # Ensure requires_grad is set correctly
+        self.V.requires_grad_(False) # Explicitly set V to not require grad
+        if not self.Winv.requires_grad and eigenvalues_all.requires_grad:
+             self.Winv = self.Winv + 0 * eigenvalues_all.sum().to(self.complex_dtype) # Reconnect if needed
+             self.Winv.requires_grad_(True)
+
+        print(f"V requires_grad: {self.V.requires_grad}")
+        print(f"Winv requires_grad: {self.Winv.requires_grad}")
+        print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
         
         # Set requires_grad for tensors
         self.V.requires_grad_(True)
