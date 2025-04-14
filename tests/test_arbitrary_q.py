@@ -796,11 +796,12 @@ class TestArbitraryQVectors(TestBase):
             comparison_passed = False
 
         # Compare V using projection matrices P = V @ V.H
-        print(f"\nComparing V via projection matrix P = V @ V.H using tolerances: {tolerances}")
+        print(f"\nComparing V via projection matrix P = V @ V.conj().T using tolerances: {tolerances}") # Corrected print statement
         try:
-            # Calculate projection matrices (ensure complex conjugate transpose .H)
-            grid_P = V_grid @ V_grid.H
-            q_P = V_q_subset @ V_q_subset.H
+            # Calculate projection matrices (ensure complex conjugate transpose)
+            # Use .transpose(-1, -2).conj() instead of .H for batched matrices
+            grid_P = V_grid @ V_grid.transpose(-1, -2).conj() # MODIFIED
+            q_P = V_q_subset @ V_q_subset.transpose(-1, -2).conj() # MODIFIED
 
             TensorComparison.assert_tensors_equal(
                 grid_P, q_P, equal_nan=True, **tolerances, # Use equal_nan for safety
