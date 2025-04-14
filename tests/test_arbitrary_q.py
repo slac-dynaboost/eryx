@@ -9,7 +9,7 @@ import os
 import unittest
 import torch
 import numpy as np
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 
 from tests.test_base import TestBase
 from eryx.models_torch import OnePhonon
