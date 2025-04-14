@@ -1427,8 +1427,10 @@ class OnePhonon:
                     Winv_idx = Winv_valid[i]
                     
                     # Always ensure F has the correct complex dtype before matmul with V
-                    F_i = F[i].to(dtype=self.complex_dtype)
-                    
+                    F_i = F[i]
+                    assert F_i.dtype == self.complex_dtype, f"F_i dtype is {F_i.dtype}, expected {self.complex_dtype}"
+                    assert V_idx.dtype == self.complex_dtype, f"V_idx dtype is {V_idx.dtype}, expected {self.complex_dtype}"
+                
                     # Compute F·V for all modes at once
                     FV = torch.matmul(F_i, V_idx)
                     
@@ -1454,8 +1456,10 @@ class OnePhonon:
                     V_rank = self.V[idx, :, rank]
                     
                     # Always ensure F has the correct complex dtype before matmul with V
-                    F_i = F[i].to(dtype=self.complex_dtype)
-                    
+                    F_i = F[i]
+                    assert F_i.dtype == self.complex_dtype, f"F_i dtype is {F_i.dtype}, expected {self.complex_dtype}"
+                    assert V_rank.dtype == self.complex_dtype, f"V_rank dtype is {V_rank.dtype}, expected {self.complex_dtype}"
+                
                     # Compute FV
                     FV = torch.matmul(F_i, V_rank)
                     
@@ -1586,8 +1590,9 @@ class OnePhonon:
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
-                            # Always ensure F has the correct complex dtype before matmul with V
-                            F = F.to(dtype=self.complex_dtype)
+                            # Verify dtypes before matrix multiplication
+                            assert F.dtype == self.complex_dtype, f"F dtype is {F.dtype}, expected {self.complex_dtype}"
+                            assert V_k.dtype == self.complex_dtype, f"V_k dtype is {V_k.dtype}, expected {self.complex_dtype}"
                             
                             # Compute F·V for all modes at once
                             FV = torch.matmul(F, V_k)
@@ -1606,8 +1611,9 @@ class OnePhonon:
                             V_k_rank = V_k[:, rank]
                             Winv_k_rank = Winv_k[rank]
                             
-                            # Always ensure F has the correct complex dtype before matmul with V
-                            F = F.to(dtype=self.complex_dtype)
+                            # Verify dtypes before matrix multiplication
+                            assert F.dtype == self.complex_dtype, f"F dtype is {F.dtype}, expected {self.complex_dtype}"
+                            assert V_k_rank.dtype == self.complex_dtype, f"V_k_rank dtype is {V_k_rank.dtype}, expected {self.complex_dtype}"
                             
                             # Compute FV for single mode
                             FV = torch.matmul(F, V_k_rank)

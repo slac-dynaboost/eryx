@@ -135,6 +135,215 @@ class TestKvectorMethods(TestBase):
         self.verify_required_logs(self.module_name, "_center_kvec", [])
         self.verify_required_logs(self.module_name, "_at_kvec_from_miller_points", [])
 #
+class TestTorchKVector(TestBase):
+    """Test the indexing functions in the PyTorch implementation."""
+    
+    def setUp(self):
+        # Call parent setUp
+        super().setUp()
+        # Create a minimal model for testing indexing functions
+        self.model = self._create_minimal_model()
+    
+    def _create_minimal_model(self):
+        """Create a minimal model with just the attributes needed for indexing tests."""
+        from eryx.models_torch import OnePhonon
+        
+        model = OnePhonon.__new__(OnePhonon)  # Create instance without calling __init__
+        
+        # Set basic attributes needed for indexing functions
+        model.device = self.device
+        model.hsampling = [-2, 2, 2]  # min, max, sampling
+        model.ksampling = [-3, 3, 3]  # min, max, sampling
+        model.lsampling = [-4, 4, 4]  # min, max, sampling
+        
+        # Calculate map_shape based on sampling parameters
+        h_steps = int(model.hsampling[2] * (model.hsampling[1] - model.hsampling[0]) + 1)
+        k_steps = int(model.ksampling[2] * (model.ksampling[1] - model.ksampling[0]) + 1)
+        l_steps = int(model.lsampling[2] * (model.lsampling[1] - model.lsampling[0]) + 1)
+        model.map_shape = (h_steps, k_steps, l_steps)
+        
+        # Set use_arbitrary_q flag to False for grid-based mode
+        model.use_arbitrary_q = False
+        
+        return model
+    
+    def test_flat_to_3d_indices(self):
+        """Test conversion from flat indices to 3D indices."""
+        # Test cases: flat_idx, expected (h, k, l)
+        test_cases = [
+            (0, (0, 0, 0)),  # Origin
+            (1, (0, 0, 1)),  # Next in l dimension
+            (model.map_shape[2], (0, 1, 0)),  # Next in k dimension
+            (model.map_shape[1] * model.map_shape[2], (1, 0, 0)),  # Next in h dimension
+            (model.map_shape[1] * model.map_shape[2] - 1, (0, model.map_shape[1]-1, model.map_shape[2]-1)),  # Last in first h-plane
+            (model.map_shape[0] * model.map_shape[1] * model.map_shape[2] - 1, 
+             (model.map_shape[0]-1, model.map_shape[1]-1, model.map_shape[2]-1))  # Last element
+        ]
+        
+        for flat_idx, expected in test_cases:
+            with self.subTest(f"flat_idx={flat_idx}, expected={expected}"):
+                # Convert to tensor
+                flat_tensor = torch.tensor([flat_idx], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                h_indices, k_indices, l_indices = self.model._flat_to_3d_indices(flat_tensor)
+                
+                # Convert to tuples for comparison
+                result = (h_indices.item(), k_indices.item(), l_indices.item())
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"flat_to_3d_indices failed: got {result}, expected {expected}")
+    
+    def test_3d_to_flat_indices(self):
+        """Test conversion from 3D indices to flat indices."""
+        # Test cases: (h, k, l), expected flat_idx
+        test_cases = [
+            ((0, 0, 0), 0),  # Origin
+            ((0, 0, 1), 1),  # Next in l dimension
+            ((0, 1, 0), model.map_shape[2]),  # Next in k dimension
+            ((1, 0, 0), model.map_shape[1] * model.map_shape[2]),  # Next in h dimension
+            ((model.map_shape[0]-1, model.map_shape[1]-1, model.map_shape[2]-1), 
+             model.map_shape[0] * model.map_shape[1] * model.map_shape[2] - 1)  # Last element
+        ]
+        
+        for indices, expected in test_cases:
+            with self.subTest(f"indices={indices}, expected={expected}"):
+                # Convert to tensors
+                h_tensor = torch.tensor([indices[0]], device=self.device, dtype=torch.long)
+                k_tensor = torch.tensor([indices[1]], device=self.device, dtype=torch.long)
+                l_tensor = torch.tensor([indices[2]], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                flat_indices = self.model._3d_to_flat_indices(h_tensor, k_tensor, l_tensor)
+                
+                # Get result
+                result = flat_indices.item()
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"3d_to_flat_indices failed: got {result}, expected {expected}")
+    
+    def test_flat_to_3d_indices_bz(self):
+        """Test conversion from flat indices to 3D indices in Brillouin zone."""
+        # Get BZ dimensions
+        h_dim_bz = int(self.model.hsampling[2])
+        k_dim_bz = int(self.model.ksampling[2])
+        l_dim_bz = int(self.model.lsampling[2])
+        
+        # Test cases: flat_idx, expected (h, k, l)
+        test_cases = [
+            (0, (0, 0, 0)),  # Origin
+            (1, (0, 0, 1)),  # Next in l dimension
+            (l_dim_bz, (0, 1, 0)),  # Next in k dimension
+            (k_dim_bz * l_dim_bz, (1, 0, 0)),  # Next in h dimension
+            (h_dim_bz * k_dim_bz * l_dim_bz - 1, 
+             (h_dim_bz-1, k_dim_bz-1, l_dim_bz-1))  # Last element
+        ]
+        
+        for flat_idx, expected in test_cases:
+            with self.subTest(f"flat_idx={flat_idx}, expected={expected}"):
+                # Convert to tensor
+                flat_tensor = torch.tensor([flat_idx], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                h_indices, k_indices, l_indices = self.model._flat_to_3d_indices_bz(flat_tensor)
+                
+                # Convert to tuples for comparison
+                result = (h_indices.item(), k_indices.item(), l_indices.item())
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"flat_to_3d_indices_bz failed: got {result}, expected {expected}")
+    
+    def test_3d_to_flat_indices_bz(self):
+        """Test conversion from 3D indices to flat indices in Brillouin zone."""
+        # Get BZ dimensions
+        h_dim_bz = int(self.model.hsampling[2])
+        k_dim_bz = int(self.model.ksampling[2])
+        l_dim_bz = int(self.model.lsampling[2])
+        
+        # Test cases: (h, k, l), expected flat_idx
+        test_cases = [
+            ((0, 0, 0), 0),  # Origin
+            ((0, 0, 1), 1),  # Next in l dimension
+            ((0, 1, 0), l_dim_bz),  # Next in k dimension
+            ((1, 0, 0), k_dim_bz * l_dim_bz),  # Next in h dimension
+            ((h_dim_bz-1, k_dim_bz-1, l_dim_bz-1), 
+             h_dim_bz * k_dim_bz * l_dim_bz - 1)  # Last element
+        ]
+        
+        for indices, expected in test_cases:
+            with self.subTest(f"indices={indices}, expected={expected}"):
+                # Convert to tensors
+                h_tensor = torch.tensor([indices[0]], device=self.device, dtype=torch.long)
+                k_tensor = torch.tensor([indices[1]], device=self.device, dtype=torch.long)
+                l_tensor = torch.tensor([indices[2]], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                flat_indices = self.model._3d_to_flat_indices_bz(h_tensor, k_tensor, l_tensor)
+                
+                # Get result
+                result = flat_indices.item()
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"3d_to_flat_indices_bz failed: got {result}, expected {expected}")
+    
+    def test_batch_indexing(self):
+        """Test batch processing of indices."""
+        # Create batch of flat indices
+        flat_indices = torch.tensor([0, 1, 2, 10, 20], device=self.device, dtype=torch.long)
+        
+        # Test batch conversion to 3D indices
+        h_indices, k_indices, l_indices = self.model._flat_to_3d_indices(flat_indices)
+        
+        # Test batch conversion back to flat indices
+        flat_indices_back = self.model._3d_to_flat_indices(h_indices, k_indices, l_indices)
+        
+        # Verify round-trip conversion
+        torch.testing.assert_close(flat_indices, flat_indices_back, 
+                                  msg="Batch round-trip conversion failed")
+        
+        # Same for BZ indices
+        h_indices_bz, k_indices_bz, l_indices_bz = self.model._flat_to_3d_indices_bz(flat_indices)
+        flat_indices_bz_back = self.model._3d_to_flat_indices_bz(h_indices_bz, k_indices_bz, l_indices_bz)
+        
+        # Verify BZ round-trip conversion
+        torch.testing.assert_close(flat_indices, flat_indices_bz_back, 
+                                  msg="BZ batch round-trip conversion failed")
+    
+    def test_arbitrary_q_mode(self):
+        """Test indexing functions in arbitrary q-vector mode."""
+        # Create a model in arbitrary q-vector mode
+        model = self._create_minimal_model()
+        model.use_arbitrary_q = True
+        
+        # Create sample q-vectors
+        q_vectors = torch.tensor([
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+            [0.7, 0.8, 0.9]
+        ], device=self.device)
+        model.q_vectors = q_vectors
+        
+        # Test flat_to_3d_indices in arbitrary mode (should be identity)
+        flat_indices = torch.tensor([0, 1, 2], device=self.device, dtype=torch.long)
+        h_indices, k_indices, l_indices = model._flat_to_3d_indices(flat_indices)
+        
+        # All should be the same as input in arbitrary mode
+        torch.testing.assert_close(flat_indices, h_indices, 
+                                  msg="flat_to_3d_indices should return input for h in arbitrary mode")
+        torch.testing.assert_close(flat_indices, k_indices, 
+                                  msg="flat_to_3d_indices should return input for k in arbitrary mode")
+        torch.testing.assert_close(flat_indices, l_indices, 
+                                  msg="flat_to_3d_indices should return input for l in arbitrary mode")
+        
+        # Test 3d_to_flat_indices in arbitrary mode (should be identity for h_indices)
+        flat_indices_back = model._3d_to_flat_indices(h_indices, k_indices, l_indices)
+        torch.testing.assert_close(flat_indices, flat_indices_back, 
+                                  msg="3d_to_flat_indices should return h_indices in arbitrary mode")
+
 class TestOnePhononKvector(TestKvectorMethods):
     """Legacy class for backward compatibility."""
     

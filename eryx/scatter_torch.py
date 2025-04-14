@@ -182,8 +182,12 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
         A_real = torch.sum(A_real, dim=1)
         A_imag = torch.sum(A_imag, dim=1)
     
+    # Ensure A_real and A_imag are float64 before creating complex tensor
+    A_real = A_real.to(dtype=torch.float64)
+    A_imag = A_imag.to(dtype=torch.float64)
+    
     # Return complex structure factors with high precision
-    return torch.complex(A_real, A_imag).to(dtype=torch.complex128)
+    return torch.complex(A_real, A_imag)
 
 def structure_factors(q_grid: torch.Tensor, xyz: torch.Tensor, 
                      ff_a: torch.Tensor, ff_b: torch.Tensor, ff_c: torch.Tensor, 
