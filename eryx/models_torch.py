@@ -1379,9 +1379,12 @@ class OnePhonon:
             total_points = self.q_grid.shape[0]
             print(f"Computing covariance matrix for {total_points} arbitrary q-vectors")
         else:
-            h_dim, k_dim, l_dim = self.map_shape
-            total_points = h_dim * k_dim * l_dim
-            print(f"Computing covariance matrix for {total_points} grid points")
+            # Use Brillouin zone dimensions to match NumPy implementation exactly
+            h_dim_bz = int(self.hsampling[2])
+            k_dim_bz = int(self.ksampling[2])
+            l_dim_bz = int(self.lsampling[2])
+            total_points = h_dim_bz * k_dim_bz * l_dim_bz
+            print(f"Computing covariance matrix for {total_points} grid points based on BZ sampling")
         
         # Import helper functions for complex tensor operations
         from eryx.torch_utils import ComplexTensorOps
@@ -1412,6 +1415,12 @@ class OnePhonon:
         print(f"Kinv_all requires_grad: {Kinv_all.requires_grad}")
         print(f"Kinv_all.grad_fn: {Kinv_all.grad_fn}")
         
+        # Debug print for specific k-vector
+        print_idx = 1  # Choose a non-zero index for detailed prints
+        if total_points > print_idx:
+            print(f"\n--- PyTorch Kinv Debug Index {print_idx} ---")
+            print(f"Kinv[{print_idx},0,0]: {Kinv_all[print_idx,0,0].item():.8e}")
+        
         # Calculate phase factors and accumulate covariance contributions
         for j_cell in range(self.n_cell):
             # Get cell origin
@@ -1420,14 +1429,26 @@ class OnePhonon:
             # Calculate phase factors for all k-vectors
             all_phases = torch.sum(self.kvec * r_cell, dim=1)
             
-            # Use direct complex exponential to ensure gradient flow
-            eikr_all = torch.exp(torch.complex(torch.zeros_like(all_phases), all_phases))
+            # Use complex exponential with exact NumPy-compatible behavior
+            # eikr = exp(i * phase) = cos(phase) + i*sin(phase)
+            cos_phases = torch.cos(all_phases)
+            sin_phases = torch.sin(all_phases)
+            eikr_all = torch.complex(cos_phases, sin_phases)
+            
+            # Debug print for specific phase
+            if total_points > print_idx and j_cell < 3:
+                print(f"Cell {j_cell} phase[{print_idx}]: {all_phases[print_idx].item():.8e}")
+                print(f"Cell {j_cell} eikr[{print_idx}]: {eikr_all[print_idx].item()}")
             
             # Reshape phase factors for matrix multiplication
             eikr_reshaped = eikr_all.view(-1, 1, 1)
             
             # Apply phase factors to Kinv for each k-vector and sum
             complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+            
+            # Debug print for accumulated sum
+            if j_cell < 3:
+                print(f"Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
             
             # Accumulate in covariance tensor
             self.covar[:, j_cell, :] = complex_sum
@@ -1440,27 +1461,48 @@ class OnePhonon:
         diagonal_values = torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1)
         self.ADP = diagonal_values.real
         
+        # Debug print for diagonal values
+        print(f"Diagonal values shape: {diagonal_values.shape}")
+        print(f"First few diagonal values: {diagonal_values[:5].detach().cpu().numpy()}")
+        
         # Transform ADP using the displacement projection matrix
         Amat = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu)
         self.ADP = torch.matmul(Amat, self.ADP)
         
+        # Debug print after Amat transformation
+        print(f"ADP after Amat transform shape: {self.ADP.shape}")
+        print(f"First few ADP values after transform: {self.ADP[:5].detach().cpu().numpy()}")
+        
         # Sum over spatial dimensions (x,y,z)
         self.ADP = torch.sum(self.ADP.reshape(int(self.ADP.shape[0] / 3), 3), dim=1)
         
-        # Scale ADP to match experimental values
+        # Debug print after spatial sum
+        print(f"ADP after spatial sum shape: {self.ADP.shape}")
+        print(f"First few ADP values after spatial sum: {self.ADP[:5].detach().cpu().numpy()}")
+        
+        # Scale ADP to match experimental values - exactly match NumPy behavior
         model_adp_tensor = self.array_to_tensor(self.model.adp)
-        # Use a safe mean calculation that handles NaN values
+        
+        # Handle NaN values exactly like NumPy
         valid_adp = self.ADP[~torch.isnan(self.ADP)]
         if valid_adp.numel() > 0:
+            # Calculate mean of valid values only
             adp_mean = torch.mean(valid_adp)
+            # Calculate scaling factor exactly as in NumPy
             ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
         else:
             # Fallback if all values are NaN
-            ADP_scale = torch.tensor(1.0, device=self.device)
+            ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
+        
+        # Debug print for scaling
+        print(f"ADP scaling factor: {ADP_scale.item():.8e}")
         
         # Apply scaling to ADP and covariance matrix
         self.ADP = self.ADP * ADP_scale
         self.covar = self.covar * ADP_scale
+        
+        # Debug print after scaling
+        print(f"ADP after scaling, first few values: {self.ADP[:5].detach().cpu().numpy()}")
         
         # Reshape covariance matrix to final format
         # Use .real attribute instead of torch.real() to preserve gradient flow
