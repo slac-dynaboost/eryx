@@ -1736,7 +1736,9 @@ class OnePhonon:
                         print(f"Arbitrary-q mode: idx={idx}, intensity[{i}]={intensity[i].item():.8e}")
                     
                     # Add detailed debug for specific q-indices that match the grid mode debug indices
-                    if 'debug_q_indices' in locals() and idx in debug_q_indices:
+                    # Check if debug_q_indices exists in globals or locals before using it
+                    debug_q_indices = globals().get('debug_q_indices', locals().get('debug_q_indices', []))
+                    if idx in debug_q_indices:
                         print(f"\n--- Detailed Debug for Arbitrary-q mode at idx={idx} ---")
                         print(f"V_rank shape: {V_rank.shape}, dtype: {V_rank.dtype}")
                         print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
