@@ -1687,11 +1687,22 @@ class OnePhonon:
                         for i_asu in range(self.n_asu):
                             print(f"  ARB-Q MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
                             q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
-                            print(f"    q_vector: {q_for_sf.cpu().numpy()}")
-                            print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].cpu().numpy()}")
-                            print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e}")
-                            print(f"    ADP[0]: {ADP[0].item():.6e}")
-                            print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e}")
+                            print(f"    q_vector: {q_for_sf.detach().cpu().numpy()} (dtype: {q_for_sf.dtype})")
+                            print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].detach().cpu().numpy()} (dtype: {asu_data[i_asu]['xyz'].dtype})")
+                            print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_a'].dtype})")
+                            print(f"    ff_b[0,0]: {asu_data[i_asu]['ff_b'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_b'].dtype})")
+                            print(f"    ff_c[0]: {asu_data[i_asu]['ff_c'][0].item():.6e} (dtype: {asu_data[i_asu]['ff_c'].dtype})")
+                            # ADP might not require grad if use_data_adp=True, use .item() which works for both
+                            # Ensure ADP tensor has at least one element before indexing
+                            if ADP.numel() > 0:
+                                print(f"    ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype})")
+                            else:
+                                print(f"    ADP: (empty or None)")
+                            # Ensure project tensor exists and has elements before indexing
+                            if asu_data[i_asu]['project'] is not None and asu_data[i_asu]['project'].numel() > 0:
+                                print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e} (dtype: {asu_data[i_asu]['project'].dtype})")
+                            else:
+                                print(f"    project: (empty or None)")
                     
                     # Always ensure F has the correct complex dtype before matmul with V
                     F_i = F[i]
