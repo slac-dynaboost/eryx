@@ -1382,8 +1382,12 @@ class OnePhonon:
                 # Accumulate in covariance tensor
                 self.covar[:, j_cell, :] = complex_sum
         else:
-            # Grid-based mode
-            # Loop over Brillouin zone points
+            # Grid-based mode - Revised to match arbitrary-q mode structure
+            # First compute all Kinv matrices for all BZ points
+            Kinv_bz = []
+            kvec_bz = [] # Store the kvecs corresponding to BZ indices
+            
+            # Loop over Brillouin zone points to collect all Kinv values
             for dh in range(h_dim_bz):
                 for dk in range(k_dim_bz):
                     for dl in range(l_dim_bz):
@@ -1396,37 +1400,54 @@ class OnePhonon:
                         
                         # Get k-vector for this index
                         kvec = self.kvec[idx]
+                        kvec_bz.append(kvec)
                         
                         # Compute Kinv for this specific k-vector
                         Kinv = gnm_torch.compute_Kinv(hessian, kvec.unsqueeze(0), reshape=False)[0]
+                        Kinv_bz.append(Kinv)
                         
                         # Debug print for our chosen debug index
                         if idx == debug_idx:
-                            print(f"\nDEBUG Grid Mode: Matched debug_idx={debug_idx} at (dh,dk,dl)=({dh},{dk},{dl})")
-                            print(f"DEBUG Grid Mode: Kinv[{debug_idx}, 0, 0]: {Kinv[0, 0].item():.8e}")
-                            print(f"DEBUG Grid Mode: Kinv[{debug_idx}, 5, 5]: {Kinv[5, 5].item():.8e}")
-                        
-                        # Process each cell
-                        for j_cell in range(self.n_cell):
-                            # Get cell origin
-                            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
-                            
-                            # Calculate phase
-                            phase = torch.sum(kvec * r_cell)
-                            cos_phase = torch.cos(phase)
-                            sin_phase = torch.sin(phase)
-                            eikr = torch.complex(cos_phase, sin_phase)
-                            
-                            # Debug print for our chosen debug index
-                            if idx == debug_idx and j_cell < 3:
-                                print(f"DEBUG Grid Mode: Cell {j_cell}, eikr[{debug_idx}]: {eikr.item()}")
-                                print(f"DEBUG Grid Mode: Cell {j_cell}, phase[{debug_idx}]: {phase.item():.8e}")
-                                print(f"DEBUG Grid Mode: Cell {j_cell}, r_cell: {r_cell.detach().cpu().numpy()}")
-                                print(f"DEBUG Grid Mode: Cell {j_cell}, kvec[{debug_idx}]: {kvec.detach().cpu().numpy()}")
-                            
-                            # Accumulate contribution to covariance tensor
-                            # No division by total_points to match arbitrary-q mode behavior
-                            self.covar[:, j_cell, :] += Kinv * eikr
+                            print(f"\nDEBUG Grid Mode (Revised): Matched debug_idx={debug_idx} at (dh,dk,dl)=({dh},{dk},{dl})")
+                            print(f"DEBUG Grid Mode (Revised): Kinv[{debug_idx}, 0, 0]: {Kinv[0, 0].item():.8e}")
+                            print(f"DEBUG Grid Mode (Revised): Kinv[{debug_idx}, 5, 5]: {Kinv[5, 5].item():.8e}")
+
+            # Stack all Kinv and kvec values
+            Kinv_all_bz = torch.stack(Kinv_bz) # Shape [total_k_points_bz, n_dof, n_dof]
+            kvec_all_bz = torch.stack(kvec_bz) # Shape [total_k_points_bz, 3]
+            
+            print(f"Grid Mode (Revised) Kinv_all_bz shape = {Kinv_all_bz.shape}")
+            
+            # Calculate phase factors and accumulate covariance contributions (like arbitrary-q mode)
+            for j_cell in range(self.n_cell):
+                # Get cell origin
+                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+                
+                # Calculate phase factors for all k-vectors
+                all_phases = torch.sum(kvec_all_bz * r_cell, dim=1)
+                cos_phases = torch.cos(all_phases)
+                sin_phases = torch.sin(all_phases)
+                eikr_all = torch.complex(cos_phases, sin_phases)
+                
+                # Debug print for specific phase
+                if total_points > debug_idx and j_cell < 3:
+                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, eikr[{debug_idx}]: {eikr_all[debug_idx].item()}")
+                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, phase[{debug_idx}]: {all_phases[debug_idx].item():.8e}")
+                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, r_cell: {r_cell.detach().cpu().numpy()}")
+                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, kvec[{debug_idx}]: {kvec_all_bz[debug_idx].detach().cpu().numpy()}")
+                
+                # Reshape phase factors for matrix multiplication
+                eikr_reshaped = eikr_all.view(-1, 1, 1)
+                
+                # Sum over the BZ points (dim=0)
+                complex_sum = torch.sum(Kinv_all_bz * eikr_reshaped, dim=0)
+                
+                # Debug print for accumulated sum
+                if j_cell < 3:
+                    print(f"Grid Mode (Revised) Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
+                
+                # Accumulate in covariance tensor (no division by total_points)
+                self.covar[:, j_cell, :] = complex_sum
         
         # Get reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
@@ -1740,6 +1761,9 @@ class OnePhonon:
                             print(f"Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
                             print(f"V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.8e}")
                             print(f"Winv_k[0]: {Winv_k[0].item():.8e}")
+                            
+                            # Additional debug info for comparison with arbitrary-q mode
+                            print(f"kvec for BZ point (0,1,0): {self.kvec[idx].detach().cpu().numpy()}")
                         
                         # Get q-indices for this k-vector point
                         q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
