@@ -173,11 +173,11 @@ class TestTorchKVector(TestBase):
         test_cases = [
             (0, (0, 0, 0)),  # Origin
             (1, (0, 0, 1)),  # Next in l dimension
-            (model.map_shape[2], (0, 1, 0)),  # Next in k dimension
-            (model.map_shape[1] * model.map_shape[2], (1, 0, 0)),  # Next in h dimension
-            (model.map_shape[1] * model.map_shape[2] - 1, (0, model.map_shape[1]-1, model.map_shape[2]-1)),  # Last in first h-plane
-            (model.map_shape[0] * model.map_shape[1] * model.map_shape[2] - 1, 
-             (model.map_shape[0]-1, model.map_shape[1]-1, model.map_shape[2]-1))  # Last element
+            (self.model.map_shape[2], (0, 1, 0)),  # Next in k dimension
+            (self.model.map_shape[1] * self.model.map_shape[2], (1, 0, 0)),  # Next in h dimension
+            (self.model.map_shape[1] * self.model.map_shape[2] - 1, (0, self.model.map_shape[1]-1, self.model.map_shape[2]-1)),  # Last in first h-plane
+            (self.model.map_shape[0] * self.model.map_shape[1] * self.model.map_shape[2] - 1, 
+             (self.model.map_shape[0]-1, self.model.map_shape[1]-1, self.model.map_shape[2]-1))  # Last element
         ]
         
         for flat_idx, expected in test_cases:
@@ -201,10 +201,10 @@ class TestTorchKVector(TestBase):
         test_cases = [
             ((0, 0, 0), 0),  # Origin
             ((0, 0, 1), 1),  # Next in l dimension
-            ((0, 1, 0), model.map_shape[2]),  # Next in k dimension
-            ((1, 0, 0), model.map_shape[1] * model.map_shape[2]),  # Next in h dimension
-            ((model.map_shape[0]-1, model.map_shape[1]-1, model.map_shape[2]-1), 
-             model.map_shape[0] * model.map_shape[1] * model.map_shape[2] - 1)  # Last element
+            ((0, 1, 0), self.model.map_shape[2]),  # Next in k dimension
+            ((1, 0, 0), self.model.map_shape[1] * self.model.map_shape[2]),  # Next in h dimension
+            ((self.model.map_shape[0]-1, self.model.map_shape[1]-1, self.model.map_shape[2]-1), 
+             self.model.map_shape[0] * self.model.map_shape[1] * self.model.map_shape[2] - 1)  # Last element
         ]
         
         for indices, expected in test_cases:
