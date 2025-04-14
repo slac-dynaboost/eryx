@@ -3,6 +3,7 @@ import os
 import torch
 import numpy as np
 from eryx.models_torch import OnePhonon
+from eryx.models import OnePhonon as OnePhononNumPy
 from eryx.autotest.torch_testing import TorchTesting
 from eryx.autotest.logger import Logger
 from eryx.autotest.functionmapping import FunctionMapping
@@ -88,6 +89,126 @@ class TestOnePhononMatrixConstruction(unittest.TestCase):
                            "Results don't match ground truth")
 
     # Test removed due to failures
+
+class TestNumPyMatrixComparison(unittest.TestCase):
+    """Test to compare NumPy and PyTorch matrix construction and eigendecomposition."""
+    
+    def test_compare_matrix_construction(self):
+        """Compare matrix construction between NumPy and PyTorch implementations."""
+        # Create a small test PDB file path
+        pdb_path = "tests/data/1sar.pdb"
+        if not os.path.exists(pdb_path):
+            self.skipTest(f"Test PDB file {pdb_path} not found")
+        
+        # Initialize both models with identical parameters
+        np_model = OnePhononNumPy(
+            pdb_path,
+            hsampling=[-1, 1, 2],
+            ksampling=[-1, 1, 2],
+            lsampling=[-1, 1, 2],
+            expand_p1=True,
+            group_by='asu'
+        )
+        
+        torch_model = OnePhonon(
+            pdb_path,
+            hsampling=[-1, 1, 2],
+            ksampling=[-1, 1, 2],
+            lsampling=[-1, 1, 2],
+            expand_p1=True,
+            group_by='asu',
+            device=torch.device('cpu')
+        )
+        
+        # Add NumPy debug prints to match PyTorch prints
+        print("\n--- NumPy Matrix Construction Debug ---")
+        
+        # Debug M_allatoms
+        M_allatoms_np = np_model._build_M_allatoms()
+        print(f"NumPy M_allatoms shape: {M_allatoms_np.shape}")
+        print(f"NumPy M_allatoms diag[0:5]: {np.diagonal(M_allatoms_np[0,:,0,:])[0:5]}")
+        if M_allatoms_np.shape[0] > 1 and M_allatoms_np.shape[2] > 1:
+            print(f"NumPy M_allatoms[0,0,1,0]: {M_allatoms_np[0,0,1,0]}")
+        
+        # Debug Mmat from _project_M
+        Mmat_np = np_model._project_M(M_allatoms_np)
+        print(f"\nNumPy Mmat shape: {Mmat_np.shape}")
+        if Mmat_np.shape[0] > 0 and Mmat_np.shape[2] > 0:
+            print(f"NumPy Mmat[0,0,0,0]: {Mmat_np[0,0,0,0]}")
+            if Mmat_np.shape[1] > 1 and Mmat_np.shape[3] > 1:
+                print(f"NumPy Mmat[0,1,0,1]: {Mmat_np[0,1,0,1]}")
+        
+        # Debug reshaped Mmat and Linv from _build_M
+        Mmat_reshaped_np = Mmat_np.reshape((np_model.n_asu * np_model.n_dof_per_asu, 
+                                           np_model.n_asu * np_model.n_dof_per_asu))
+        print(f"\nNumPy reshaped Mmat shape: {Mmat_reshaped_np.shape}")
+        print(f"NumPy reshaped Mmat[0,0]: {Mmat_reshaped_np[0,0]}")
+        
+        # Force NumPy model to build Linv
+        np_model._build_M()
+        print(f"NumPy Linv shape: {np_model.Linv.shape}")
+        print(f"NumPy Linv[0,0]: {np_model.Linv[0,0]}")
+        
+        # Compare eigendecomposition for a specific k-vector
+        print("\n--- Eigendecomposition Comparison ---")
+        
+        # Compute phonons for both models
+        np_model.compute_gnm_phonons()
+        
+        # Print debug info for index 1 (to match PyTorch debug prints)
+        print("\n--- NumPy Debug Index 1 ---")
+        # Get the hessian
+        hessian_np = np_model.compute_hessian()
+        
+        # Compute K matrix for index 1
+        kvec_idx1 = np_model.kvec[1]
+        Kmat_np = np_model.compute_gnm_K(hessian_np, kvec=kvec_idx1)
+        print(f"NumPy Kmat[1,0,0,0,0]: {Kmat_np[0,0,0,0]}")
+        
+        # Reshape K matrix
+        dof_total = np_model.n_asu * np_model.n_dof_per_asu
+        Kmat_2d_np = Kmat_np.reshape(dof_total, dof_total)
+        
+        # Compute D matrix
+        Linv_np = np_model.Linv
+        Dmat_np = np.matmul(Linv_np, np.matmul(Kmat_2d_np, Linv_np.T))
+        print(f"NumPy Dmat[1,0,0]: {Dmat_np[0,0]}")
+        
+        # Get eigenvalues and eigenvectors
+        w_sq_np, v_np = np.linalg.eigh(Dmat_np)
+        print(f"NumPy w_sq (eigh): min={np.min(w_sq_np):.8e}, max={np.max(w_sq_np):.8e}")
+        
+        # Calculate w
+        w_np = np.sqrt(np.maximum(0.0, w_sq_np))
+        print(f"NumPy w: min={np.min(w_np):.8e}, max={np.max(w_np):.8e}")
+        
+        # Apply NaN thresholding
+        eps = 1e-6
+        w_processed_np = np.where(w_np < eps, np.nan, w_np)
+        print(f"NumPy w_proc: min={np.nanmin(w_processed_np):.8e}, max={np.nanmax(w_processed_np):.8e}, nans={np.sum(np.isnan(w_processed_np))}")
+        
+        # Calculate w_processed_sq
+        w_processed_sq_np = np.square(w_processed_np)
+        print(f"NumPy w_proc_sq: min={np.nanmin(w_processed_sq_np):.8e}, max={np.nanmax(w_processed_sq_np):.8e}")
+        
+        # Calculate winv_all
+        winv_all_np = 1.0 / np.maximum(eps**2, w_processed_sq_np)
+        print(f"NumPy winv_all: min={np.nanmin(winv_all_np):.8e}, max={np.nanmax(winv_all_np):.8e}, nans={np.sum(np.isnan(winv_all_np))}")
+        
+        # Print v_all and Linv.T for comparison
+        print(f"NumPy v_all[0,0] (abs): {np.abs(v_np[0,0]):.8e}")
+        print(f"NumPy Linv.T[0,0]: {Linv_np.T[0,0]:.8e}")
+        
+        # Calculate final V
+        V_np = np.matmul(Linv_np.T, v_np)
+        print(f"NumPy Final V[0,0] (abs): {np.abs(V_np[0,0]):.8e}")
+        
+        # Compare with PyTorch model
+        print("\n--- Comparison Summary ---")
+        print(f"NumPy Linv[0,0]: {np_model.Linv[0,0]}")
+        print(f"PyTorch Linv[0,0]: {torch_model.Linv[0,0].item()}")
+        
+        # This test doesn't assert anything - it just prints debug info for comparison
 
 if __name__ == '__main__':
     unittest.main()
