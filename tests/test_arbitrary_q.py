@@ -970,33 +970,65 @@ class TestArbitraryQVectors(TestBase):
 
 
         # --- 2. Execute Prerequisites ---
-        print("Executing prerequisite methods...")
+        print("Ensuring prerequisites are met for target method...")
+        # __init__ already calls _setup, _build_A, _build_M, _build_kvec_Brillouin via _setup_phonons
+
+        # Define prerequisites for later methods
+        prerequisites = {
+            'compute_covariance_matrix': ['compute_gnm_phonons'],
+            'apply_disorder': ['compute_gnm_phonons', 'compute_covariance_matrix']
+            # Add more if other methods have specific runtime dependencies not covered by __init__
+        }
+
+        # Determine methods to run before the target
+        methods_to_run = []
         try:
-            # Use the class constant METHOD_EXECUTION_ORDER
             target_index = self.METHOD_EXECUTION_ORDER.index(target_method_name)
+            # Collect all methods from the beginning up to *before* the target
+            required_by_order = self.METHOD_EXECUTION_ORDER[:target_index]
+
+            # Check explicit prerequisites for the target method
+            explicit_prereqs = prerequisites.get(target_method_name, [])
+
+            # Combine and ensure unique methods are run in the correct order
+            # We only need to explicitly call methods *not* already run by __init__
+            # or by prerequisites of earlier methods in the chain.
+            # For GNM model, __init__ runs up to compute_covariance_matrix if model='gnm'.
+            # Let's explicitly call compute_gnm_phonons and compute_covariance_matrix
+            # if they appear before the target method in the execution order.
+
+            methods_to_explicitly_run = []
+            if 'compute_gnm_phonons' in required_by_order:
+                methods_to_explicitly_run.append('compute_gnm_phonons')
+            if 'compute_covariance_matrix' in required_by_order:
+                # Ensure compute_gnm_phonons is also run if needed
+                if 'compute_gnm_phonons' not in methods_to_explicitly_run:
+                    methods_to_explicitly_run.append('compute_gnm_phonons')
+                methods_to_explicitly_run.append('compute_covariance_matrix')
+
+            print(f"  Methods to explicitly run before '{target_method_name}': {methods_to_explicitly_run}")
+
+            # Execute these methods on both models
+            for method_name in methods_to_explicitly_run:
+                print(f"  Running prerequisite: {method_name}...")
+                if not hasattr(model_grid, method_name) or not hasattr(model_q, method_name):
+                    print(f"    Skipping {method_name} - not found on one or both models.")
+                    continue
+                try:
+                    print(f"    Executing {method_name} on model_grid...")
+                    getattr(model_grid, method_name)()
+                    print(f"    Executing {method_name} on model_q...")
+                    getattr(model_q, method_name)()
+                    print(f"    {method_name} executed successfully on both models.")
+                except Exception as e:
+                    self.fail(f"Error executing prerequisite method '{method_name}': {e}")
+
         except ValueError:
             self.fail(f"Target method '{target_method_name}' not found in defined METHOD_EXECUTION_ORDER.")
+        except Exception as e:
+            self.fail(f"Error during prerequisite execution setup: {e}")
 
-        for i, method_name in enumerate(self.METHOD_EXECUTION_ORDER):
-            if i >= target_index:
-                print(f"  Reached target method index. Stopping prerequisite execution.")
-                break  # Stop before executing the target method
-
-            print(f"  Running prerequisite: {method_name}...")
-            # Check if methods exist before calling
-            if not hasattr(model_grid, method_name) or not hasattr(model_q, method_name):
-                print(f"    Skipping prerequisite {method_name} - not found on one or both models.")
-                continue
-
-            try:
-                # Execute on both models
-                print(f"    Executing {method_name} on model_grid...")
-                getattr(model_grid, method_name)()
-                print(f"    Executing {method_name} on model_q...")
-                getattr(model_q, method_name)()
-                print(f"    {method_name} executed successfully on both models.")
-            except Exception as e:
-                self.fail(f"Error executing prerequisite method '{method_name}': {e}")
+        # --- Prerequisite execution complete ---
 
         # --- 3. Execute Target Method ---
         print(f"Executing target method: {target_method_name}...")
