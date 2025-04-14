@@ -1438,8 +1438,14 @@ class OnePhonon:
                     # Get mode for this q-vector
                     V_rank = self.V[idx, :, rank]
                     
+                    # Ensure F has the correct complex dtype before matmul with V
+                    if F[i].dtype != self.complex_dtype:
+                        F_i = F[i].to(dtype=self.complex_dtype)
+                    else:
+                        F_i = F[i]
+                    
                     # Compute FV
-                    FV = torch.matmul(F[i], V_rank)
+                    FV = torch.matmul(F_i, V_rank)
                     
                     # Calculate absolute squared value
                     FV_abs_squared = torch.abs(FV)**2
