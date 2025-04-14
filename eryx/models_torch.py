@@ -1054,8 +1054,13 @@ class OnePhonon:
         
         The eigenvalues (Winv) and eigenvectors (V) are stored for intensity calculation.
         """
-        debug_idx = 1 # Index to print detailed debug info for (e.g., BZ index 1)
-        print(f"\n[compute_gnm_phonons] DEBUG_IDX set to: {debug_idx}")
+        # --- Modifications for Debugging ---
+        DEBUG_IDX_BZ = 1 # Corresponds to BZ index (0,0,1) in 2x2x2 grid
+        DEBUG_IDX_FULL = 9 # Corresponding full grid index (based on previous mapping)
+        debug_data_grid = {}
+        debug_data_arbq = {}
+        print(f"\n[compute_gnm_phonons] DEBUG_IDX_BZ={DEBUG_IDX_BZ}, DEBUG_IDX_FULL={DEBUG_IDX_FULL}")
+        # --- End Modifications ---
 
         # Compute the Hessian matrix first (works for both modes)
         hessian = self.compute_hessian()
@@ -1176,11 +1181,20 @@ class OnePhonon:
             D_i = Dmat_all[i]
             D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
 
-            if i == debug_idx:
-                print(f"\n--- DEBUG Phonon Loop (i={i}) ---")
+            # --- Debug Print Trigger (Grid Mode Example) ---
+            # Note: This assumes 'i' directly corresponds to the BZ index if in grid mode.
+            # This might need adjustment based on how total_points relates to BZ vs Full grid.
+            # Let's assume for now this 'i' matches the BZ index for grid mode.
+            is_grid_mode = not getattr(self, 'use_arbitrary_q', False)
+            is_target_idx = (is_grid_mode and i == DEBUG_IDX_BZ)
+
+            if is_target_idx:
+                print(f"\n--- DEBUG Phonon Loop (Grid Mode i={i}) ---")
                 print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
                 if D_i_hermitian.numel() > 0:
                     print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
+                    debug_data_grid['D_00'] = D_i_hermitian[0,0].item()
+            # --- End Debug Print Trigger ---
 
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
@@ -1202,11 +1216,16 @@ class OnePhonon:
             v_flipped_no_grad = torch.flip(v_i_no_grad, dims=[-1])
             eigenvectors_detached_list.append(v_flipped_no_grad)
 
-            if i == debug_idx:
+            # --- Debug Print Trigger ---
+            if is_target_idx:
                 print(f"  v_flipped_no_grad shape: {v_flipped_no_grad.shape}, dtype: {v_flipped_no_grad.dtype}")
                 if v_flipped_no_grad.numel() > 0:
                     print(f"  v_flipped_no_grad[0,0]: {v_flipped_no_grad[0,0].item()}")
                     print(f"  v_flipped_no_grad[0,-1]: {v_flipped_no_grad[0,-1].item()}")
+                    debug_data_grid['vf_00'] = v_flipped_no_grad[0,0].item()
+                    debug_data_grid['vf_0N'] = v_flipped_no_grad[0,-1].item()
+            # --- End Debug Print Trigger ---
+
 
             # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
             current_eigenvalues = []
@@ -1222,11 +1241,15 @@ class OnePhonon:
 
             eigenvalues_tensor = torch.stack(current_eigenvalues) # Real eigenvalues
 
-            if i == debug_idx:
+            # --- Debug Print Trigger ---
+            if is_target_idx:
                 print(f"  eigenvalues_tensor (recomputed) shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
                 if eigenvalues_tensor.numel() > 0:
                     print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
                     print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
+                    debug_data_grid['eig_0'] = eigenvalues_tensor[0].item()
+                    debug_data_grid['eig_N'] = eigenvalues_tensor[-1].item()
+            # --- End Debug Print Trigger ---
 
             # 3. Process eigenvalues (thresholding, flipping)
             eps = 1e-6
