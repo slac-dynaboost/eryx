@@ -1205,8 +1205,8 @@ class OnePhonon:
             is_target_idx = (is_grid_mode and i == DEBUG_IDX_BZ)
             
             if is_target_kvec:
-                print(f"\n--- {mode_string} Mode DEBUG k-vec ~ {kvec_target_tensor.cpu().numpy()} (index {i}) ---")
-                print(f"  Input kvec: {current_kvec.cpu().numpy()}")
+                print(f"\n--- {mode_string} Mode DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (index {i}) ---")
+                print(f"  Input kvec: {current_kvec.detach().cpu().numpy()}")
                 print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
             
             D_i = Dmat_all[i]
