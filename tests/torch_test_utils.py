@@ -46,9 +46,12 @@ class TensorComparison:
         if torch_tensor is None or np_array is None:
             return False, {"message": f"One input is None: np_array={np_array is not None}, torch_tensor={torch_tensor is not None}"}
         
+        # Convert tensor to NumPy *before* any NumPy operations
         if isinstance(torch_tensor, torch.Tensor):
+            # Detach from graph, move to CPU, convert to NumPy
             torch_array = torch_tensor.detach().cpu().numpy()
         else:
+            # If input is already NumPy or other compatible type, use it directly
             torch_array = torch_tensor
             
         # Check shapes match
