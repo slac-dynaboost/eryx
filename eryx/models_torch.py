@@ -1038,10 +1038,10 @@ class OnePhonon:
         self.V = torch.zeros((total_points,
                               self.n_asu * self.n_dof_per_asu,
                               self.n_asu * self.n_dof_per_asu),
-                            dtype=torch.complex64, device=self.device)
+                            dtype=self.complex_dtype, device=self.device)
         self.Winv = torch.zeros((total_points,
                                 self.n_asu * self.n_dof_per_asu),
-                               dtype=torch.complex64, device=self.device)
+                               dtype=self.complex_dtype, device=self.device)
         
         # Create GNM instance for K matrix computation
         from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
@@ -1051,6 +1051,8 @@ class OnePhonon:
         gnm_torch.n_cell = self.n_cell
         gnm_torch.id_cell_ref = self.id_cell_ref
         gnm_torch.device = self.device
+        gnm_torch.real_dtype = self.real_dtype
+        gnm_torch.complex_dtype = self.complex_dtype
         
         # Ensure crystal is properly set
         if hasattr(self, 'crystal'):
@@ -1065,7 +1067,7 @@ class OnePhonon:
         elif hasattr(self.gnm, 'gamma'):
             from eryx.adapters import PDBToTensor
             adapter = PDBToTensor(device=self.device)
-            gnm_torch.gamma = adapter.array_to_tensor(self.gnm.gamma, dtype=torch.float32)
+            gnm_torch.gamma = adapter.array_to_tensor(self.gnm.gamma, dtype=self.real_dtype)
             
             # Copy neighbor list structure
             gnm_torch.asu_neighbors = self.gnm.asu_neighbors
@@ -1079,78 +1081,49 @@ class OnePhonon:
         print(f"Kmat_all.grad_fn: {Kmat_all.grad_fn}")
         
         # Reshape K matrices to 2D form for each k-vector
-        Kmat_all_2d = Kmat_all.reshape(total_points, 
-                                      self.n_asu * self.n_dof_per_asu,
-                                      self.n_asu * self.n_dof_per_asu)
+        dof_total = self.n_asu * self.n_dof_per_asu
+        Kmat_all_2d = Kmat_all.reshape(total_points, dof_total, dof_total)
         
         print(f"Compute_K complete, Kmat_all_2d shape = {Kmat_all_2d.shape}")
         
         # Compute dynamical matrices (D = L^(-1) K L^(-T)) for all k-vectors
-        Dmat_all = torch.matmul(
-            Linv_complex.unsqueeze(0).expand(total_points, -1, -1),
-            torch.matmul(
-                Kmat_all_2d,
-                Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
-            )
-        )
+        # Use torch.bmm for batched matrix multiplication
+        Linv_batch = Linv_complex.unsqueeze(0).expand(total_points, -1, -1)
+        Linv_T_batch = Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
+        
+        # First multiply Kmat_all_2d with Linv_T_batch
+        temp = torch.bmm(Kmat_all_2d, Linv_T_batch)
+        # Then multiply Linv_batch with the result
+        Dmat_all = torch.bmm(Linv_batch, temp)
         
         print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
         print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
         
-        # Instead of SVD, use eigendecomposition with custom backward
-        # This approach ensures gradient flow through the eigendecomposition
-        eigenvalues, eigenvectors = [], []
+        # Perform batched SVD
+        U_all, S_all, Vh_all = torch.linalg.svd(Dmat_all, full_matrices=False)
         
-        # Process each matrix individually to maintain gradient flow
-        for i in range(total_points):
-            # Get the dynamical matrix for this k-vector
-            D_i = Dmat_all[i]
-            
-            # Use SVD to match NumPy implementation
-            U_i, S_i, Vh_i = torch.linalg.svd(D_i, full_matrices=False)
-            
-            # Apply threshold to singular values (equivalent to NumPy w < 1e-6)
-            eps = 1e-6
-            w_processed = torch.where(
-                S_i < eps,
-                torch.tensor(float('nan'), device=S_i.device, dtype=S_i.dtype),
-                S_i
-            )
-            
-            # Reverse order to match NumPy descending order
-            w_processed = torch.flip(w_processed, dims=[-1])
-            Vh_flipped = torch.flip(Vh_i, dims=[-1])
-            
-            # Get right singular vectors by taking conjugate transpose of flipped Vh
-            v_flipped = Vh_flipped.transpose(-2, -1).conj()
-            
-            eigenvalues.append(w_processed)
-            eigenvectors.append(v_flipped)
+        # Calculate w = sqrt(S), ensure non-negative input
+        w = torch.sqrt(S_all.clamp(min=0.0).to(self.real_dtype))
         
-        # Stack results
-        eigenvalues_all = torch.stack(eigenvalues)
-        v_all = torch.stack(eigenvectors)
+        # Apply NaN thresholding based on w < 1e-6
+        eps = 1e-6
+        nan_tensor = torch.tensor(float('nan'), device=w.device, dtype=self.real_dtype)
+        w_processed = torch.where(w < eps, nan_tensor, w)
         
-        print(f"SVD decomposition complete")
-        print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}")
-        print(f"eigenvalues_all.grad_fn: {eigenvalues_all.grad_fn}")
+        # Calculate Winv = 1.0 / w_processed**2
+        # Ensure square is done using real_dtype before division
+        w_processed_sq = torch.square(w_processed)  # Already real_dtype
+        winv_all = 1.0 / w_processed_sq  # Result is real_dtype (potentially with inf/nan)
         
-        # Transform eigenvectors V = L^(-T) v (matching NumPy implementation)
-        v_all_transformed = torch.matmul(
-            Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1),
-            v_all
-        )
+        # Convert Winv to complex_dtype *after* calculation
+        self.Winv = winv_all.to(dtype=self.complex_dtype)
         
-        # Calculate Winv = 1/w² directly from processed singular values
-        # NaN values from thresholding will propagate correctly
-        winv_all = 1.0 / torch.square(eigenvalues_all)
+        # Get right singular vectors v from Vh (v = Vh^H)
+        v_all = Vh_all.transpose(-2, -1).conj()  # Should be complex128
         
-        # Ensure complex type
-        winv_all = winv_all.to(dtype=torch.complex64)
-        
-        # Store results in instance variables
-        self.Winv = winv_all
-        self.V = v_all_transformed
+        # Transform eigenvectors V = L^(-T) @ v
+        # Perform the batched matmul: V = Linv_T_batch @ v_all
+        self.V = torch.bmm(Linv_T_batch, v_all)
         
         # Set requires_grad for tensors
         self.V.requires_grad_(True)
