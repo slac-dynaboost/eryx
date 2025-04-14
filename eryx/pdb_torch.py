@@ -29,6 +29,8 @@ class GaussianNetworkModel:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.real_dtype = torch.float64
         self.complex_dtype = torch.complex128
+        self.real_dtype = torch.float64
+        self.complex_dtype = torch.complex128
     
     def compute_hessian(self) -> torch.Tensor:
         """

@@ -143,7 +143,7 @@ class OnePhonon:
         self.ksampling = ksampling
         self.lsampling = lsampling
         
-        # Set high precision as default for grid mode
+        # Set high precision as default
         self.real_dtype = torch.float64
         self.complex_dtype = torch.complex128
         
@@ -218,28 +218,29 @@ class OnePhonon:
             # For arbitrary mode, we set a dummy map_shape (number of points,1,1)
             self.map_shape = (self.q_grid.shape[0], 1, 1)
         else:
-            # Use the PyTorch version of generate_grid
-            from eryx.map_utils_torch import generate_grid
+            # Grid-based mode: Use NumPy generate_grid for identical hkl_grid
+            from eryx.map_utils import generate_grid as np_generate_grid # Use NumPy version
             
-            # Ensure A_inv is a tensor with the correct dtype (float64) and device
-            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
+            # Ensure A_inv is float64 for NumPy function
+            A_inv_np = self.model.A_inv.astype(np.float64) 
             
-            # Generate hkl_grid and map_shape using the torch function
-            hkl_grid_tensor, self.map_shape = generate_grid(A_inv_tensor, # Use the tensor version
+            hkl_grid_np, self.map_shape = np_generate_grid(A_inv_np,
                                                           self.hsampling,
                                                           self.ksampling,
                                                           self.lsampling,
                                                           return_hkl=True)
-            # Assign the tensor directly (it's already a tensor)
-            self.hkl_grid = hkl_grid_tensor
+                                                          
+            # Convert NumPy result to Torch tensor with correct dtype and device
+            self.hkl_grid = torch.tensor(hkl_grid_np, dtype=self.real_dtype, device=self.device)
             logging.debug(f"[_setup] grid-based map_shape={self.map_shape}, "
                           f"hkl_grid.shape={self.hkl_grid.shape}, hkl_grid.dtype={self.hkl_grid.dtype}")
 
             # Calculate q_grid using matrix multiplication with tensors
-            # q = 2π * A_inv^T @ hkl^T --> Transpose result back
+            # Ensure A_inv_tensor uses high precision
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device) 
             self.q_grid = 2 * torch.pi * torch.matmul(
-                A_inv_tensor.T, # Use the tensor version of A_inv
-                self.hkl_grid.T # Transpose hkl_grid for matmul
+                A_inv_tensor.T, 
+                self.hkl_grid.T 
             ).T # Transpose the result back
             logging.debug(f"[_setup] Calculated q_grid shape={self.q_grid.shape}, q_grid.dtype={self.q_grid.dtype}")
         
@@ -730,35 +731,42 @@ class OnePhonon:
             logging.debug("[_build_kvec_Brillouin] Grid-based mode. Using Brillouin zone sampling dimensions.")
             
             # Get Brillouin zone sampling dimensions
-            h_dim = int(self.hsampling[2])
-            k_dim = int(self.ksampling[2])
-            l_dim = int(self.lsampling[2])
-            total_k_points = h_dim * k_dim * l_dim
+            h_dim_bz = int(self.hsampling[2])
+            k_dim_bz = int(self.ksampling[2])
+            l_dim_bz = int(self.lsampling[2])
+            total_k_points = h_dim_bz * k_dim_bz * l_dim_bz
             
-            logging.debug(f"[_build_kvec_Brillouin] Brillouin zone dimensions: h_dim={h_dim}, k_dim={k_dim}, l_dim={l_dim}")
+            logging.debug(f"[_build_kvec_Brillouin] Brillouin zone dimensions: h_dim={h_dim_bz}, k_dim={k_dim_bz}, l_dim={l_dim_bz}")
             logging.debug(f"[_build_kvec_Brillouin] Total k-points: {total_k_points}")
             
-            # Get A_inv_tensor (ensure float32)
+            # Get A_inv_tensor (ensure float64)
             if isinstance(self.model.A_inv, torch.Tensor):
-                A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=self.real_dtype, device=self.device)
+                # Ensure correct dtype and device
+                A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=self.real_dtype, device=self.device) 
             else:
-                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
+                # Convert from NumPy array with correct dtype
+                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device) 
             
-            # Generate 1D tensors for h, k, l coordinates using _center_kvec
-            h_coords = torch.tensor([self._center_kvec(dh, h_dim) for dh in range(h_dim)], 
+            # Generate 1D tensors for h, k, l coordinates using _center_kvec (ensure float64)
+            h_coords = torch.tensor([self._center_kvec(dh, h_dim_bz) for dh in range(h_dim_bz)], 
                                    device=self.device, dtype=self.real_dtype)
-            k_coords = torch.tensor([self._center_kvec(dk, k_dim) for dk in range(k_dim)], 
+            k_coords = torch.tensor([self._center_kvec(dk, k_dim_bz) for dk in range(k_dim_bz)], 
                                    device=self.device, dtype=self.real_dtype)
-            l_coords = torch.tensor([self._center_kvec(dl, l_dim) for dl in range(l_dim)], 
+            l_coords = torch.tensor([self._center_kvec(dl, l_dim_bz) for dl in range(l_dim_bz)], 
                                    device=self.device, dtype=self.real_dtype)
             
             # Create meshgrid and reshape to [total_k_points, 3]
             h_grid, k_grid, l_grid = torch.meshgrid(h_coords, k_coords, l_coords, indexing='ij')
-            hkl_fractional = torch.stack([h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1)
+            # Ensure hkl_fractional is float64
+            hkl_fractional = torch.stack([h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1).to(dtype=self.real_dtype)
             
-            # Compute kvec and kvec_norm
+            # Compute kvec and kvec_norm (ensure float64)
             self.kvec = torch.matmul(hkl_fractional, A_inv_tensor)
             self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
+            
+            # Ensure final tensors have the correct dtype
+            self.kvec = self.kvec.to(dtype=self.real_dtype)
+            self.kvec_norm = self.kvec_norm.to(dtype=self.real_dtype)
             
             # Ensure tensors require gradients
             self.kvec.requires_grad_(True)
@@ -776,10 +784,10 @@ class OnePhonon:
                     self.V = torch.zeros((total_k_points,
                                         self.n_asu * self.n_dof_per_asu,
                                         self.n_asu * self.n_dof_per_asu),
-                                       dtype=torch.complex64, device=self.device)
+                                       dtype=self.complex_dtype, device=self.device)
                     self.Winv = torch.zeros((total_k_points,
                                            self.n_asu * self.n_dof_per_asu),
-                                          dtype=torch.complex64, device=self.device)
+                                          dtype=self.complex_dtype, device=self.device)
                     
                     # Ensure complex tensors require gradients
                     self.V.requires_grad_(True)
@@ -806,7 +814,7 @@ class OnePhonon:
         # Match the NumPy implementation exactly: int(((x - L / 2) % L) - L / 2) / L
         # Ensure the final result is a Python float (which corresponds to float64 precision)
         centered_index = int(((x - L / 2) % L) - L / 2)
-        return float(centered_index) / L
+        return float(centered_index) / float(L)
     
     def _at_kvec_from_miller_points(self, indices_or_batch: Union[Tuple[int, int, int], torch.Tensor, int]) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
