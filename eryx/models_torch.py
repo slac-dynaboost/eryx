@@ -425,25 +425,44 @@ class OnePhonon:
                 # Center coordinates properly
                 xyz = xyz - xyz.mean(dim=0, keepdim=True)
                 
-                # Initialize Atmp once per asymmetric unit (outside the atom loop)
-                Atmp = torch.zeros((3, 3), device=self.device, dtype=self.real_dtype)
-                
-                # Initialize Atmp once per asymmetric unit (outside the atom loop)
-                # This allows cumulative updates across atoms, matching NumPy implementation
-                Atmp = torch.zeros((3, 3), device=self.device, dtype=self.real_dtype)
+                # Debug print for centered coordinates
+                if i_asu == 0:
+                    print(f"Torch ASU {i_asu} Centered XYZ (mean): {xyz.mean(dim=0).detach().cpu().numpy()}")
+                    print(f"Torch ASU {i_asu} Centered XYZ (first 3 atoms):")
+                    for i in range(min(3, xyz.shape[0])):
+                        print(f"  Atom {i}: {xyz[i].detach().cpu().numpy()}")
                 
                 # Process each atom
                 for i_atom in range(self.n_atoms_per_asu):
-                    # Update skew-symmetric matrix for rotations first
+                    # Initialize Atmp for each atom (important!)
+                    Atmp = torch.zeros((3, 3), device=self.device, dtype=self.real_dtype)
+                    
+                    # Update skew-symmetric matrix for rotations
                     if i_atom < xyz.shape[0]:
+                        # Debug print for specific atoms
+                        if i_asu == 0 and i_atom < 3:
+                            print(f"  Torch Atom {i_atom} XYZ: {xyz[i_atom].detach().cpu().numpy()}")
+                        
+                        # Fill the skew-symmetric matrix
                         Atmp[0, 1] = xyz[i_atom, 2]  
                         Atmp[0, 2] = -xyz[i_atom, 1]
+                        Atmp[1, 0] = -xyz[i_atom, 2]
                         Atmp[1, 2] = xyz[i_atom, 0]
-                        Atmp = Atmp - Atmp.transpose(0, 1)
+                        Atmp[2, 0] = xyz[i_atom, 1]
+                        Atmp[2, 1] = -xyz[i_atom, 0]
+                        
+                        # Debug print for Atmp
+                        if i_asu == 0 and i_atom < 3:
+                            print(f"  Torch Atom {i_atom} Atmp:\n{Atmp.detach().cpu().numpy()}")
                     
                     # Set identity part (translations) and then the rotation part
                     self.Amat[i_asu, i_atom*3:(i_atom+1)*3, 0:3] = Adiag
                     self.Amat[i_asu, i_atom*3:(i_atom+1)*3, 3:6] = Atmp
+                    
+                    # Debug print for assigned block
+                    if i_asu == 0 and i_atom < 3:
+                        assigned_block = self.Amat[i_asu, i_atom*3:(i_atom+1)*3, :]
+                        print(f"  Torch Atom {i_atom} Assigned Block:\n{assigned_block.detach().cpu().numpy()}")
             
             # Add debug prints to compare with NumPy implementation
             if self.n_asu > 0 and self.n_atoms_per_asu > 0:
@@ -549,102 +568,63 @@ class OnePhonon:
         # Use high precision
         dtype = self.real_dtype
         
-        # Create mass array - default to ones as fallback
-        mass_array = torch.ones(self.n_asu * self.n_atoms_per_asu, dtype=dtype, device=self.device)
+        # Debug print for NumPy comparison
+        print("\n--- _build_M_allatoms Debug ---")
         
-        # Try to extract weights using prioritized strategies
+        # Try to directly access the same weights as NumPy implementation
         weights = []
-        
-        # Strategy 1: Use element_weights if available from PDBToTensor adapter
-        if hasattr(self.model, 'element_weights') and isinstance(self.model.element_weights, torch.Tensor):
+        if hasattr(self.model, 'elements'):
+            print("Accessing weights directly from model.elements (NumPy approach)")
             try:
-                print("Using element_weights from model")
-                weights = self.model.element_weights.detach().cpu().tolist()
+                # This matches the NumPy implementation exactly
+                weights = [element.weight for structure in self.model.elements for element in structure]
+                print(f"Direct weights extraction: count={len(weights)}")
+                print(f"First few weights: {weights[:5]}")
+                print(f"Weight stats: min={min(weights)}, max={max(weights)}, mean={sum(weights)/len(weights)}")
             except Exception as e:
-                print(f"Error using element_weights: {e}")
+                print(f"Error in direct weight extraction: {e}")
         
-        # Strategy 2: Try to get atomic weights directly from the original model
-        if not weights and hasattr(self, 'original_model') and hasattr(self.original_model, '_gemmi_structure'):
-            try:
-                print("Extracting weights from original gemmi structure")
-                import gemmi
-                structure = self.original_model._gemmi_structure
-                for model in structure:
-                    for chain in model:
-                        for residue in chain:
-                            for atom in residue:
-                                element = atom.element
-                                if element and hasattr(element, 'weight'):
-                                    weights.append(float(element.weight))
-                                else:
-                                    # Default to carbon weight if element is unknown
-                                    weights.append(12.0)
-            except Exception as e:
-                print(f"Error getting weights from gemmi structure: {e}")
-        
-        # Strategy 3: Try to extract from model.elements if available
-        if not weights and hasattr(self.model, 'elements'):
-            try:
-                print("Extracting weights from model.elements")
-                # Handle various formats of elements data
-                if isinstance(self.model.elements, list) and len(self.model.elements) > 0:
-                    # List of lists (original format)
-                    if isinstance(self.model.elements[0], list):
-                        for structure in self.model.elements:
-                            for element in structure:
-                                if hasattr(element, 'weight'):
-                                    weights.append(float(element.weight))
-                                elif isinstance(element, dict) and 'weight' in element:
-                                    weights.append(float(element['weight']))
-                                elif isinstance(element, (float, int, np.number)):
-                                    weights.append(float(element))
-                    # Direct list of elements or weights
-                    elif all(hasattr(e, 'weight') for e in self.model.elements if hasattr(e, '__dict__')):
-                        weights = [float(e.weight) for e in self.model.elements]
-                    elif all(isinstance(e, (float, int, np.number)) for e in self.model.elements):
-                        weights = [float(e) for e in self.model.elements]
-            except Exception as e:
-                print(f"Error extracting weights from model.elements: {e}")
-        
-        # Strategy 4: Use cached original weights
-        if not weights and hasattr(self.model, '_original_weights'):
-            print(f"Using cached original weights")
-            weights = self.model._original_weights
-        
-        # If we have weights, use them
+        # Create mass array from weights
         if weights:
-            # Check if all weights are zero, which indicates a problem
-            if all(w == 0.0 for w in weights):
-                print(f"WARNING: All extracted weights are zero! Using default atomic weights instead.")
-                # Use standard atomic weights as fallback
-                weights = [12.0] * len(weights)  # Carbon weight as default
-            
-            if len(weights) < self.n_asu * self.n_atoms_per_asu:
-                print(f"Warning: Not enough weights ({len(weights)}) for all atoms ({self.n_asu * self.n_atoms_per_asu}). Using default weight for remaining atoms.")
-                # Pad with carbon weights
-                weights.extend([12.0] * (self.n_asu * self.n_atoms_per_asu - len(weights)))
-            
-            print(f"Using weights: min={min(weights)}, max={max(weights)}, count={len(weights)}")
-            mass_array = torch.tensor(weights[:self.n_asu * self.n_atoms_per_asu], dtype=dtype, device=self.device)
+            mass_array = torch.tensor(weights, dtype=dtype, device=self.device)
+            print(f"mass_array from weights: shape={mass_array.shape}, dtype={mass_array.dtype}")
+            print(f"mass_array stats: min={mass_array.min().item()}, max={mass_array.max().item()}, mean={mass_array.mean().item()}")
         else:
-            print("No weights found. Using default weights (ones).")
+            # Fallback to ones
+            print("Fallback: Using ones for mass_array")
+            mass_array = torch.ones(self.n_asu * self.n_atoms_per_asu, dtype=dtype, device=self.device)
         
         # Create block diagonal matrix
         eye3 = torch.eye(3, device=self.device, dtype=dtype)
-        blocks = []
-        for i in range(self.n_asu * self.n_atoms_per_asu):
-            blocks.append(mass_array[i] * eye3)
         
-        try:
-            # Use torch.block_diag if available (PyTorch 1.8+)
-            M_block_diag = torch.block_diag(*blocks)
-        except (AttributeError, RuntimeError):
-            # Fallback for older PyTorch versions
-            total_dim = self.n_asu * self.n_atoms_per_asu * 3
-            M_block_diag = torch.zeros((total_dim, total_dim), device=self.device, dtype=dtype)
-            for i in range(self.n_asu * self.n_atoms_per_asu):
-                start_idx = i * 3
-                M_block_diag[start_idx:start_idx+3, start_idx:start_idx+3] = mass_array[i] * eye3
+        # Debug print for block construction approach
+        print("\nCreating block diagonal matrix...")
+        
+        # Create mass_list exactly like NumPy implementation
+        mass_list = []
+        for i in range(self.n_asu * self.n_atoms_per_asu):
+            # Create 3x3 block for each atom (mass * identity)
+            block = mass_array[i] * eye3
+            mass_list.append(block)
+        
+        # Print first few blocks for debugging
+        print(f"First block shape: {mass_list[0].shape}")
+        print(f"First block:\n{mass_list[0].detach().cpu().numpy()}")
+        
+        # Create block diagonal matrix
+        total_dim = self.n_asu * self.n_atoms_per_asu * 3
+        M_block_diag = torch.zeros((total_dim, total_dim), device=self.device, dtype=dtype)
+        
+        # Fill block diagonal matrix manually to match NumPy exactly
+        current_idx = 0
+        for block in mass_list:
+            block_size = block.shape[0]
+            M_block_diag[current_idx:current_idx+block_size, current_idx:current_idx+block_size] = block
+            current_idx += block_size
+        
+        # Debug print for block diagonal matrix
+        print(f"M_block_diag shape: {M_block_diag.shape}")
+        print(f"M_block_diag diagonal elements (first few): {torch.diagonal(M_block_diag)[:15].detach().cpu().numpy()}")
         
         # Reshape to 4D tensor
         M_allatoms = M_block_diag.reshape(self.n_asu, self.n_dof_per_asu_actual,
