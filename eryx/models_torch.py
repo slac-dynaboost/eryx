@@ -1640,6 +1640,9 @@ class OnePhonon:
                 V_valid = self.V[valid_indices].to(self.complex_dtype)  # shape: [n_valid, n_dof, n_dof]
                 Winv_valid = self.Winv[valid_indices].to(self.complex_dtype)  # shape: [n_valid, n_dof]
                 
+                # Define target q-index for debugging
+                target_q_idx = 9
+                
                 # Process each point
                 intensity = torch.zeros(valid_indices.numel(), device=self.device, dtype=self.real_dtype)
                 for i, idx in enumerate(valid_indices):
@@ -1647,10 +1650,24 @@ class OnePhonon:
                     V_idx = V_valid[i].to(self.complex_dtype)
                     Winv_idx = Winv_valid[i].to(self.complex_dtype)
                     
+                    # Debug print for target q-index
+                    current_q_idx = idx.item()
+                    if current_q_idx == target_q_idx:
+                        print(f"\n--- ARBITRARY-Q MODE (q_idx={current_q_idx}, i={i}) ---")
+                        print(f"V_idx shape: {V_idx.shape}, dtype: {V_idx.dtype}")
+                        print(f"Winv_idx shape: {Winv_idx.shape}, dtype: {Winv_idx.dtype}")
+                        print(f"V_idx[0,0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
+                        print(f"Winv_idx[0] (real): {Winv_idx[0].real.item():.6e}")
+                    
                     # Always ensure F has the correct complex dtype before matmul with V
                     F_i = F[i]
                     assert F_i.dtype == self.complex_dtype, f"F_i dtype is {F_i.dtype}, expected {self.complex_dtype}"
                     assert V_idx.dtype == self.complex_dtype, f"V_idx dtype is {V_idx.dtype}, expected {self.complex_dtype}"
+                    
+                    # Debug print for target q-index
+                    if current_q_idx == target_q_idx:
+                        print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
+                        print(f"F_i[0] (abs): {torch.abs(F_i[0]).item():.6e}")
                 
                     # Compute F·V for all modes at once
                     FV = torch.matmul(F_i, V_idx)
@@ -1667,8 +1684,23 @@ class OnePhonon:
                     # Cast real_winv to the target real dtype before multiplication
                     real_winv_float64 = real_winv.to(dtype=self.real_dtype)
                     
+                    # Debug print for target q-index
+                    if current_q_idx == target_q_idx:
+                        print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
+                        print(f"FV[0] (abs): {torch.abs(FV[0]).item():.6e}")
+                        print(f"real_winv shape: {real_winv_float64.shape}, dtype: {real_winv_float64.dtype}")
+                        print(f"real_winv[0]: {real_winv_float64[0].item():.6e}")
+                        intensity_contributions = FV_abs_squared * real_winv_float64
+                        print(f"Intensity Contributions[0]: {intensity_contributions[0].item():.6e}")
+                        final_intensity = torch.sum(intensity_contributions)
+                        print(f"Final Intensity for q_idx={target_q_idx}: {final_intensity.item():.6e}")
+                    
                     # Weight by eigenvalues and sum - ensure real output
                     intensity[i] = torch.sum(FV_abs_squared * real_winv_float64)
+                    
+                    # Debug print for target q-index
+                    if current_q_idx == target_q_idx:
+                        print(f"Value assigned to Id: {intensity[i].item():.6e}")
             else:
                 # Process single mode
                 intensity = torch.zeros(valid_indices.numel(), device=self.device)
@@ -1762,6 +1794,10 @@ class OnePhonon:
             logging.debug("[apply_disorder] Starting loops over Brillouin zone...")
             
             # Restore nested loops over Brillouin zone
+            # Define target indices for debugging
+            target_idx = 2
+            target_q_idx = 9
+            
             for dh in range(h_dim):
                 for dk in range(k_dim):
                     for dl in range(l_dim):
@@ -1772,9 +1808,25 @@ class OnePhonon:
                             torch.tensor([dl], device=self.device, dtype=torch.long)
                         ).item()
                         
+                        # Debug print for target BZ index
+                        if idx == target_idx:
+                            print(f"\n--- GRID MODE (idx={idx}) ---")
+                            q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
+                            valid_mask_for_q = self.res_mask[q_indices]
+                            valid_indices = q_indices[valid_mask_for_q]
+                            print(f"Corresponding q_indices (first 5): {q_indices[:5].cpu().numpy()}")
+                            print(f"Corresponding valid_indices (first 5): {valid_indices[:5].cpu().numpy()}")
+                        
                         # Get phonon modes for this k-vector
                         V_k = self.V[idx].to(self.complex_dtype)  # shape [n_dof, n_dof]
                         Winv_k = self.Winv[idx].to(self.complex_dtype)  # shape [n_dof]
+                        
+                        # Debug print for target BZ index
+                        if idx == target_idx:
+                            print(f"V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
+                            print(f"Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
+                            print(f"V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
+                            print(f"Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
                         
                         # Debug print for specific BZ point
                         if dh == 0 and dk == 1 and dl == 0:
@@ -1849,6 +1901,19 @@ class OnePhonon:
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
+                            # Debug print for target BZ index and q_idx
+                            if idx == target_idx:
+                                # Find the position of target_q_idx within the valid_indices for this BZ point
+                                target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0]
+                                
+                                if target_pos_in_valid.numel() > 0:
+                                    pos = target_pos_in_valid[0].item()
+                                    print(f"--- GRID MODE (idx={idx}, q_idx={target_q_idx}, pos={pos}) ---")
+                                    print(f"F shape: {F.shape}, dtype: {F.dtype}")
+                                    print(f"F[{pos}, 0] (abs): {torch.abs(F[pos, 0]).item():.6e}")
+                                else:
+                                    print(f"--- GRID MODE (idx={idx}): target_q_idx={target_q_idx} not found in valid_indices for this BZ point.")
+                            
                             # Compute F·V for all modes at once
                             FV = torch.matmul(F, V_k)
                             
@@ -1858,6 +1923,20 @@ class OnePhonon:
                             # Extract real part of eigenvalues
                             real_winv = Winv_k.real if torch.is_complex(Winv_k) else Winv_k
                             real_winv = real_winv.to(self.real_dtype)
+                            
+                            # Debug print for target BZ index and q_idx
+                            if idx == target_idx:
+                                target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0]
+                                if target_pos_in_valid.numel() > 0:
+                                    pos = target_pos_in_valid[0].item()
+                                    print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
+                                    print(f"FV[{pos}, 0] (abs): {torch.abs(FV[pos, 0]).item():.6e}")
+                                    print(f"real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}")
+                                    print(f"real_winv[0]: {real_winv[0].item():.6e}")
+                                    intensity_contributions = FV_abs_squared[pos] * real_winv
+                                    print(f"Intensity Contributions[0]: {intensity_contributions[0].item():.6e}")
+                                    final_intensity_for_q = torch.sum(intensity_contributions)
+                                    print(f"Final Intensity Contribution for q_idx={target_q_idx}: {final_intensity_for_q.item():.6e}")
                             
                             # Debug print for specific BZ point
                             if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
