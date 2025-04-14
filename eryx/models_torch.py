@@ -2281,6 +2281,7 @@ class RigidBodyRotations:
         pass
         
     def _compute_bz_averaged_adp(self) -> torch.Tensor:
+        import logging
         """
         Calculates the BZ-averaged ADP based on the GNM model.
 
