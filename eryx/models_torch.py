@@ -799,16 +799,21 @@ class OnePhonon:
                 
             h_indices, k_indices, l_indices = self._flat_to_3d_indices(flat_indices)
         
+        # Calculate steps based on sampling parameters (matching NumPy implementation)
+        hsteps = int(self.hsampling[2] * (self.hsampling[1] - self.hsampling[0]) + 1)
+        ksteps = int(self.ksampling[2] * (self.ksampling[1] - self.ksampling[0]) + 1)
+        lsteps = int(self.lsampling[2] * (self.lsampling[1] - self.lsampling[0]) + 1)
+        
         # Process based on batch size
         batch_size = h_indices.numel()
         if batch_size == 1:
             # Single point case
             h_idx, k_idx, l_idx = h_indices.item(), k_indices.item(), l_indices.item()
             
-            # Generate ranges based on map_shape
-            h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
-            k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
-            l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
+            # Generate ranges using sampling rates as steps and calculated steps as end points
+            h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
+            k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
+            l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
             
             # Create meshgrid
             h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
@@ -829,10 +834,10 @@ class OnePhonon:
                 # Compute indices for each point
                 h_idx, k_idx, l_idx = h_indices[i].item(), k_indices[i].item(), l_indices[i].item()
                 
-                # Generate ranges based on map_shape
-                h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
-                k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
-                l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
+                # Generate ranges using sampling rates as steps and calculated steps as end points
+                h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
+                k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
+                l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
                 
                 # Create meshgrid
                 h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
@@ -1758,24 +1763,24 @@ class OnePhonon:
         return h_indices, k_indices, l_indices
     
     def _compute_indices_for_point(self, h_idx: int, k_idx: int, l_idx: int, 
-                                  h_dim: int, k_dim: int, l_dim: int) -> torch.Tensor:
+                                  hsteps: int, ksteps: int, lsteps: int) -> torch.Tensor:
         """
         Compute raveled indices for a single (h,k,l) point.
         
         Args:
             h_idx, k_idx, l_idx: Miller indices
-            h_dim, k_dim, l_dim: Dimensions for each axis from map_shape
+            hsteps, ksteps, lsteps: Number of steps for each axis calculated from sampling parameters
             
         Returns:
             Tensor of raveled indices
         """
-        # Create index grid using a step of 1 because in grid mode self.map_shape defines the full grid.
-        h_range = torch.arange(h_idx, h_dim, 1, device=self.device, dtype=torch.long)
-        k_range = torch.arange(k_idx, k_dim, 1, device=self.device, dtype=torch.long)
-        l_range = torch.arange(l_idx, l_dim, 1, device=self.device, dtype=torch.long)
+        # Create index grid using sampling rates as steps and calculated steps as end points
+        h_range = torch.arange(h_idx, hsteps, int(self.hsampling[2]), device=self.device, dtype=torch.long)
+        k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
+        l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
         
         # Debug output for verification
-        print(f"_compute_indices_for_point: Using dimensions h_dim={h_dim}, k_dim={k_dim}, l_dim={l_dim}")
+        print(f"_compute_indices_for_point: Using steps hsteps={hsteps}, ksteps={ksteps}, lsteps={lsteps}")
         
         # Create meshgrid
         h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
