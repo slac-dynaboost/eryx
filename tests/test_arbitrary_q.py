@@ -745,6 +745,10 @@ class TestArbitraryQVectors(TestBase):
         """Test equivalence of the Linv calculation (_build_M)."""
         self.run_method_equivalence_test('_build_M')
         
+    def test_compute_gnm_phonons_equivalence(self):
+        """Test execution and expected shape diffs for compute_gnm_phonons."""
+        self.run_method_equivalence_test('compute_gnm_phonons')
+        
     def test_kvec_brillouin_equivalence(self):
         """Test equivalence of _build_kvec_Brillouin method."""
         self.run_method_equivalence_test('_build_kvec_Brillouin')
