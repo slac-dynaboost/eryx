@@ -1263,12 +1263,14 @@ class OnePhonon:
                 eigenvalues_tensor
             )
 
-            if i == debug_idx:
+            # --- Debug Print Trigger ---
+            if is_target_idx:
                 print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
                 if eigenvalues_processed.numel() > 0:
                     print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
                     print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
                     print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
+            # --- End Debug Print Trigger ---
 
             # Flip eigenvalues to match descending order (as SVD would give)
             eigenvalues_processed_flipped = torch.flip(eigenvalues_processed, dims=[-1])
