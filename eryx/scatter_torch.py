@@ -130,7 +130,7 @@ def structure_factors_batch(q_grid: torch.Tensor, xyz: torch.Tensor,
     
     # Handle None for U by creating zero tensor
     if U is None:
-        U = torch.zeros(n_atoms, device=xyz.device, dtype=dtype)
+        U = torch.zeros(n_atoms, device=xyz.device, dtype=real_dtype)
     
     # Compute form factors efficiently
     fj = compute_form_factors(q_grid, ff_a, ff_b, ff_c)  # [n_points, n_atoms]
