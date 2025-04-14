@@ -1331,7 +1331,7 @@ class OnePhonon:
         self.V = torch.matmul(
             Linv_H_batch,
             v_all_detached # Use the detached eigenvectors here
-        )
+        ).detach()
 
         # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
         eps_div = 1e-8 # Use a small epsilon for division stability
