@@ -1803,7 +1803,8 @@ class OnePhonon:
                     project_on_components=project, sum_over_atoms=False
                 )
                 # Assign result to F slice with explicit dtype cast
-                F[:, i_asu, :] = sf_result.to(self.complex_dtype)
+                # Correct assignment: sf_result already has shape [n_valid, n_dof_per_asu]
+                F[:, i_asu, :] = sf_result.to(self.complex_dtype) # Ensure dtype consistency
                 # Assert F's dtype after assignment
                 assert F.dtype == self.complex_dtype, f"F dtype after assignment (ASU {i_asu}) is {F.dtype}, expected {self.complex_dtype}"
             
@@ -2097,7 +2098,8 @@ class OnePhonon:
                                 project_on_components=project, sum_over_atoms=False
                             )
                             # Assign result to F slice with explicit dtype cast
-                            F[:, i_asu, :] = sf_result.to(self.complex_dtype)
+                            # Correct assignment: sf_result already has shape [n_valid, n_dof_per_asu]
+                            F[:, i_asu, :] = sf_result.to(self.complex_dtype) # Ensure dtype consistency
                         
                         # Reshape for matrix operations
                         F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
