@@ -90,7 +90,7 @@ class TestKvectorMethods(TestBase):
                                        f"Indices don't match for miller point {point}")
 #
     def test_kvec_brillouin_equivalence(self):
-        """Compare kvec and kvec_norm after _build_kvec_Brillouin."""
+        """Compare kvec and kvec_norm after _build_kvec_Brillouin, handling shape differences."""
         # Import TensorComparison for precise tensor comparison
         from tests.torch_test_utils import TensorComparison
         
@@ -99,18 +99,30 @@ class TestKvectorMethods(TestBase):
         
         # _build_kvec_Brillouin is called during __init__
         
+        # Reshape NumPy arrays to match PyTorch's flattened shape
+        # Calculate total points based on BZ sampling dimensions used in PyTorch _build_kvec_Brillouin
+        h_dim_bz = int(self.torch_model.hsampling[2])
+        k_dim_bz = int(self.torch_model.ksampling[2])
+        l_dim_bz = int(self.torch_model.lsampling[2])
+        total_k_points = h_dim_bz * k_dim_bz * l_dim_bz
+        
+        # Reshape NumPy kvec from (h,k,l,3) to (h*k*l, 3)
+        np_kvec_flat = self.np_model.kvec.reshape(total_k_points, 3)
+        # Reshape NumPy kvec_norm from (h,k,l,1) to (h*k*l, 1)
+        np_kvec_norm_flat = self.np_model.kvec_norm.reshape(total_k_points, 1)
+        
         # Compare kvec (should be numerically identical float64)
         TensorComparison.assert_tensors_equal(
-            self.np_model.kvec, self.torch_model.kvec,
+            np_kvec_flat, self.torch_model.kvec, # Compare flattened NumPy kvec with PyTorch kvec
             rtol=1e-9, atol=1e-12, # Use very tight tolerance
-            msg="kvec comparison failed"
+            msg=f"kvec comparison failed. NP_flat shape: {np_kvec_flat.shape}, Torch shape: {self.torch_model.kvec.shape}"
         )
         
         # Compare kvec_norm (should be numerically identical float64)
         TensorComparison.assert_tensors_equal(
-            self.np_model.kvec_norm, self.torch_model.kvec_norm,
+            np_kvec_norm_flat, self.torch_model.kvec_norm, # Compare flattened NumPy kvec_norm with PyTorch kvec_norm
             rtol=1e-9, atol=1e-12, # Use very tight tolerance
-            msg="kvec_norm comparison failed"
+            msg=f"kvec_norm comparison failed. NP_flat shape: {np_kvec_norm_flat.shape}, Torch shape: {self.torch_model.kvec_norm.shape}"
         )
             
     def test_log_completeness(self):
