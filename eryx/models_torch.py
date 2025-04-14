@@ -1438,11 +1438,8 @@ class OnePhonon:
                     V_idx = V_valid[i]
                     Winv_idx = Winv_valid[i]
                     
-                    # Ensure F has the correct complex dtype before matmul with V
-                    if F[i].dtype != self.complex_dtype:
-                        F_i = F[i].to(dtype=self.complex_dtype)
-                    else:
-                        F_i = F[i]
+                    # Always ensure F has the correct complex dtype before matmul with V
+                    F_i = F[i].to(dtype=self.complex_dtype)
                     
                     # Compute F·V for all modes at once
                     FV = torch.matmul(F_i, V_idx)
@@ -1468,11 +1465,8 @@ class OnePhonon:
                     # Get mode for this q-vector
                     V_rank = self.V[idx, :, rank]
                     
-                    # Ensure F has the correct complex dtype before matmul with V
-                    if F[i].dtype != self.complex_dtype:
-                        F_i = F[i].to(dtype=self.complex_dtype)
-                    else:
-                        F_i = F[i]
+                    # Always ensure F has the correct complex dtype before matmul with V
+                    F_i = F[i].to(dtype=self.complex_dtype)
                     
                     # Compute FV
                     FV = torch.matmul(F_i, V_rank)
@@ -1604,8 +1598,8 @@ class OnePhonon:
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
-                            # Temporary cast for this phase if needed
-                            F = F.to(V_k.dtype)
+                            # Always ensure F has the correct complex dtype before matmul with V
+                            F = F.to(dtype=self.complex_dtype)
                             
                             # Compute F·V for all modes at once
                             FV = torch.matmul(F, V_k)
@@ -1624,8 +1618,8 @@ class OnePhonon:
                             V_k_rank = V_k[:, rank]
                             Winv_k_rank = Winv_k[rank]
                             
-                            # Temporary cast for this phase if needed
-                            F = F.to(V_k_rank.dtype)
+                            # Always ensure F has the correct complex dtype before matmul with V
+                            F = F.to(dtype=self.complex_dtype)
                             
                             # Compute FV for single mode
                             FV = torch.matmul(F, V_k_rank)
