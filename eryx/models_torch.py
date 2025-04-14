@@ -1690,6 +1690,10 @@ class OnePhonon:
                     
                     # Compute intensity
                     intensity[i] = FV_abs_squared * real_winv_float64
+                    
+                    # Add debug print for specific indices
+                    if i < 3:  # Print first few indices for debugging
+                        print(f"Arbitrary-q mode: idx={idx}, intensity[{i}]={intensity[i].item():.8e}")
             
             # Build full result array
             Id = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
