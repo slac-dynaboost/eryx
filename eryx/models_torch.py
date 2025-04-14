@@ -1895,7 +1895,6 @@ class OnePhonon:
         """
         # For arbitrary q-vector mode, return tensor unchanged
         if getattr(self, 'use_arbitrary_q', False):
-            print(f"to_batched_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
             
         # Get dimensions from the tensor shape
@@ -1906,7 +1905,6 @@ class OnePhonon:
         
         # Reshape to combine all three dimensions into one
         result = tensor.reshape(h_dim * k_dim * l_dim, *remaining_dims)
-        print(f"to_batched_shape: Converted {tensor.shape} to {result.shape}")
         return result
     
     def to_original_shape(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -1924,7 +1922,6 @@ class OnePhonon:
         """
         # For arbitrary q-vector mode, return tensor unchanged
         if getattr(self, 'use_arbitrary_q', False):
-            print(f"to_original_shape: Identity operation in arbitrary mode, shape={tensor.shape}")
             return tensor
         
         # Determine dimensions to use for reshaping
@@ -1946,7 +1943,6 @@ class OnePhonon:
         
         # Reshape to original dimensions
         result = tensor.reshape(h_dim, k_dim, l_dim, *tensor.shape[1:])
-        print(f"to_original_shape: Converted {tensor.shape} to {result.shape}")
         return result
     
     #@debug
@@ -1985,11 +1981,6 @@ class OnePhonon:
         k_indices = torch.div(kl_remainder, l_dim, rounding_mode='floor')
         l_indices = kl_remainder % l_dim
         
-        # Debug output for verification
-        if flat_indices.numel() > 0:
-            print(f"_flat_to_3d_indices: Example conversion: flat_idx={flat_indices[0]} -> h={h_indices[0]}, k={k_indices[0]}, l={l_indices[0]}")
-        print(f"_flat_to_3d_indices: Converted {flat_indices.shape} to 3D indices with shapes {h_indices.shape}")
-        
         return h_indices, k_indices, l_indices
     
     def _compute_indices_for_point(self, h_idx: int, k_idx: int, l_idx: int, 
@@ -2009,9 +2000,6 @@ class OnePhonon:
         k_range = torch.arange(k_idx, ksteps, int(self.ksampling[2]), device=self.device, dtype=torch.long)
         l_range = torch.arange(l_idx, lsteps, int(self.lsampling[2]), device=self.device, dtype=torch.long)
         
-        # Debug output for verification
-        print(f"_compute_indices_for_point: Using steps hsteps={hsteps}, ksteps={ksteps}, lsteps={lsteps}")
-        
         # Create meshgrid
         h_grid, k_grid, l_grid = torch.meshgrid(h_range, k_range, l_range, indexing='ij')
         
@@ -2024,10 +2012,6 @@ class OnePhonon:
         indices = h_flat * (self.map_shape[1] * self.map_shape[2]) + \
                  k_flat * self.map_shape[2] + \
                  l_flat
-        
-        # Debug output for verification
-        if h_flat.numel() > 0:
-            print(f"_compute_indices_for_point: First index: h={h_flat[0]}, k={k_flat[0]}, l={l_flat[0]} -> flat={indices[0]}")
         
         return indices
     
@@ -2096,11 +2080,6 @@ class OnePhonon:
         
         # Calculate flat indices: flat_idx = h_idx * (k_dim * l_dim) + k_idx * l_dim + l_idx
         flat_indices = h_indices * (k_dim * l_dim) + k_indices * l_dim + l_indices
-        
-        # Debug output for verification
-        if h_indices.numel() > 0:
-            print(f"_3d_to_flat_indices: Example conversion: h={h_indices[0]}, k={k_indices[0]}, l={l_indices[0]} -> flat_idx={flat_indices[0]}")
-        print(f"_3d_to_flat_indices: Converted 3D indices to flat indices with shape {flat_indices.shape}")
         
         return flat_indices
 
