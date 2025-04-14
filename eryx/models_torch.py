@@ -1092,83 +1092,6 @@ class OnePhonon:
         print(f"Kmat_all requires_grad: {Kmat_all.requires_grad}")
         print(f"Kmat_all.grad_fn: {Kmat_all.grad_fn}")
         
-        # Reshape K matrices to 2D form for each k-vector
-        dof_total = self.n_asu * self.n_dof_per_asu
-        Kmat_all_2d = Kmat_all.reshape(total_points, dof_total, dof_total)
-        
-        print(f"Compute_K complete, Kmat_all_2d shape = {Kmat_all_2d.shape}")
-        
-        # Compute dynamical matrices (D = L^(-1) K L^(-T)) for all k-vectors
-        # Use torch.bmm for batched matrix multiplication
-        Linv_batch = Linv_complex.unsqueeze(0).expand(total_points, -1, -1)
-        Linv_T_batch = Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
-        
-        # First multiply Kmat_all_2d with Linv_T_batch
-        temp = torch.bmm(Kmat_all_2d, Linv_T_batch)
-        # Then multiply Linv_batch with the result
-        Dmat_all = torch.bmm(Linv_batch, temp)
-        
-        print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
-        print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
-        
-        # Number of points depends on mode
-        if getattr(self, 'use_arbitrary_q', False):
-            total_points = self.q_grid.shape[0]
-            print(f"Computing phonons for {total_points} arbitrary q-vectors")
-        else:
-            # Use Brillouin zone sampling dimensions instead of map_shape
-            h_dim_bz = int(self.hsampling[2])
-            k_dim_bz = int(self.ksampling[2])
-            l_dim_bz = int(self.lsampling[2])
-            total_points = h_dim_bz * k_dim_bz * l_dim_bz
-            print(f"Computing phonons for {total_points} grid points based on BZ sampling ({h_dim_bz}x{k_dim_bz}x{l_dim_bz})")
-        
-        # Initialize output tensors with proper shapes for both modes
-        self.V = torch.zeros((total_points,
-                              self.n_asu * self.n_dof_per_asu,
-                              self.n_asu * self.n_dof_per_asu),
-                            dtype=self.complex_dtype, device=self.device)
-        self.Winv = torch.zeros((total_points,
-                                self.n_asu * self.n_dof_per_asu),
-                               dtype=self.complex_dtype, device=self.device)
-        
-        # Create GNM instance for K matrix computation
-        from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
-        gnm_torch = GaussianNetworkModelTorch()
-        gnm_torch.n_asu = self.n_asu
-        gnm_torch.n_atoms_per_asu = self.n_atoms_per_asu
-        gnm_torch.n_cell = self.n_cell
-        gnm_torch.id_cell_ref = self.id_cell_ref
-        gnm_torch.device = self.device
-        gnm_torch.real_dtype = self.real_dtype
-        gnm_torch.complex_dtype = self.complex_dtype
-        
-        # Ensure crystal is properly set
-        if hasattr(self, 'crystal'):
-            gnm_torch.crystal = self.crystal
-        else:
-            print("Warning: No crystal object found in OnePhonon model")
-        
-        # Set gamma for the GNM
-        if hasattr(self, 'gamma_tensor'):
-            gnm_torch.gamma = self.gamma_tensor
-        # Fallback to NumPy GNM gamma if needed
-        elif hasattr(self.gnm, 'gamma'):
-            from eryx.adapters import PDBToTensor
-            adapter = PDBToTensor(device=self.device)
-            gnm_torch.gamma = adapter.array_to_tensor(self.gnm.gamma, dtype=self.real_dtype)
-            
-            # Copy neighbor list structure
-            gnm_torch.asu_neighbors = self.gnm.asu_neighbors
-        
-        # Convert Linv to complex for matrix operations
-        Linv_complex = self.Linv.to(dtype=self.complex_dtype)
-        
-        # Compute K matrices for all k-vectors at once
-        Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
-        print(f"Kmat_all requires_grad: {Kmat_all.requires_grad}")
-        print(f"Kmat_all.grad_fn: {Kmat_all.grad_fn}")
-        
         # --- Debug Print Start ---
         print_idx = 1  # Choose a non-zero index for detailed prints
         if total_points > print_idx: 
@@ -1214,9 +1137,13 @@ class OnePhonon:
         
         # Initialize v_all *outside* the try block
         v_all = None
+        
+        # Make Dmat_all exactly Hermitian to match NumPy behavior
         Dmat_all_hermitian = 0.5 * (Dmat_all + Dmat_all.transpose(-2, -1).conj())
+        
         try:
-            w_sq, v_all = torch.linalg.eigh(Dmat_all_hermitian) # v_all assigned here if eigh succeeds (float64, complex128)
+            # Use eigh for Hermitian matrices - matches NumPy behavior exactly
+            w_sq, v_all = torch.linalg.eigh(Dmat_all_hermitian)
             # --- Debug Print Start ---
             if total_points > print_idx: 
                 print(f"PyTorch w_sq (eigh): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
@@ -1224,21 +1151,22 @@ class OnePhonon:
         except torch.linalg.LinAlgError:
             # Fallback to SVD if eigh fails
             print(f"Warning: PyTorch eigh failed for {total_points} matrices, falling back to SVD")
-            U_all, S_all, Vh_all = torch.linalg.svd(Dmat_all, full_matrices=False) # U/Vh complex128, S float64
-            w_sq = S_all # float64
-            v_all = Vh_all.transpose(-2, -1).conj() # v_all assigned here if SVD fallback used (complex128)
+            U_all, S_all, Vh_all = torch.linalg.svd(Dmat_all_hermitian, full_matrices=False)
+            w_sq = S_all
+            v_all = Vh_all.transpose(-2, -1).conj()
             if total_points > print_idx: 
                 print(f"PyTorch w_sq (SVD): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
         
         # Calculate w = sqrt(S), ensure non-negative input
-        w = torch.sqrt(w_sq.clamp(min=0.0).to(self.real_dtype))
+        # Use exactly the same precision and clamping as NumPy
+        w = torch.sqrt(torch.clamp(w_sq, min=0.0).to(self.real_dtype))
         
         # --- Debug Print Start ---
         if total_points > print_idx: 
             print(f"PyTorch w: min={w[print_idx].min().item():.8e}, max={w[print_idx].max().item():.8e}")
         # --- Debug Print End -----
         
-        # Apply NaN thresholding based on w < 1e-6
+        # Apply NaN thresholding based on w < 1e-6 - exactly match NumPy behavior
         eps = 1e-6
         nan_tensor = torch.tensor(float('nan'), device=w.device, dtype=self.real_dtype)
         w_processed = torch.where(w < eps, nan_tensor, w)
@@ -1251,8 +1179,8 @@ class OnePhonon:
         # --- Debug Print End -----
         
         # Calculate Winv = 1.0 / w_processed**2
-        # Ensure square is done using real_dtype before division
-        w_processed_sq = torch.square(w_processed)  # Already real_dtype
+        # Square first, then divide - exactly match NumPy behavior
+        w_processed_sq = torch.square(w_processed)
         
         # --- Debug Print Start ---
         w_processed_sq_np = w_processed_sq.cpu().detach().numpy()
@@ -1260,8 +1188,12 @@ class OnePhonon:
             print(f"PyTorch w_proc_sq: min={np.nanmin(w_processed_sq_np[print_idx]):.8e}, max={np.nanmax(w_processed_sq_np[print_idx]):.8e}")
         # --- Debug Print End -----
         
-        # MODIFIED LINE: Use clamp for robust division
-        winv_all = 1.0 / w_processed_sq.clamp(min=eps**2)  # Result is real_dtype (potentially with inf/nan)
+        # Handle division by zero exactly like NumPy - NaN propagation
+        # Don't use clamp here to match NumPy behavior exactly
+        winv_all = torch.zeros_like(w_processed_sq)
+        valid_mask = ~torch.isnan(w_processed_sq) & (w_processed_sq > 0)
+        winv_all[valid_mask] = 1.0 / w_processed_sq[valid_mask]
+        winv_all[~valid_mask] = float('nan')
         
         # --- Debug Print Start ---
         winv_all_np = winv_all.cpu().detach().numpy()
@@ -1270,7 +1202,7 @@ class OnePhonon:
         # --- Debug Print End -----
         
         # Convert Winv to complex_dtype *after* calculation
-        self.Winv = winv_all.to(dtype=self.complex_dtype) # complex128
+        self.Winv = winv_all.to(dtype=self.complex_dtype)
 
         # Ensure v_all is assigned before using it
         if v_all is not None:
@@ -1284,7 +1216,7 @@ class OnePhonon:
              # Transform eigenvectors V = L^(-T) @ v
              # Perform the batched matmul: V = Linv_T_batch @ v_all
              # Ensure both operands are complex128 before bmm
-             self.V = torch.bmm(Linv_T_batch.to(self.complex_dtype), v_all.to(self.complex_dtype)) # complex128
+             self.V = torch.bmm(Linv_T_batch.to(self.complex_dtype), v_all.to(self.complex_dtype))
              
              # --- Debug Final V ---
              if total_points > print_idx:
