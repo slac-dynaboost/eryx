@@ -1162,8 +1162,12 @@ class OnePhonon:
         if total_points > print_idx: 
             print(f"\n--- PyTorch Debug Index {print_idx} ---")
             # Correctly index the Kmat_all tensor (5D) and then call .item()
-            if Kmat_all.dim() >= 3:
-                print(f"PyTorch Kmat_all[{print_idx},0,0]: {Kmat_all[print_idx,0,0].item() if Kmat_all[print_idx,0,0].numel() == 1 else Kmat_all[print_idx,0,0][0,0].item():.8e}")
+            # Kmat_all shape is [batch, n_asu, n_atoms, n_asu, n_atoms]
+            # Kmat_all[print_idx] is [n_asu, n_atoms, n_asu, n_atoms]
+            # Kmat_all[print_idx, 0, 0] is [n_asu, n_atoms]
+            # Need Kmat_all[print_idx, 0, 0, 0, 0] if n_atoms > 0 else handle empty case
+            if Kmat_all.dim() >= 3 and Kmat_all.shape[1] > 0 and Kmat_all.shape[2] > 0 and Kmat_all.shape[3] > 0 and Kmat_all.shape[4] > 0:
+                print(f"PyTorch Kmat_all[{print_idx},0,0,0,0]: {Kmat_all[print_idx,0,0,0,0].item():.8e}")
             else:
                 print(f"PyTorch Kmat_all shape: {Kmat_all.shape}")
         # --- Debug Print End -----
@@ -1196,13 +1200,11 @@ class OnePhonon:
         print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
         print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
         
-        # Initialize v_all before the try block to avoid UnboundLocalError
+        # Initialize v_all *outside* the try block
         v_all = None
-        
-        # Try to use eigh first (more stable for Hermitian matrices)
         Dmat_all_hermitian = 0.5 * (Dmat_all + Dmat_all.transpose(-2, -1).conj())
         try:
-            w_sq, v_all = torch.linalg.eigh(Dmat_all_hermitian)
+            w_sq, v_all = torch.linalg.eigh(Dmat_all_hermitian) # v_all assigned here if eigh succeeds (float64, complex128)
             # --- Debug Print Start ---
             if total_points > print_idx: 
                 print(f"PyTorch w_sq (eigh): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
@@ -1210,9 +1212,9 @@ class OnePhonon:
         except torch.linalg.LinAlgError:
             # Fallback to SVD if eigh fails
             print(f"Warning: PyTorch eigh failed for {total_points} matrices, falling back to SVD")
-            U_all, S_all, Vh_all = torch.linalg.svd(Dmat_all, full_matrices=False)
-            w_sq = S_all
-            v_all = Vh_all.transpose(-2, -1).conj()
+            U_all, S_all, Vh_all = torch.linalg.svd(Dmat_all, full_matrices=False) # U/Vh complex128, S float64
+            w_sq = S_all # float64
+            v_all = Vh_all.transpose(-2, -1).conj() # v_all assigned here if SVD fallback used (complex128)
             if total_points > print_idx: 
                 print(f"PyTorch w_sq (SVD): min={w_sq[print_idx].min().item():.8e}, max={w_sq[print_idx].max().item():.8e}")
         
@@ -1256,18 +1258,18 @@ class OnePhonon:
         # --- Debug Print End -----
         
         # Convert Winv to complex_dtype *after* calculation
-        self.Winv = winv_all.to(dtype=self.complex_dtype)
-        
+        self.Winv = winv_all.to(dtype=self.complex_dtype) # complex128
+
         # Ensure v_all is assigned before using it
         if v_all is not None:
-            # Transform eigenvectors V = L^(-T) @ v
-            # Perform the batched matmul: V = Linv_T_batch @ v_all
-            self.V = torch.bmm(Linv_T_batch, v_all)
+             # Transform eigenvectors V = L^(-T) @ v
+             # Perform the batched matmul: V = Linv_T_batch @ v_all
+             self.V = torch.bmm(Linv_T_batch, v_all) # complex128
         else:
-            # This case should ideally not happen if eigh/svd worked
-            print("ERROR: v_all was not assigned during eigendecomposition!")
-            # Assign zeros or raise error? Assigning zeros for now.
-            self.V = torch.zeros_like(self.V)
+             # This case should ideally not happen if eigh/svd worked
+             print("ERROR: v_all was not assigned during eigendecomposition!")
+             # Assign zeros or raise error? Assigning zeros for now.
+             self.V = torch.zeros_like(self.V)
         
         # Set requires_grad for tensors
         self.V.requires_grad_(True)
