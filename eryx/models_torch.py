@@ -1117,13 +1117,14 @@ class OnePhonon:
         
         print(f"Compute_K complete, Kmat_all_2d shape = {Kmat_all_2d.shape}")
         
-        # Compute dynamical matrices (D = L^(-1) K L^(-T)) for all k-vectors
+        # Compute dynamical matrices (D = L^(-1) K L^(-H)) for all k-vectors
         # Use torch.bmm for batched matrix multiplication
         Linv_batch = Linv_complex.unsqueeze(0).expand(total_points, -1, -1)
-        Linv_T_batch = Linv_complex.T.unsqueeze(0).expand(total_points, -1, -1)
+        # Use conjugate transpose (.H) for complex matrices instead of just transpose (.T)
+        Linv_H_batch = Linv_complex.conj().T.unsqueeze(0).expand(total_points, -1, -1)
         
-        # First multiply Kmat_all_2d with Linv_T_batch
-        temp = torch.bmm(Kmat_all_2d, Linv_T_batch)
+        # First multiply Kmat_all_2d with Linv_H_batch
+        temp = torch.bmm(Kmat_all_2d, Linv_H_batch)
         # Then multiply Linv_batch with the result
         Dmat_all = torch.bmm(Linv_batch, temp)
         
@@ -1220,8 +1221,8 @@ class OnePhonon:
              # --- End Debug V ---
 
              # --- Start OPTION B Implementation ---
-             # Transform eigenvectors V = L^(-T) @ v using manual complex multiplication
-             # Get Linv.T as float64 (real_dtype)
+             # Transform eigenvectors V = L^(-H) @ v using manual complex multiplication
+             # Get Linv.T as float64 (real_dtype) - for real matrices T and H are the same
              Linv_T_batch_real = self.Linv.T.unsqueeze(0).expand(total_points, -1, -1) # Shape: [batch, N, N], dtype: float64
 
              # Separate real and imaginary parts of v_all (which is complex128)
