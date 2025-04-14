@@ -896,7 +896,7 @@ class TestArbitraryQVectors(TestBase):
                             pass # Keep attr_name as None if parsing fails
 
                     # Check if this attribute is expected to have different shapes
-                    if attr_name and attr_name in self.ATTRIBUTES_WITH_SHAPE_DIFF:
+                    if attr_name and attr_name in TestArbitraryQVectors.ATTRIBUTES_WITH_SHAPE_DIFF:
                         print(f"  INFO: Shapes differ for attribute '{attr_name}' as expected ({output_grid.shape} vs {output_q.shape}). Skipping numerical comparison.")
                         return True # Treat expected shape difference as success for this check
                     else:
