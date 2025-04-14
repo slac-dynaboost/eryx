@@ -1446,8 +1446,8 @@ class OnePhonon:
                 if j_cell < 3:
                     print(f"Grid Mode (Revised) Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
                 
-                # Accumulate in covariance tensor (no division by total_points)
-                self.covar[:, j_cell, :] = complex_sum
+                # Accumulate in covariance tensor (restore division by total_points)
+                self.covar[:, j_cell, :] = complex_sum / total_points
         
         # Get reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
