@@ -1316,33 +1316,12 @@ class OnePhonon:
                 debug_data_arbq['vf_0N'] = v_all_detached[DEBUG_IDX_FULL, 0, -1].item()
         # --- End Debug Print Trigger ---
 
-        if total_points > debug_idx:
-             print(f"\n--- DEBUG After Loop (idx={debug_idx}) ---")
-             print(f"  eigenvalues_all[{debug_idx}] shape: {eigenvalues_all[debug_idx].shape}, dtype: {eigenvalues_all[debug_idx].dtype}")
-             if eigenvalues_all[debug_idx].numel() > 0:
-                  print(f"  eigenvalues_all[{debug_idx}, 0]: {eigenvalues_all[debug_idx, 0].item()}")
-                  print(f"  eigenvalues_all[{debug_idx}, -1]: {eigenvalues_all[debug_idx, -1].item()}")
-             print(f"  v_all_detached[{debug_idx}] shape: {v_all_detached[debug_idx].shape}, dtype: {v_all_detached[debug_idx].dtype}")
-             if v_all_detached[debug_idx].numel() > 0:
-                  print(f"  v_all_detached[{debug_idx}, 0, 0]: {v_all_detached[debug_idx, 0, 0].item()}")
-                  print(f"  v_all_detached[{debug_idx}, 0, -1]: {v_all_detached[debug_idx, 0, -1].item()}")
-             print(f"  Linv_complex.H shape: {Linv_complex.H.shape}, dtype: {Linv_complex.H.dtype}") # Shape/dtype only
-             if Linv_complex.H.numel() > 0:
-                  print(f"  Linv_complex.H[0,0]: {Linv_complex.H[0,0].item()}")
-
-
         # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
         Linv_H_batch = Linv_complex.H.unsqueeze(0).expand(total_points, -1, -1)
         self.V = torch.matmul(
             Linv_H_batch,
             v_all_detached # Use the detached eigenvectors here
         )
-
-        if total_points > debug_idx:
-             print(f"  self.V[{debug_idx}] (calculated) shape: {self.V[debug_idx].shape}, dtype: {self.V[debug_idx].dtype}")
-             if self.V[debug_idx].numel() > 0:
-                  print(f"  self.V[{debug_idx}, 0, 0]: {self.V[debug_idx, 0, 0].item()}")
-                  print(f"  self.V[{debug_idx}, 0, -1]: {self.V[debug_idx, 0, -1].item()}")
 
         # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
         eps_div = 1e-8 # Use a small epsilon for division stability
