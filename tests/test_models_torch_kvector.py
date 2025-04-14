@@ -41,24 +41,30 @@ class TestKvectorMethods(TestBase):
         )
 
     def test_center_kvec(self):
-        """Test the _center_kvec method against NumPy implementation."""
+        """Test the _center_kvec method implementation by direct comparison."""
         # Create models for comparison
         self.create_models()
         
-        # Use default test case
-        args = [0, 2]  # Default test case
+        # Test cases for _center_kvec
+        test_cases = [
+            (0, 2), (1, 2),        # Even L
+            (0, 3), (1, 3), (2, 3), # Odd L
+            (5, 10), (9, 10),      # Larger L
+            (50, 100), (99, 100)    # Much larger L
+        ]
         
-        # Call method on both implementations
-        np_result = self.np_model._center_kvec(*args)
-        torch_result = self.torch_model._center_kvec(*args)
-        
-        # Convert torch result to Python scalar if needed
-        if isinstance(torch_result, torch.Tensor):
-            torch_result = torch_result.item()
-        
-        # Compare results
-        self.assertEqual(np_result, torch_result,
-                       f"Different results: NumPy={np_result}, PyTorch={torch_result}")
+        for x, L in test_cases:
+            with self.subTest(f"x={x}, L={L}"):
+                np_result = self.np_model._center_kvec(x, L)
+                torch_result = self.torch_model._center_kvec(x, L)
+                
+                # Convert torch result to Python scalar if needed
+                if isinstance(torch_result, torch.Tensor):
+                    torch_result = torch_result.item()
+                
+                # Compare results - must be exactly equal
+                self.assertEqual(np_result, torch_result,
+                               f"_center_kvec returns different values: NP={np_result}, Torch={torch_result}")
 #        
     def test_at_kvec_from_miller_points(self):
         """Test the _at_kvec_from_miller_points method against NumPy implementation."""
@@ -82,7 +88,31 @@ class TestKvectorMethods(TestBase):
             # Compare results
             np.testing.assert_array_equal(np_indices, torch_indices,
                                        f"Indices don't match for miller point {point}")
-#            
+#
+    def test_kvec_brillouin_equivalence(self):
+        """Compare kvec and kvec_norm after _build_kvec_Brillouin."""
+        # Import TensorComparison for precise tensor comparison
+        from tests.torch_test_utils import TensorComparison
+        
+        # Create models for comparison
+        self.create_models()
+        
+        # _build_kvec_Brillouin is called during __init__
+        
+        # Compare kvec (should be numerically identical float64)
+        TensorComparison.assert_tensors_equal(
+            self.np_model.kvec, self.torch_model.kvec,
+            rtol=1e-9, atol=1e-12, # Use very tight tolerance
+            msg="kvec comparison failed"
+        )
+        
+        # Compare kvec_norm (should be numerically identical float64)
+        TensorComparison.assert_tensors_equal(
+            self.np_model.kvec_norm, self.torch_model.kvec_norm,
+            rtol=1e-9, atol=1e-12, # Use very tight tolerance
+            msg="kvec_norm comparison failed"
+        )
+            
     def test_log_completeness(self):
         """Verify k-vector method logs exist and contain required attributes."""
         if not hasattr(self, 'verify_logs') or not self.verify_logs:
