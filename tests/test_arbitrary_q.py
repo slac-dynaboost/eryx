@@ -749,6 +749,7 @@ class TestArbitraryQVectors(TestBase):
         """Test execution and expected shape diffs for compute_gnm_phonons."""
         self.run_method_equivalence_test('compute_gnm_phonons')
         
+    @unittest.skip("Arbitrary-q mode no longer calculates self.covar/self.ADP directly in this method")
     def test_compute_covariance_matrix_equivalence(self):
         """Test equivalence of compute_covariance_matrix."""
         self.run_method_equivalence_test('compute_covariance_matrix')
@@ -757,6 +758,58 @@ class TestArbitraryQVectors(TestBase):
         """Test equivalence of _build_kvec_Brillouin method."""
         self.run_method_equivalence_test('_build_kvec_Brillouin')
         
+    def test_bz_averaged_adp_equivalence(self):
+        """
+        Verify that the internally calculated BZ-averaged ADP is consistent
+        regardless of whether the model is initialized in grid or arbitrary-q mode.
+        """
+        print("\n===== Testing BZ-Averaged ADP Equivalence =====")
+
+        # 1. Initialize Grid Model (will calculate bz_averaged_adp internally)
+        print("Initializing grid model...")
+        model_grid = OnePhonon(
+            pdb_path=self.pdb_path,
+            hsampling=self.hsampling, ksampling=self.ksampling, lsampling=self.lsampling,
+            device=self.device, **self.common_params
+        )
+        self.assertTrue(hasattr(model_grid, 'bz_averaged_adp'), "Grid model missing bz_averaged_adp")
+        self.assertIsNotNone(model_grid.bz_averaged_adp, "Grid model bz_averaged_adp is None")
+        adp_grid = model_grid.bz_averaged_adp
+        print(f"Grid ADP shape: {adp_grid.shape}, dtype: {adp_grid.dtype}, requires_grad: {adp_grid.requires_grad}")
+
+
+        # 2. Initialize Arbitrary-Q Model using grid's q-points AND sampling params
+        print("\nInitializing arbitrary-q model (with sampling params)...")
+        q_vectors_from_grid = model_grid.q_grid.clone().detach().to(dtype=torch.float64) # Use float64
+
+        # Pass sampling parameters explicitly for ADP calculation
+        model_q = OnePhonon(
+            pdb_path=self.pdb_path,
+            q_vectors=q_vectors_from_grid,
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params
+        )
+        self.assertTrue(hasattr(model_q, 'bz_averaged_adp'), "Arbitrary-q model missing bz_averaged_adp")
+        self.assertIsNotNone(model_q.bz_averaged_adp, "Arbitrary-q model bz_averaged_adp is None")
+        adp_q = model_q.bz_averaged_adp
+        print(f"Arbitrary-Q ADP shape: {adp_q.shape}, dtype: {adp_q.dtype}, requires_grad: {adp_q.requires_grad}")
+
+
+        # 3. Compare the ADP tensors
+        print("\nComparing ADP tensors...")
+        # Use slightly looser tolerance than basic grid checks, similar to Linv/covariance
+        comparison_tolerances = {'rtol': 1e-6, 'atol': 1e-8}
+        TensorComparison.assert_tensors_equal(
+            adp_grid,
+            adp_q,
+            **comparison_tolerances,
+            msg="BZ-averaged ADP calculated differently between grid and arbitrary-q modes"
+        )
+        print("BZ-averaged ADP tensors match successfully.")
+        print("===== BZ-Averaged ADP Equivalence Test PASSED =====")
+
     def test_apply_disorder_equivalence(self):
         """Test equivalence of the final apply_disorder method."""
         self.run_method_equivalence_test('apply_disorder')
