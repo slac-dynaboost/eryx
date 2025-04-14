@@ -1213,18 +1213,27 @@ class OnePhonon:
              if total_points > print_idx:
                  # Print absolute value for comparison consistency
                  print(f"PyTorch v_all[{print_idx},0,0] (abs): {torch.abs(v_all[print_idx,0,0]).item():.8e}")
-                 print(f"PyTorch Linv_T_batch[{print_idx},0,0]: {Linv_T_batch[print_idx,0,0].item():.8e}")
-                 print(f"PyTorch Linv_T_batch dtype: {Linv_T_batch.dtype}")
+                 # Print from self.Linv which is float64
+                 print(f"PyTorch self.Linv.T[0,0]: {self.Linv.T[0,0].item():.8e}") 
                  print(f"PyTorch v_all dtype: {v_all.dtype}")
              # --- End Debug V ---
 
-             # Transform eigenvectors V = L^(-T) @ v
-             # Use self.Linv directly which is float64 (real_dtype)
-             Linv_T_batch_real = self.Linv.T.unsqueeze(0).expand(total_points, -1, -1)
-             
-             # Perform the batched matmul: V = Linv_T_batch_real @ v_all
-             # PyTorch bmm handles real @ complex -> complex automatically
-             self.V = torch.bmm(Linv_T_batch_real, v_all.to(self.complex_dtype))
+             # --- Start OPTION B Implementation ---
+             # Transform eigenvectors V = L^(-T) @ v using manual complex multiplication
+             # Get Linv.T as float64 (real_dtype)
+             Linv_T_batch_real = self.Linv.T.unsqueeze(0).expand(total_points, -1, -1) # Shape: [batch, N, N], dtype: float64
+
+             # Separate real and imaginary parts of v_all (which is complex128)
+             v_all_real = v_all.real.to(self.real_dtype) # Shape: [batch, N, N], dtype: float64
+             v_all_imag = v_all.imag.to(self.real_dtype) # Shape: [batch, N, N], dtype: float64
+
+             # Perform multiplications: Linv.T is real, so (L.T @ v_real) + i*(L.T @ v_imag)
+             V_real = torch.bmm(Linv_T_batch_real, v_all_real) # float64 @ float64 -> float64
+             V_imag = torch.bmm(Linv_T_batch_real, v_all_imag) # float64 @ float64 -> float64
+
+             # Combine back to complex128
+             self.V = torch.complex(V_real, V_imag)
+             # --- End OPTION B Implementation ---
              
              # --- Debug Final V ---
              if total_points > print_idx:
