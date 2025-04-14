@@ -1367,40 +1367,8 @@ class OnePhonon:
                 print(f"DEBUG Arbitrary-Q: Kinv[{debug_idx}, 0, 0]: {Kinv_all[debug_idx,0,0].item():.8e}")
                 print(f"DEBUG Arbitrary-Q: Kinv[{debug_idx}, 5, 5]: {Kinv_all[debug_idx,5,5].item():.8e}")
             
-            # Calculate phase factors and accumulate covariance contributions
-            for j_cell in range(self.n_cell):
-                # Get cell origin
-                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
-                
-                # Calculate phase factors for all k-vectors
-                all_phases = torch.sum(self.kvec * r_cell, dim=1)
-                
-                # Use complex exponential with exact NumPy-compatible behavior
-                # eikr = exp(i * phase) = cos(phase) + i*sin(phase)
-                cos_phases = torch.cos(all_phases)
-                sin_phases = torch.sin(all_phases)
-                eikr_all = torch.complex(cos_phases, sin_phases)
-                
-                # Debug print for specific phase
-                if total_points > debug_idx and j_cell < 3:
-                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, eikr[{debug_idx}]: {eikr_all[debug_idx].item()}")
-                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, phase[{debug_idx}]: {all_phases[debug_idx].item():.8e}")
-                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, r_cell: {r_cell.detach().cpu().numpy()}")
-                    print(f"DEBUG Arbitrary-Q: Cell {j_cell}, kvec[{debug_idx}]: {self.kvec[debug_idx].detach().cpu().numpy()}")
-                
-                # Reshape phase factors for matrix multiplication
-                eikr_reshaped = eikr_all.view(-1, 1, 1)
-                
-                # Calculate the average contribution across all k-points for this cell offset
-                # using torch.mean over the batch dimension (dim=0)
-                average_contribution = torch.mean(Kinv_all * eikr_reshaped, dim=0)
-                
-                # Debug print for accumulated sum
-                if j_cell < 3:
-                    print(f"Cell {j_cell} average_contribution[0,0]: {average_contribution[0,0].item()}")
-                
-                # Accumulate in covariance tensor
-                self.covar[:, j_cell, :] = average_contribution
+            # Note: We no longer calculate self.covar and self.ADP here
+            # as we now use the pre-calculated self.bz_averaged_adp from _compute_bz_averaged_adp
         else:
             # Grid-based mode - Revised to match arbitrary-q mode structure
             # First compute all Kinv matrices for all BZ points
@@ -1469,73 +1437,77 @@ class OnePhonon:
                 # Accumulate in covariance tensor (restore division by total_points)
                 self.covar[:, j_cell, :] = complex_sum / total_points
         
-        # Get reference cell ID for [0,0,0]
-        ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
-        
-        # Debug print for final covar values
-        print(f"\nDEBUG {'Arbitrary-Q' if getattr(self, 'use_arbitrary_q', False) else 'Grid Mode'}: Final covar[0,0,0]: {self.covar[0, 0, 0].item()}")
-        print(f"DEBUG {'Arbitrary-Q' if getattr(self, 'use_arbitrary_q', False) else 'Grid Mode'}: Final covar[5,0,5]: {self.covar[5, 0, 5].item()}")
-        
-        # Extract diagonal elements for ADP calculation
-        # Use .real attribute instead of torch.real() to preserve gradient flow
-        diagonal_values = torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1)
-        self.ADP = diagonal_values.real
-        
-        # Debug print for diagonal values
-        print(f"Diagonal values shape: {diagonal_values.shape}")
-        print(f"First few diagonal values: {diagonal_values[:5].detach().cpu().numpy()}")
-        
-        # Transform ADP using the displacement projection matrix
-        Amat = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu)
-        self.ADP = torch.matmul(Amat, self.ADP)
-        
-        # Debug print after Amat transformation
-        print(f"ADP after Amat transform shape: {self.ADP.shape}")
-        print(f"First few ADP values after transform: {self.ADP[:5].detach().cpu().numpy()}")
-        
-        # Sum over spatial dimensions (x,y,z)
-        self.ADP = torch.sum(self.ADP.reshape(int(self.ADP.shape[0] / 3), 3), dim=1)
-        
-        # Debug print after spatial sum
-        print(f"ADP after spatial sum shape: {self.ADP.shape}")
-        print(f"First few ADP values after spatial sum: {self.ADP[:5].detach().cpu().numpy()}")
-        
-        # Scale ADP to match experimental values - exactly match NumPy behavior
-        model_adp_tensor = self.array_to_tensor(self.model.adp)
-        
-        # Handle NaN values exactly like NumPy
-        valid_adp = self.ADP[~torch.isnan(self.ADP)]
-        if valid_adp.numel() > 0:
-            # Calculate mean of valid values only
-            adp_mean = torch.mean(valid_adp)
-            # Calculate scaling factor exactly as in NumPy
-            ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
-        else:
-            # Fallback if all values are NaN
-            ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
-        
-        # Debug print for scaling
-        print(f"ADP scaling factor: {ADP_scale.item():.8e}")
-        
-        # Apply scaling to ADP and covariance matrix
-        self.ADP = self.ADP * ADP_scale
-        self.covar = self.covar * ADP_scale
-        
-        # Debug print after scaling
-        print(f"ADP after scaling, first few values: {self.ADP[:5].detach().cpu().numpy()}")
-        
-        # Reshape covariance matrix to final format
-        # Use .real attribute instead of torch.real() to preserve gradient flow
-        reshaped_covar = self.covar.reshape((self.n_asu, self.n_dof_per_asu,
-                                           self.n_cell, self.n_asu, self.n_dof_per_asu))
-        self.covar = reshaped_covar.real
-        
-        # Set requires_grad for ADP tensor
-        self.ADP.requires_grad_(True)
-        
-        print(f"ADP requires_grad: {self.ADP.requires_grad}")
-        print(f"ADP.grad_fn: {self.ADP.grad_fn}")
-        print(f"Covariance computation complete: ADP.shape={self.ADP.shape}")
+        if not getattr(self, 'use_arbitrary_q', False):
+            # Only perform the remaining calculations for grid-based mode
+            # Arbitrary-q mode now uses bz_averaged_adp instead
+            
+            # Get reference cell ID for [0,0,0]
+            ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
+            
+            # Debug print for final covar values
+            print(f"\nDEBUG Grid Mode: Final covar[0,0,0]: {self.covar[0, 0, 0].item()}")
+            print(f"DEBUG Grid Mode: Final covar[5,0,5]: {self.covar[5, 0, 5].item()}")
+            
+            # Extract diagonal elements for ADP calculation
+            # Use .real attribute instead of torch.real() to preserve gradient flow
+            diagonal_values = torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1)
+            self.ADP = diagonal_values.real
+            
+            # Debug print for diagonal values
+            print(f"Diagonal values shape: {diagonal_values.shape}")
+            print(f"First few diagonal values: {diagonal_values[:5].detach().cpu().numpy()}")
+            
+            # Transform ADP using the displacement projection matrix
+            Amat = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu)
+            self.ADP = torch.matmul(Amat, self.ADP)
+            
+            # Debug print after Amat transformation
+            print(f"ADP after Amat transform shape: {self.ADP.shape}")
+            print(f"First few ADP values after transform: {self.ADP[:5].detach().cpu().numpy()}")
+            
+            # Sum over spatial dimensions (x,y,z)
+            self.ADP = torch.sum(self.ADP.reshape(int(self.ADP.shape[0] / 3), 3), dim=1)
+            
+            # Debug print after spatial sum
+            print(f"ADP after spatial sum shape: {self.ADP.shape}")
+            print(f"First few ADP values after spatial sum: {self.ADP[:5].detach().cpu().numpy()}")
+            
+            # Scale ADP to match experimental values - exactly match NumPy behavior
+            model_adp_tensor = self.array_to_tensor(self.model.adp)
+            
+            # Handle NaN values exactly like NumPy
+            valid_adp = self.ADP[~torch.isnan(self.ADP)]
+            if valid_adp.numel() > 0:
+                # Calculate mean of valid values only
+                adp_mean = torch.mean(valid_adp)
+                # Calculate scaling factor exactly as in NumPy
+                ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
+            else:
+                # Fallback if all values are NaN
+                ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
+            
+            # Debug print for scaling
+            print(f"ADP scaling factor: {ADP_scale.item():.8e}")
+            
+            # Apply scaling to ADP and covariance matrix
+            self.ADP = self.ADP * ADP_scale
+            self.covar = self.covar * ADP_scale
+            
+            # Debug print after scaling
+            print(f"ADP after scaling, first few values: {self.ADP[:5].detach().cpu().numpy()}")
+            
+            # Reshape covariance matrix to final format
+            # Use .real attribute instead of torch.real() to preserve gradient flow
+            reshaped_covar = self.covar.reshape((self.n_asu, self.n_dof_per_asu,
+                                               self.n_cell, self.n_asu, self.n_dof_per_asu))
+            self.covar = reshaped_covar.real
+            
+            # Set requires_grad for ADP tensor
+            self.ADP.requires_grad_(True)
+            
+            print(f"ADP requires_grad: {self.ADP.requires_grad}")
+            print(f"ADP.grad_fn: {self.ADP.grad_fn}")
+            print(f"Covariance computation complete: ADP.shape={self.ADP.shape}")
     
     #@debug
     def apply_disorder(self, rank: int = -1, outdir: Optional[str] = None, 
@@ -1564,16 +1536,46 @@ class OnePhonon:
         import logging
         logging.debug(f"[apply_disorder] rank={rank}, use_data_adp={use_data_adp}, use_arbitrary_q={getattr(self,'use_arbitrary_q',None)}")
         
-        # Prepare ADPs
+        # Prepare ADPs based on use_data_adp flag
         if use_data_adp:
-            ADP = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device) / (8 * torch.pi * torch.pi)
-        else:
-            if hasattr(self, "ADP"):
-                ADP = self.ADP.to(dtype=self.real_dtype, device=self.device)
+            # Use B-factors directly from PDB data (converted to tensor)
+            # Ensure self.model.adp exists and is indexable
+            if hasattr(self.model, 'adp') and self.model.adp is not None and len(self.model.adp) > 0:
+                 # Convert the NumPy array (assuming it's stored as such in self.model)
+                 ADP_source = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device)
+                 ADP = ADP_source / (8 * torch.pi * torch.pi) # Apply scaling
+                 logging.debug("[apply_disorder] Using ADP from PDB data.")
             else:
-                # fallback if not computed
-                ADP = torch.ones(self.n_atoms_per_asu, device=self.device, dtype=self.real_dtype)
-        logging.debug(f"[apply_disorder] ADP shape= {self.ADP.shape if hasattr(self,'ADP') else '(none)'}")
+                 logging.warning("[apply_disorder] PDB data ADP not found or empty. Falling back to ones.")
+                 # Fallback: Create a tensor of ones with the correct size
+                 num_atoms = self.n_atoms_per_asu # Assuming this attribute exists
+                 ADP = torch.ones(num_atoms, device=self.device, dtype=self.real_dtype)
+        else:
+            # Use the pre-calculated BZ-averaged ADP stored on self
+            if hasattr(self, "bz_averaged_adp") and self.bz_averaged_adp is not None:
+                ADP = self.bz_averaged_adp.to(dtype=self.real_dtype, device=self.device)
+                logging.debug("[apply_disorder] Using internally calculated BZ-averaged ADP.")
+                # Ensure requires_grad is preserved or re-added if necessary
+                if ADP.is_floating_point() and not ADP.requires_grad and self.bz_averaged_adp.requires_grad:
+                     ADP.requires_grad_(True)
+            else:
+                # Fallback if bz_averaged_adp wasn't computed (e.g., non-GNM model or error)
+                logging.warning("[apply_disorder] bz_averaged_adp not found or is None. Falling back to ones.")
+                num_atoms = self.n_atoms_per_asu # Assuming this attribute exists
+                ADP = torch.ones(num_atoms, device=self.device, dtype=self.real_dtype)
+
+        # Ensure ADP tensor requires grad if it's float and source requires grad
+        # (This might be redundant if handled above, but good safety check)
+        if ADP.is_floating_point() and not ADP.requires_grad:
+             # Check if the original source required grad
+             source_requires_grad = False
+             if not use_data_adp and hasattr(self, "bz_averaged_adp") and self.bz_averaged_adp is not None:
+                  source_requires_grad = self.bz_averaged_adp.requires_grad
+             # Only set requires_grad if source needed it
+             if source_requires_grad:
+                  ADP.requires_grad_(True)
+
+        logging.debug(f"[apply_disorder] Using ADP with shape: {ADP.shape}, requires_grad={ADP.requires_grad}")
         
         # Initialize intensity tensor
         Id = torch.zeros(self.q_grid.shape[0], dtype=self.real_dtype, device=self.device)
