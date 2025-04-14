@@ -1411,7 +1411,8 @@ class OnePhonon:
                 ).to(dtype=self.complex_dtype)  # Ensure complex128 output
             
             # Reshape for matrix operations
-            F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
+            F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu)) # complex128
+            assert F.dtype == self.complex_dtype, f"Reshaped F dtype is {F.dtype}, expected {self.complex_dtype}"
             
             # Apply disorder model depending on rank parameter
             if rank == -1:
@@ -1556,8 +1557,9 @@ class OnePhonon:
                             continue
                         
                         # Compute structure factors for all ASUs in parallel
+                        # Initialize F with the CORRECT high-precision complex dtype
                         F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
-                                      dtype=torch.complex64, device=self.device)
+                                      dtype=self.complex_dtype, device=self.device) # <--- FIXED DTYPE HERE
                         
                         # Process all ASUs with pre-computed data
                         for i_asu in range(self.n_asu):
@@ -1571,22 +1573,20 @@ class OnePhonon:
                             adp = ADP.to(dtype=self.real_dtype)
                             project = asu['project'].to(dtype=self.real_dtype)
                             
-                            # Compute structure factors
-                            F[:, i_asu, :] = structure_factors(
-                                q_vectors,
-                                xyz,
-                                ff_a,
-                                ff_b,
-                                ff_c,
-                                U=adp,
-                                n_processes=self.n_processes,
-                                compute_qF=True,
-                                project_on_components=project,
-                                sum_over_atoms=False
+                            # Compute structure factors (expects float64 inputs, returns complex128)
+                            sf_result = structure_factors(
+                                q_vectors, xyz, ff_a, ff_b, ff_c, U=adp,
+                                n_processes=self.n_processes, compute_qF=True,
+                                project_on_components=project, sum_over_atoms=False
                             )
+                            # Assign result to F slice
+                            F[:, i_asu, :] = sf_result
+                            # Assert F's dtype after assignment
+                            assert F.dtype == self.complex_dtype, f"F dtype after assignment (ASU {i_asu}) is {F.dtype}, expected {self.complex_dtype}"
                         
                         # Reshape for matrix operations
-                        F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
+                        F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu)) # complex128
+                        assert F.dtype == self.complex_dtype, f"Reshaped F dtype is {F.dtype}, expected {self.complex_dtype}"
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
