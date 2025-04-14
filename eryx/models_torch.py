@@ -1609,11 +1609,11 @@ class OnePhonon:
             asu_data = []
             for i_asu in range(self.n_asu):
                 asu_data.append({
-                    'xyz': self.array_to_tensor(self.crystal.get_asu_xyz(i_asu), dtype=torch.float32),
-                    'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=torch.float32),
-                    'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=torch.float32),
-                    'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=torch.float32),
-                    'project': self.Amat[i_asu]
+                    'xyz': self.array_to_tensor(self.crystal.get_asu_xyz(i_asu), dtype=self.real_dtype),
+                    'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=self.real_dtype),
+                    'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=self.real_dtype),
+                    'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=self.real_dtype),
+                    'project': self.Amat[i_asu].to(dtype=self.real_dtype)
                 })
             
             # Compute structure factors for all valid q-vectors
@@ -1632,7 +1632,17 @@ class OnePhonon:
                 ff_c = asu['ff_c'].to(dtype=self.real_dtype)
                 adp = ADP.to(dtype=self.real_dtype)
                 project = asu['project'].to(dtype=self.real_dtype)
-                
+                    
+                # Clone tensors to ensure they're completely independent
+                # This prevents any potential aliasing or in-place modification issues
+                q_vectors = q_vectors.clone()
+                xyz = xyz.clone()
+                ff_a = ff_a.clone()
+                ff_b = ff_b.clone()
+                ff_c = ff_c.clone()
+                adp = adp.clone()
+                project = project.clone()
+                    
                 # Compute structure factors (expects float64 inputs, returns complex128)
                 sf_result = structure_factors(
                     q_vectors, xyz, ff_a, ff_b, ff_c, U=adp,
@@ -1814,7 +1824,7 @@ class OnePhonon:
                     'ff_a': self.array_to_tensor(self.model.ff_a[i_asu], dtype=self.real_dtype),
                     'ff_b': self.array_to_tensor(self.model.ff_b[i_asu], dtype=self.real_dtype),
                     'ff_c': self.array_to_tensor(self.model.ff_c[i_asu], dtype=self.real_dtype),
-                    'project': self.Amat[i_asu]
+                    'project': self.Amat[i_asu].to(dtype=self.real_dtype)
                 })
             
             logging.debug("[apply_disorder] Starting loops over Brillouin zone...")
@@ -1906,6 +1916,16 @@ class OnePhonon:
                             adp = ADP.to(dtype=self.real_dtype)
                             project = asu['project'].to(dtype=self.real_dtype)
                             
+                            # Clone tensors to ensure they're completely independent
+                            # This prevents any potential aliasing or in-place modification issues
+                            q_vectors = q_vectors.clone()
+                            xyz = xyz.clone()
+                            ff_a = ff_a.clone()
+                            ff_b = ff_b.clone()
+                            ff_c = ff_c.clone()
+                            adp = adp.clone()
+                            project = project.clone()
+                            
                             # Compute structure factors (expects float64 inputs, returns complex128)
                             sf_result = structure_factors(
                                 q_vectors, xyz, ff_a, ff_b, ff_c, U=adp,
@@ -1942,11 +1962,22 @@ class OnePhonon:
                                     for i_asu in range(self.n_asu):
                                         print(f"  GRID MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
                                         q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
-                                        print(f"    q_vector: {q_for_sf.cpu().numpy()}")
-                                        print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].cpu().numpy()}")
-                                        print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e}")
-                                        print(f"    ADP[0]: {ADP[0].item():.6e}")
-                                        print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e}")
+                                        print(f"    q_vector: {q_for_sf.detach().cpu().numpy()} (dtype: {q_for_sf.dtype})")
+                                        print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].detach().cpu().numpy()} (dtype: {asu_data[i_asu]['xyz'].dtype})")
+                                        print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_a'].dtype})")
+                                        print(f"    ff_b[0,0]: {asu_data[i_asu]['ff_b'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_b'].dtype})")
+                                        print(f"    ff_c[0]: {asu_data[i_asu]['ff_c'][0].item():.6e} (dtype: {asu_data[i_asu]['ff_c'].dtype})")
+                                        # ADP might not require grad if use_data_adp=True, use .item() which works for both
+                                        # Ensure ADP tensor has at least one element before indexing
+                                        if ADP.numel() > 0:
+                                            print(f"    ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype})")
+                                        else:
+                                            print(f"    ADP: (empty or None)")
+                                        # Ensure project tensor exists and has elements before indexing
+                                        if asu_data[i_asu]['project'] is not None and asu_data[i_asu]['project'].numel() > 0:
+                                            print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e} (dtype: {asu_data[i_asu]['project'].dtype})")
+                                        else:
+                                            print(f"    project: (empty or None)")
                                 else:
                                     print(f"--- GRID MODE (idx={idx}): target_q_idx={target_q_idx} not found in valid_indices for this BZ point.")
                             
