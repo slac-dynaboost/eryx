@@ -1381,8 +1381,9 @@ class OnePhonon:
                 })
             
             # Compute structure factors for all valid q-vectors
+            # Initialize F with the CORRECT high-precision complex dtype
             F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
-                          dtype=self.complex_dtype, device=self.device)
+                          dtype=self.complex_dtype, device=self.device) # <--- FIXED DTYPE HERE
             
             # Process all ASUs
             for i_asu in range(self.n_asu):
