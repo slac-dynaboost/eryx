@@ -330,6 +330,7 @@ class OnePhonon:
         This method supports both grid-based and arbitrary q-vector modes.
         """
         import logging
+        import logging
         logging.debug(f"[_setup_phonons] use_arbitrary_q={getattr(self, 'use_arbitrary_q', False)}, model={model}")
         
         # Decide dimensions based on mode
@@ -395,6 +396,24 @@ class OnePhonon:
         else:
             self.compute_rb_phonons()
         
+        # Calculate and store BZ-averaged ADP if using GNM model
+        if self.model_type == 'gnm':
+             try:
+                 self.bz_averaged_adp = self._compute_bz_averaged_adp()
+                 # Ensure it requires grad if inputs did (it should trace back)
+                 # Check if any relevant input requires grad
+                 input_requires_grad = self.gamma_intra.requires_grad or self.gamma_inter.requires_grad # Add others if needed
+                 if input_requires_grad and not self.bz_averaged_adp.requires_grad:
+                      # This might indicate a break in the computation graph, add dummy op
+                      self.bz_averaged_adp = self.bz_averaged_adp + 0.0 * (self.gamma_intra + self.gamma_inter)
+                 logging.debug(f"[_setup_phonons] Calculated bz_averaged_adp, shape={self.bz_averaged_adp.shape}, requires_grad={self.bz_averaged_adp.requires_grad}")
+             except Exception as e:
+                 logging.error(f"[_setup_phonons] Failed to compute BZ-averaged ADP: {e}")
+                 self.bz_averaged_adp = None # Set to None on failure
+        else:
+             self.bz_averaged_adp = None # Not applicable for non-GNM models
+             logging.debug("[_setup_phonons] Skipping BZ-averaged ADP calculation for non-GNM model.")
+
         logging.debug("[_setup_phonons] done.")
     
     #@debug
@@ -2261,6 +2280,108 @@ class RigidBodyRotations:
     def __init__(self, *args, **kwargs):
         pass
         
+    def _compute_bz_averaged_adp(self) -> torch.Tensor:
+        """
+        Calculates the BZ-averaged ADP based on the GNM model.
+
+        This method performs a calculation similar to the grid-mode
+        compute_covariance_matrix but focuses only on deriving the
+        correctly averaged ADP, integrating over the Brillouin Zone
+        defined by self.hsampling, self.ksampling, self.lsampling.
+
+        Returns:
+            torch.Tensor: The calculated BZ-averaged ADP (real_dtype).
+
+        Raises:
+            ValueError: If sampling parameters are not defined on self.
+        """
+        logging.debug("Starting _compute_bz_averaged_adp calculation...")
+
+        # 1. Check for required sampling parameters
+        if self.hsampling is None or self.ksampling is None or self.lsampling is None:
+            raise ValueError("Cannot compute BZ-averaged ADP without hsampling, ksampling, and lsampling defined.")
+
+        # 2. Get BZ dimensions and total points
+        h_dim_bz = int(self.hsampling[2])
+        k_dim_bz = int(self.ksampling[2])
+        l_dim_bz = int(self.lsampling[2])
+        total_k_points = h_dim_bz * k_dim_bz * l_dim_bz
+        logging.debug(f"  BZ dimensions: {h_dim_bz}x{k_dim_bz}x{l_dim_bz}, Total points: {total_k_points}")
+
+        # 3. Generate BZ k-vectors (ensure float64)
+        A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
+        h_coords = torch.tensor([self._center_kvec(dh, h_dim_bz) for dh in range(h_dim_bz)], device=self.device, dtype=self.real_dtype)
+        k_coords = torch.tensor([self._center_kvec(dk, k_dim_bz) for dk in range(k_dim_bz)], device=self.device, dtype=self.real_dtype)
+        l_coords = torch.tensor([self._center_kvec(dl, l_dim_bz) for dl in range(l_dim_bz)], device=self.device, dtype=self.real_dtype)
+        h_grid, k_grid, l_grid = torch.meshgrid(h_coords, k_coords, l_coords, indexing='ij')
+        hkl_fractional = torch.stack([h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1).to(dtype=self.real_dtype)
+        kvec_bz = torch.matmul(hkl_fractional, A_inv_tensor) # Shape: [total_k_points, 3]
+        logging.debug(f"  Generated kvec_bz, shape={kvec_bz.shape}, dtype={kvec_bz.dtype}")
+
+        # 4. Instantiate GaussianNetworkModelTorch helper
+        from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch # Local import ok
+        gnm_torch = GaussianNetworkModelTorch()
+        gnm_torch.n_asu = self.n_asu
+        gnm_torch.n_atoms_per_asu = self.n_atoms_per_asu # Ensure this is set correctly
+        gnm_torch.n_cell = self.n_cell
+        gnm_torch.id_cell_ref = self.id_cell_ref
+        gnm_torch.device = self.device
+        gnm_torch.real_dtype = self.real_dtype
+        gnm_torch.complex_dtype = self.complex_dtype
+        gnm_torch.crystal = self.crystal # Pass the crystal object/dict
+        # Set gamma and neighbors from self.gnm (the NumPy one)
+        gnm_torch.gamma = torch.tensor(self.gnm.gamma, dtype=self.real_dtype, device=self.device)
+        gnm_torch.asu_neighbors = self.gnm.asu_neighbors
+
+        # 5. Compute Hessian (ensure complex128)
+        hessian = self.compute_hessian().to(self.complex_dtype)
+        logging.debug(f"  Computed hessian, shape={hessian.shape}, dtype={hessian.dtype}")
+
+        # 6. Compute Kinv for all BZ k-vectors (ensure complex128)
+        Kinv_all_bz = gnm_torch.compute_Kinv(hessian, kvec_bz, reshape=False).to(self.complex_dtype)
+        logging.debug(f"  Computed Kinv_all_bz, shape={Kinv_all_bz.shape}, dtype={Kinv_all_bz.dtype}")
+
+        # 7. Average Kinv at zero cell offset (r_d=0 => eikr=1)
+        avg_Kinv_at_0 = torch.mean(Kinv_all_bz, dim=0) # Average over the BZ points
+        logging.debug(f"  Computed avg_Kinv_at_0, shape={avg_Kinv_at_0.shape}, dtype={avg_Kinv_at_0.dtype}")
+
+        # 8. Extract diagonal (ensure complex128)
+        diagonal_values = torch.diagonal(avg_Kinv_at_0, dim1=0, dim2=1)
+        logging.debug(f"  Extracted diagonal_values, shape={diagonal_values.shape}, dtype={diagonal_values.dtype}")
+
+        # 9. Calculate ADP (projection, sum, scale) - ensure float64
+        # Use .real attribute for gradient safety
+        ADP_unscaled = diagonal_values.real.to(self.real_dtype)
+        logging.debug(f"  ADP_unscaled (real diagonal), shape={ADP_unscaled.shape}, dtype={ADP_unscaled.dtype}")
+
+        # Ensure self.Amat is float64
+        Amat_proj = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu).to(self.real_dtype)
+        ADP_unscaled = torch.matmul(Amat_proj, ADP_unscaled)
+        logging.debug(f"  ADP_unscaled (after Amat), shape={ADP_unscaled.shape}, dtype={ADP_unscaled.dtype}")
+
+        ADP_unscaled = torch.sum(ADP_unscaled.reshape(int(ADP_unscaled.shape[0] / 3), 3), dim=1)
+        logging.debug(f"  ADP_unscaled (after spatial sum), shape={ADP_unscaled.shape}, dtype={ADP_unscaled.dtype}")
+
+        # Scaling (match NumPy logic exactly)
+        model_adp_tensor = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device) # Use index 0 for single conformer ADP
+        valid_adp = ADP_unscaled[~torch.isnan(ADP_unscaled)]
+        if valid_adp.numel() > 0:
+            adp_mean = torch.mean(valid_adp)
+            if adp_mean.abs() < 1e-9: # Avoid division by near-zero
+                 ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
+                 logging.warning("  ADP mean is near zero, using scaling factor 1.0")
+            else:
+                 ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
+        else:
+            ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
+            logging.warning("  All ADP values were NaN, using scaling factor 1.0")
+
+        logging.debug(f"  ADP scaling factor: {ADP_scale.item():.6e}")
+        final_ADP = ADP_unscaled * ADP_scale
+        logging.debug(f"  Calculated final_ADP, shape={final_ADP.shape}, dtype={final_ADP.dtype}")
+
+        return final_ADP
+
     def _track_gradient_flow(self, named_parameters=None):
         """
         Diagnostic function for tracking gradient flow through the model.
