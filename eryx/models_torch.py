@@ -1402,14 +1402,20 @@ class OnePhonon:
                 Winv_valid = self.Winv[valid_indices]  # shape: [n_valid, n_dof]
                 
                 # Process each point
-                intensity = torch.zeros(valid_indices.numel(), device=self.device)
+                intensity = torch.zeros(valid_indices.numel(), device=self.device, dtype=self.real_dtype)
                 for i, idx in enumerate(valid_indices):
                     # Get eigenvectors and eigenvalues for this q-vector
                     V_idx = V_valid[i]
                     Winv_idx = Winv_valid[i]
                     
+                    # Ensure F has the correct complex dtype before matmul with V
+                    if F[i].dtype != self.complex_dtype:
+                        F_i = F[i].to(dtype=self.complex_dtype)
+                    else:
+                        F_i = F[i]
+                    
                     # Compute F·V for all modes at once
-                    FV = torch.matmul(F[i], V_idx)
+                    FV = torch.matmul(F_i, V_idx)
                     
                     # Calculate absolute squared values - ensure real output
                     FV_abs_squared = torch.abs(FV)**2
@@ -1420,8 +1426,11 @@ class OnePhonon:
                     else:
                         real_winv = Winv_idx
                     
+                    # Cast real_winv to the target real dtype before multiplication
+                    real_winv_float64 = real_winv.to(dtype=self.real_dtype)
+                    
                     # Weight by eigenvalues and sum - ensure real output
-                    intensity[i] = torch.sum(FV_abs_squared * real_winv.to(dtype=self.real_dtype))
+                    intensity[i] = torch.sum(FV_abs_squared * real_winv_float64)
             else:
                 # Process single mode
                 intensity = torch.zeros(valid_indices.numel(), device=self.device)
@@ -1441,11 +1450,17 @@ class OnePhonon:
                     else:
                         real_winv = self.Winv[idx, rank]
                     
+                    # Cast real_winv to the target real dtype before multiplication
+                    real_winv_float64 = real_winv.to(dtype=self.real_dtype)
+                    
                     # Compute intensity
-                    intensity[i] = FV_abs_squared * real_winv.to(dtype=self.real_dtype)
+                    intensity[i] = FV_abs_squared * real_winv_float64
             
             # Build full result array
             Id = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
+            # Ensure intensity has the correct dtype before assignment
+            if intensity.dtype != self.real_dtype:
+                intensity = intensity.to(dtype=self.real_dtype)
             Id[valid_indices] = intensity
             
             # Apply resolution mask (redundant but kept for consistency)
@@ -1558,8 +1573,14 @@ class OnePhonon:
                 V_idx = self.V[idx]
                 Winv_idx = self.Winv[idx]
                 
+                # Ensure F has the correct complex dtype before matmul with V
+                if F.dtype != self.complex_dtype:
+                    F_complex = F.to(dtype=self.complex_dtype)
+                else:
+                    F_complex = F
+                
                 # Compute F·V for all modes at once
-                FV = torch.matmul(F, V_idx)
+                FV = torch.matmul(F_complex, V_idx)
                 
                 # Calculate absolute squared values - ensure real output
                 FV_real = torch.real(FV)
@@ -1578,14 +1599,28 @@ class OnePhonon:
                                           torch.tensor(float('nan'), device=self.device, dtype=torch.float32),
                                           real_winv)
                 
+                # Cast real_winv to the target real dtype before multiplication
+                real_winv_float64 = real_winv.to(dtype=self.real_dtype)
+                
                 # Weight by eigenvalues and sum - ensure real output
-                weighted_intensity = torch.matmul(FV_abs_squared, real_winv.to(dtype=self.real_dtype))
+                weighted_intensity = torch.matmul(FV_abs_squared, real_winv_float64)
+                
+                # Ensure weighted_intensity has the correct dtype before accumulation
+                if weighted_intensity.dtype != self.real_dtype:
+                    weighted_intensity = weighted_intensity.to(dtype=self.real_dtype)
+                
                 Id.index_add_(0, valid_indices, weighted_intensity)
             else:
                 # Process single mode
                 V_rank = self.V[idx, :, rank]
                 
-                FV = torch.matmul(F, V_rank)
+                # Ensure F has the correct complex dtype before matmul with V
+                if F.dtype != self.complex_dtype:
+                    F_complex = F.to(dtype=self.complex_dtype)
+                else:
+                    F_complex = F
+                
+                FV = torch.matmul(F_complex, V_rank)
                 
                 # Calculate absolute squared values - ensure real output
                 FV_real = torch.real(FV)
@@ -1598,8 +1633,16 @@ class OnePhonon:
                 else:
                     real_winv = self.Winv[idx, rank].to(dtype=torch.float32)
                 
+                # Cast real_winv to the target real dtype before multiplication
+                real_winv_float64 = real_winv.to(dtype=self.real_dtype)
+                
                 # Compute weighted intensity - ensure real output
-                weighted_intensity = FV_abs_squared * real_winv.to(dtype=self.real_dtype)
+                weighted_intensity = FV_abs_squared * real_winv_float64
+                
+                # Ensure weighted_intensity has the correct dtype before accumulation
+                if weighted_intensity.dtype != self.real_dtype:
+                    weighted_intensity = weighted_intensity.to(dtype=self.real_dtype)
+                
                 Id.index_add_(0, valid_indices, weighted_intensity)
         
         # Apply resolution mask
