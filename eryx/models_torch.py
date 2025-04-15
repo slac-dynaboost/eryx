@@ -1615,6 +1615,11 @@ class OnePhonon:
     #@debug
     def apply_disorder(self, rank: int = -1, outdir: Optional[str] = None, 
                        use_data_adp: bool = False) -> torch.Tensor:
+        # --- Phase 0 Instrumentation ---
+        target_idx_bz = 1   # BZ index corresponding to (dh,dk,dl)=(0,0,1) for 2x2x2 sampling
+        target_q_idx = 9    # Example q_grid index corresponding to the first point for BZ idx 1
+                            # Replace 9 with the actual value found in Step 3.
+        # --- End Instrumentation ---
         """
         Compute the diffuse intensity using the one-phonon approximation.
         
