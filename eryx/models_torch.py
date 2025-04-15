@@ -1703,27 +1703,46 @@ class OnePhonon:
         
         # Prepare ADPs based on use_data_adp flag
         if use_data_adp:
-            # Use B-factors directly from PDB data (converted to tensor)
-            # Ensure self.model.adp exists and is indexable
+            # Use B-factors directly from PDB data
             if hasattr(self.model, 'adp') and self.model.adp is not None and len(self.model.adp) > 0:
-                 # Convert the NumPy array (assuming it's stored as such in self.model)
-                 ADP_source = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device)
-                 ADP = ADP_source / (8 * torch.pi * torch.pi) # Apply scaling
-                 logging.debug("[apply_disorder] Using ADP from PDB data.")
+                # Convert the NumPy array (assuming it's stored as such in self.model)
+                ADP_source = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device)
+                ADP = ADP_source / (8 * torch.pi * torch.pi) # Apply scaling
+                logging.debug("[apply_disorder] Using ADP from PDB data (use_data_adp=True).")
             else:
-                 logging.warning("[apply_disorder] PDB data ADP not found or empty. Falling back to ones.")
-                 # Fallback: Create a tensor of ones with the correct size
-                 num_atoms = self.n_atoms_per_asu # Assuming this attribute exists
-                 ADP = torch.ones(num_atoms, device=self.device, dtype=self.real_dtype)
+                logging.warning("[apply_disorder] PDB data ADP not found/empty despite use_data_adp=True. Falling back to ones.")
+                # Fallback: Create a tensor of ones with the correct size
+                num_atoms = self.n_atoms_per_asu # Assuming this attribute exists
+                ADP = torch.ones(num_atoms, device=self.device, dtype=self.real_dtype)
         else:
-            # Use ones as fallback when not using data ADP
-            logging.debug("[apply_disorder] Using default ones for ADP.")
-            num_atoms = self.n_atoms_per_asu
-            ADP = torch.ones(num_atoms, device=self.device, dtype=self.real_dtype)
-            
-        # Ensure ADP tensor requires grad if it's float
+            # Use internally computed ADP (self.ADP)
+            # This requires compute_covariance_matrix to have run during setup if model='gnm'
+            if hasattr(self, 'ADP') and self.ADP is not None:
+                ADP = self.ADP.to(dtype=self.real_dtype, device=self.device) # Ensure correct dtype/device
+                logging.debug("[apply_disorder] Using internally calculated ADP (use_data_adp=False).")
+            else:
+                # This case indicates an issue during setup (compute_covariance_matrix didn't run or failed)
+                # or the model type wasn't 'gnm'. Fallback to PDB data as a last resort.
+                logging.error("[apply_disorder] Internally computed self.ADP not found despite use_data_adp=False. "
+                          "This might indicate a setup issue or non-GNM model. Falling back to PDB data ADP.")
+                if hasattr(self.model, 'adp') and self.model.adp is not None and len(self.model.adp) > 0:
+                    ADP_source = torch.tensor(self.model.adp[0], dtype=self.real_dtype, device=self.device)
+                    ADP = ADP_source / (8 * torch.pi * torch.pi)
+                else:
+                    logging.warning("[apply_disorder] PDB data ADP also not found. Falling back to ones.")
+                    num_atoms = self.n_atoms_per_asu
+                    ADP = torch.ones(num_atoms, device=self.device, dtype=self.real_dtype)
+
+        # Ensure ADP tensor requires grad if it's float (should be handled by its source)
+        # Add a check and potentially connect the graph if needed, especially for self.ADP
         if ADP.is_floating_point() and not ADP.requires_grad:
-             ADP.requires_grad_(True)
+            # Check if the source (self.ADP if use_data_adp=False) required grad
+            source_requires_grad = False
+            if not use_data_adp and hasattr(self, 'ADP') and self.ADP is not None:
+                source_requires_grad = self.ADP.requires_grad # Check the source tensor directly
+            # Only set requires_grad if the source needed it
+            if source_requires_grad:
+                ADP = ADP.clone().detach().requires_grad_(True) # Recreate to ensure leaf status if needed
 
         logging.debug(f"[apply_disorder] Using ADP with shape: {ADP.shape}, requires_grad={ADP.requires_grad}")
         
