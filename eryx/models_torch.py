@@ -1698,6 +1698,11 @@ class OnePhonon:
             
             # Get valid indices directly from the resolution mask
             valid_indices = torch.where(self.res_mask)[0]
+
+            # --- Phase 0 Debug ---
+            logging.debug(f"[apply_disorder ARB] Total points: {n_points}, Valid points (res_mask): {valid_indices.numel()}")
+            # --- End Debug ---
+
             if valid_indices.numel() == 0:
                 # If no valid indices, return array of NaNs
                 Id_masked = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
@@ -1777,7 +1782,30 @@ class OnePhonon:
                 
                 # Process each point
                 intensity = torch.zeros(valid_indices.numel(), device=self.device, dtype=self.real_dtype)
-                for i, idx in enumerate(valid_indices):
+                for i, actual_q_idx_tensor in enumerate(valid_indices):
+                    actual_q_idx = actual_q_idx_tensor.item() # Get Python int index
+
+                    # --- Logging for target point ---
+                    if actual_q_idx == target_q_idx:
+                        print(f"\n--- ARB MODE (target_q_idx={target_q_idx}, loop i={i}) ---")
+                        q_vec = self.q_grid[actual_q_idx]
+                        print(f"  q_vec: {q_vec.detach().cpu().numpy()} (dtype: {q_vec.dtype})")
+                        # Ensure ADP tensor has elements before indexing
+                        if ADP.numel() > 0:
+                            print(f"  ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype}, shape: {ADP.shape})")
+                        else:
+                            print(f"  ADP: (empty or None)")
+                        F_i = F[i] # Structure factor for this q_idx
+                        print(f"  F[{i}] shape: {F_i.shape}, dtype: {F_i.dtype}")
+                        if F_i.numel() > 0: print(f"  F[{i}, 0] (abs): {torch.abs(F_i[0]).item():.6e}")
+                        V_i = V_valid[i] # Phonon eigenvectors for this q_idx
+                        print(f"  V[{i}] shape: {V_i.shape}, dtype: {V_i.dtype}")
+                        if V_i.numel() > 0: print(f"  V[{i}, 0, 0] (abs): {torch.abs(V_i[0,0]).item():.6e}")
+                        Winv_i = Winv_valid[i] # Phonon eigenvalues for this q_idx
+                        print(f"  Winv[{i}] shape: {Winv_i.shape}, dtype: {Winv_i.dtype}")
+                        if Winv_i.numel() > 0: print(f"  Winv[{i}, 0] (real): {Winv_i[0].real.item():.6e}")
+                    # --- End Logging ---
+
                     # Get eigenvectors and eigenvalues for this q-vector
                     V_idx = V_valid[i].to(self.complex_dtype)
                     Winv_idx = Winv_valid[i].to(self.complex_dtype)
@@ -1813,7 +1841,7 @@ class OnePhonon:
                                 print(f"    project: (empty or None)")
                     
                     # Always ensure F has the correct complex dtype before matmul with V
-                    F_i = F[i]
+                    F_i = F[i].to(self.complex_dtype) # Ensure F is complex
                     assert F_i.dtype == self.complex_dtype, f"F_i dtype is {F_i.dtype}, expected {self.complex_dtype}"
                     assert V_idx.dtype == self.complex_dtype, f"V_idx dtype is {V_idx.dtype}, expected {self.complex_dtype}"
                     
@@ -1849,11 +1877,21 @@ class OnePhonon:
                         print(f"Final Intensity for q_idx={target_q_idx}: {final_intensity.item():.6e}")
                     
                     # Weight by eigenvalues and sum - ensure real output
-                    intensity[i] = torch.sum(FV_abs_squared * real_winv_float64)
-                    
-                    # Debug print for target q-index
-                    if current_q_idx == target_q_idx:
-                        print(f"Value assigned to Id: {intensity[i].item():.6e}")
+                    intensity_contribution = torch.sum(FV_abs_squared * real_winv_float64)
+
+                    # --- Logging for target point ---
+                    if actual_q_idx == target_q_idx:
+                        print(f"  FV[{i}] shape: {FV.shape}, dtype: {FV.dtype}")
+                        if FV.numel() > 0: print(f"  FV[{i}, 0] (abs): {torch.abs(FV[0]).item():.6e}")
+                        print(f"  FV_abs_squared[{i}] shape: {FV_abs_squared.shape}, dtype: {FV_abs_squared.dtype}")
+                        if FV_abs_squared.numel() > 0: print(f"  FV_abs_squared[{i}, 0]: {FV_abs_squared[0].item():.6e}")
+                        print(f"  real_winv[{i}] shape: {real_winv_float64.shape}, dtype: {real_winv_float64.dtype}")
+                        if real_winv_float64.numel() > 0: print(f"  real_winv[{i}, 0]: {real_winv_float64[0].item():.6e}")
+                        print(f"  Intensity Contribution: {intensity_contribution.item():.6e}")
+                        print(f"  Storing at Id[{actual_q_idx}]")
+                    # --- End Logging ---
+
+                    intensity[i] = intensity_contribution
             else:
                 # Process single mode
                 intensity = torch.zeros(valid_indices.numel(), device=self.device)
@@ -1862,7 +1900,7 @@ class OnePhonon:
                     V_rank = self.V[idx, :, rank]
                     
                     # Always ensure F has the correct complex dtype before matmul with V
-                    F_i = F[i]
+                    F_i = F[i].to(self.complex_dtype) # Ensure F is complex
                     assert F_i.dtype == self.complex_dtype, f"F_i dtype is {F_i.dtype}, expected {self.complex_dtype}"
                     assert V_rank.dtype == self.complex_dtype, f"V_rank dtype is {V_rank.dtype}, expected {self.complex_dtype}"
                 
@@ -1962,26 +2000,24 @@ class OnePhonon:
                             torch.tensor([dk], device=self.device, dtype=torch.long),
                             torch.tensor([dl], device=self.device, dtype=torch.long)
                         ).item()
-                        
-                        # Debug print for target BZ index
-                        if idx == target_idx:
-                            print(f"\n--- GRID MODE (idx={idx}) ---")
-                            q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
-                            valid_mask_for_q = self.res_mask[q_indices]
-                            valid_indices = q_indices[valid_mask_for_q]
-                            print(f"Corresponding q_indices (first 5): {q_indices[:5].cpu().numpy()}")
-                            print(f"Corresponding valid_indices (first 5): {valid_indices[:5].cpu().numpy()}")
-                        
+
+                        # --- Logging for target BZ index ---
+                        is_target_bz = (idx == target_idx_bz)
+                        if is_target_bz:
+                            print(f"\n--- GRID MODE (target_idx_bz={target_idx_bz}, dh={dh}, dk={dk}, dl={dl}) ---")
+                        # --- End Logging ---
+
                         # Get phonon modes for this k-vector
                         V_k = self.V[idx].to(self.complex_dtype)  # shape [n_dof, n_dof]
                         Winv_k = self.Winv[idx].to(self.complex_dtype)  # shape [n_dof]
-                        
-                        # Debug print for target BZ index
-                        if idx == target_idx:
-                            print(f"V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
-                            print(f"Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
-                            print(f"V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
-                            print(f"Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
+
+                        # --- Logging for target BZ index ---
+                        if is_target_bz:
+                             print(f"  V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
+                             if V_k.numel() > 0: print(f"  V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
+                             print(f"  Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
+                             if Winv_k.numel() > 0: print(f"  Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
+                        # --- End Logging ---
                         
                         # Debug print for specific BZ point
                         if dh == 0 and dk == 1 and dl == 0:
@@ -2017,7 +2053,14 @@ class OnePhonon:
                         # Skip if no valid indices after mask
                         if valid_indices.numel() == 0:
                             continue
-                        
+
+                        # Find if our target_q_idx is within the valid_indices for this BZ point
+                        target_q_in_this_bz = (target_q_idx in valid_indices)
+                        target_pos_in_valid = -1
+                        if is_target_bz and target_q_in_this_bz:
+                            target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0].item()
+                            print(f"  Target q_idx {target_q_idx} found at position {target_pos_in_valid} in valid_indices for this BZ point.")
+
                         # Compute structure factors for all ASUs in parallel
                         # Initialize F with the CORRECT high-precision complex dtype
                         F = torch.zeros((valid_indices.numel(), self.n_asu, self.n_dof_per_asu),
@@ -2057,98 +2100,45 @@ class OnePhonon:
                         
                         # Reshape for matrix operations
                         F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
-                        
-                        # Debug print for specific BZ point
-                        if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
-                            print(f"F shape: {F.shape}, dtype: {F.dtype}")
-                            print(f"F[0,0] (abs): {torch.abs(F[0,0]).item() if F.numel() > 0 else 'empty':.8e}")
-                            print(f"valid_indices shape: {valid_indices.shape}")
-                            print(f"First few valid_indices: {valid_indices[:5].cpu().numpy()}")
+
+                        # --- Logging for target point ---
+                        if is_target_bz and target_q_in_this_bz:
+                            print(f"  Processing q_idx={target_q_idx} (at pos={target_pos_in_valid})")
+                            q_vec = self.q_grid[target_q_idx]
+                            print(f"  q_vec: {q_vec.detach().cpu().numpy()} (dtype: {q_vec.dtype})")
+                            # Ensure ADP tensor has elements before indexing
+                            if ADP.numel() > 0:
+                                print(f"  ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype}, shape: {ADP.shape})")
+                            else:
+                                print(f"  ADP: (empty or None)")
+                            F_target = F[target_pos_in_valid] # Structure factor for the target q_idx
+                            print(f"  F[{target_pos_in_valid}] shape: {F_target.shape}, dtype: {F_target.dtype}")
+                            if F_target.numel() > 0: print(f"  F[{target_pos_in_valid}, 0] (abs): {torch.abs(F_target[0]).item():.6e}")
+                        # --- End Logging ---
                         
                         # Apply disorder model depending on rank parameter
                         if rank == -1:
-                            # Debug print for target BZ index and q_idx
-                            if idx == target_idx:
-                                # Find the position of target_q_idx within the valid_indices for this BZ point
-                                target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0]
-                                
-                                if target_pos_in_valid.numel() > 0:
-                                    pos = target_pos_in_valid[0].item()
-                                    print(f"--- GRID MODE (idx={idx}, q_idx={target_q_idx}, pos={pos}) ---")
-                                    print(f"F shape: {F.shape}, dtype: {F.dtype}")
-                                    print(f"F[{pos}, 0] (abs): {torch.abs(F[pos, 0]).item():.6e}")
-                                    
-                                    # Add detailed input prints for structure_factors
-                                    for i_asu in range(self.n_asu):
-                                        print(f"  GRID MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
-                                        q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
-                                        print(f"    q_vector: {q_for_sf.detach().cpu().numpy()} (dtype: {q_for_sf.dtype})")
-                                        print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].detach().cpu().numpy()} (dtype: {asu_data[i_asu]['xyz'].dtype})")
-                                        print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_a'].dtype})")
-                                        print(f"    ff_b[0,0]: {asu_data[i_asu]['ff_b'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_b'].dtype})")
-                                        print(f"    ff_c[0]: {asu_data[i_asu]['ff_c'][0].item():.6e} (dtype: {asu_data[i_asu]['ff_c'].dtype})")
-                                        # ADP might not require grad if use_data_adp=True, use .item() which works for both
-                                        # Ensure ADP tensor has at least one element before indexing
-                                        if ADP.numel() > 0:
-                                            print(f"    ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype})")
-                                        else:
-                                            print(f"    ADP: (empty or None)")
-                                        # Ensure project tensor exists and has elements before indexing
-                                        if asu_data[i_asu]['project'] is not None and asu_data[i_asu]['project'].numel() > 0:
-                                            print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e} (dtype: {asu_data[i_asu]['project'].dtype})")
-                                        else:
-                                            print(f"    project: (empty or None)")
-                                else:
-                                    print(f"--- GRID MODE (idx={idx}): target_q_idx={target_q_idx} not found in valid_indices for this BZ point.")
-                            
-                            # Compute F·V for all modes at once
+                            F = F.to(self.complex_dtype) # Ensure F is complex
+                            V_k = V_k.to(self.complex_dtype) # Ensure V_k is complex
                             FV = torch.matmul(F, V_k)
-                            
-                            # Calculate absolute squared values
                             FV_abs_squared = torch.abs(FV)**2
-                            
-                            # Extract real part of eigenvalues
-                            real_winv = Winv_k.real if torch.is_complex(Winv_k) else Winv_k
-                            real_winv = real_winv.to(self.real_dtype)
-                            
-                            # Debug print for target BZ index and q_idx
-                            if idx == target_idx:
-                                target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0]
-                                if target_pos_in_valid.numel() > 0:
-                                    pos = target_pos_in_valid[0].item()
-                                    print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
-                                    print(f"FV[{pos}, 0] (abs): {torch.abs(FV[pos, 0]).item():.6e}")
-                                    print(f"real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}")
-                                    print(f"real_winv[0]: {real_winv[0].item():.6e}")
-                                    intensity_contributions = FV_abs_squared[pos] * real_winv
-                                    print(f"Intensity Contributions[0]: {intensity_contributions[0].item():.6e}")
-                                    final_intensity_for_q = torch.sum(intensity_contributions)
-                                    print(f"Final Intensity Contribution for q_idx={target_q_idx}: {final_intensity_for_q.item():.6e}")
-                            
-                            # Debug print for specific BZ point
-                            if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
-                                print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
-                                print(f"FV_abs_squared shape: {FV_abs_squared.shape}")
-                                print(f"real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}")
-                                print(f"FV[0,0] (abs): {torch.abs(FV[0,0]).item() if FV.numel() > 0 else 'empty':.8e}")
-                                print(f"FV_abs_squared[0,0]: {FV_abs_squared[0,0].item() if FV_abs_squared.numel() > 0 else 'empty':.8e}")
-                                print(f"real_winv[0]: {real_winv[0].item() if real_winv.numel() > 0 else 'empty':.8e}")
-                                
-                                # Print a few more values for detailed comparison
-                                for i in range(min(5, FV.shape[1])):
-                                    print(f"  Grid mode: FV[0,{i}] (abs): {torch.abs(FV[0,i]).item():.8e}")
-                                    print(f"  Grid mode: FV_abs_squared[0,{i}]: {FV_abs_squared[0,i].item():.8e}")
-                                    print(f"  Grid mode: real_winv[{i}]: {real_winv[i].item():.8e}")
-                                    print(f"  Grid mode: contribution[0,{i}]: {(FV_abs_squared[0,i] * real_winv[i]).item():.8e}")
-                            
-                            # Weight by eigenvalues and sum
+                            real_winv = Winv_k.real.to(dtype=self.real_dtype)
                             intensity_contribution = torch.sum(FV_abs_squared * real_winv, dim=1)
-                            
-                            # Debug print for specific BZ point
-                            if dh == 0 and dk == 1 and dl == 0 and valid_indices.numel() > 0:
-                                print(f"intensity_contribution shape: {intensity_contribution.shape}")
-                                print(f"intensity_contribution[0]: {intensity_contribution[0].item() if intensity_contribution.numel() > 0 else 'empty':.8e}")
-                                print(f"Adding intensity to Id at indices: {valid_indices[:5].cpu().numpy()}")
+
+                            # --- Logging for target point ---
+                            if is_target_bz and target_q_in_this_bz:
+                                FV_target = FV[target_pos_in_valid]
+                                FV_abs_sq_target = FV_abs_squared[target_pos_in_valid]
+                                intensity_cont_target = intensity_contribution[target_pos_in_valid]
+                                print(f"  FV[{target_pos_in_valid}] shape: {FV_target.shape}, dtype: {FV_target.dtype}")
+                                if FV_target.numel() > 0: print(f"  FV[{target_pos_in_valid}, 0] (abs): {torch.abs(FV_target[0]).item():.6e}")
+                                print(f"  FV_abs_squared[{target_pos_in_valid}] shape: {FV_abs_sq_target.shape}, dtype: {FV_abs_sq_target.dtype}")
+                                if FV_abs_sq_target.numel() > 0: print(f"  FV_abs_squared[{target_pos_in_valid}, 0]: {FV_abs_sq_target[0].item():.6e}")
+                                print(f"  real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}") # Note: real_winv is shared for the BZ point
+                                if real_winv.numel() > 0: print(f"  real_winv[0]: {real_winv[0].item():.6e}")
+                                print(f"  Intensity Contribution: {intensity_cont_target.item():.6e}")
+                                print(f"  Accumulating at Id[{target_q_idx}]")
+                            # --- End Logging ---
                         else:
                             # Get specific mode
                             V_k_rank = V_k[:, rank]
