@@ -1474,20 +1474,48 @@ class OnePhonon:
         efficiency. The covariance matrix is used to compute atomic
         displacement parameters (ADPs) that model thermal motions.
         
-        Supports both grid-based and arbitrary q-vector modes by using
-        the k-vectors stored in self.kvec regardless of mode.
+        IMPORTANT: This method always uses a proper Brillouin Zone sampling
+        defined by hsampling, ksampling, lsampling for ADP calculations,
+        regardless of whether the model is in grid or arbitrary q-vector mode.
+        This ensures physically correct and consistent ADPs.
         """
         import logging
+        
+        # Check that sampling parameters exist
+        if self.hsampling is None or self.ksampling is None or self.lsampling is None:
+            raise ValueError("Cannot compute covariance matrix without hsampling, ksampling, and lsampling defined.")
         
         # Initialize covariance tensor
         self.covar = torch.zeros((self.n_asu * self.n_dof_per_asu,
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
                                dtype=self.complex_dtype, device=self.device)
         
-        # Get total number of k-vectors from self.kvec (works for both modes)
-        total_points = self.kvec.shape[0]
-        mode_str = "arbitrary q-vectors" if getattr(self, 'use_arbitrary_q', False) else "grid points"
-        logging.debug(f"[compute_covariance_matrix] Computing for {total_points} {mode_str}")
+        # --- Generate Local BZ k-vector grid for averaging ---
+        h_dim_bz = int(self.hsampling[2])
+        k_dim_bz = int(self.ksampling[2])
+        l_dim_bz = int(self.lsampling[2])
+        total_bz_points = h_dim_bz * k_dim_bz * l_dim_bz
+        logging.debug(f"[compute_covariance_matrix] Generating local BZ grid ({h_dim_bz}x{k_dim_bz}x{l_dim_bz} = {total_bz_points} points) for averaging.")
+
+        # Get A_inv tensor (ensure float64)
+        if isinstance(self.model.A_inv, torch.Tensor):
+            A_inv_tensor = self.model.A_inv.clone().detach().to(dtype=self.real_dtype, device=self.device)
+        else:
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
+
+        # Generate coordinates (ensure float64)
+        h_coords = torch.tensor([self._center_kvec(dh, h_dim_bz) for dh in range(h_dim_bz)], 
+                               device=self.device, dtype=self.real_dtype)
+        k_coords = torch.tensor([self._center_kvec(dk, k_dim_bz) for dk in range(k_dim_bz)], 
+                               device=self.device, dtype=self.real_dtype)
+        l_coords = torch.tensor([self._center_kvec(dl, l_dim_bz) for dl in range(l_dim_bz)], 
+                               device=self.device, dtype=self.real_dtype)
+        h_grid, k_grid, l_grid = torch.meshgrid(h_coords, k_coords, l_coords, indexing='ij')
+        hkl_fractional = torch.stack([h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1).to(dtype=self.real_dtype)
+
+        # Compute local BZ k-vectors (ensure float64)
+        kvec_bz_local = torch.matmul(hkl_fractional, A_inv_tensor).to(dtype=self.real_dtype)
+        # --- End Local BZ Grid Generation ---
         
         # Import helper functions for complex tensor operations
         from eryx.torch_utils import ComplexTensorOps
@@ -1511,32 +1539,31 @@ class OnePhonon:
         # Compute the Hessian matrix
         hessian = self.compute_hessian().to(self.complex_dtype)
         
-        # Compute inverse K matrices for all k-vectors at once (works for both modes)
-        # Ensure kvec is the correct dtype before passing to compute_Kinv
-        kvec_input = self.kvec.to(dtype=self.real_dtype)
-        Kinv_all = gnm_torch.compute_Kinv(hessian, kvec_input, reshape=False).to(self.complex_dtype)
-        logging.debug(f"[compute_covariance_matrix] Computed Kinv_all, shape={Kinv_all.shape}, total_points={total_points}")
+        # Compute inverse K matrices for all BZ k-vectors
+        # Use local BZ k-vectors
+        Kinv_all_bz = gnm_torch.compute_Kinv(hessian, kvec_bz_local, reshape=False).to(self.complex_dtype)
+        logging.debug(f"[compute_covariance_matrix] Computed Kinv_all_bz for BZ grid, shape={Kinv_all_bz.shape}")
         
         # Calculate phase factors and accumulate covariance contributions
         for j_cell in range(self.n_cell):
             # Get cell origin
             r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
             
-            # Calculate phase factors for all k-vectors
-            # Batched dot product: sum over last dim (3) -> shape [total_points]
-            all_phases = torch.sum(self.kvec * r_cell, dim=1)
+            # Calculate phase factors for all BZ k-vectors
+            # Batched dot product: sum over last dim (3) -> shape [total_bz_points]
+            all_phases = torch.sum(kvec_bz_local * r_cell, dim=1)
             cos_phases = torch.cos(all_phases)
             sin_phases = torch.sin(all_phases)
             eikr_all = torch.complex(cos_phases, sin_phases).to(self.complex_dtype)
             
-            # Reshape phase factors for broadcasting: [total_points] -> [total_points, 1, 1]
+            # Reshape phase factors for broadcasting: [total_bz_points] -> [total_bz_points, 1, 1]
             eikr_reshaped = eikr_all.view(-1, 1, 1)
             
             # Element-wise multiply and sum over the k-points dimension (dim=0)
-            complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+            complex_sum = torch.sum(Kinv_all_bz * eikr_reshaped, dim=0)
             
             # Accumulate averaged contribution in covariance tensor
-            self.covar[:, j_cell, :] = complex_sum / total_points
+            self.covar[:, j_cell, :] = complex_sum / total_bz_points
         
         # Get reference cell ID for [0,0,0]
         ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
