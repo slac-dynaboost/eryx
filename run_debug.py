@@ -44,8 +44,23 @@ def run_np():
     logging.debug(f"  Dimension 1: min = {onephonon_np.hkl_grid[:,1].min()}, max = {onephonon_np.hkl_grid[:,1].max()}")
     logging.debug(f"  Dimension 2: min = {onephonon_np.hkl_grid[:,2].min()}, max = {onephonon_np.hkl_grid[:,2].max()}")
     logging.debug(f"NP: q_grid range: min = {onephonon_np.q_grid.min()}, max = {onephonon_np.q_grid.max()}")
-    logging.info("NP branch diffuse intensity stats: min=%s, max=%s", np.nanmin(Id_np), np.nanmax(Id_np))
-    # Save for later comparison
+    
+    # --- Save q-vectors and intensity to NPZ ---
+    q_vectors_np = onephonon_np.q_grid
+    intensity_np = Id_np
+
+    output_filename = "np_results.npz"
+    try:
+        np.savez_compressed(output_filename,
+                            q_vectors=q_vectors_np,
+                            intensity=intensity_np,
+                            map_shape=onephonon_np.map_shape)  # Save map_shape too
+        logging.info(f"NP: Saved q-vectors ({q_vectors_np.shape}) and intensity ({intensity_np.shape}) to {output_filename}")
+        logging.info("NP branch diffuse intensity stats: min=%s, max=%s", np.nanmin(intensity_np), np.nanmax(intensity_np))
+    except Exception as e:
+        logging.error(f"NP: Failed to save results to {output_filename}: {e}")
+    
+    # Also save the original .npy file for backward compatibility
     np.save("np_diffuse_intensity.npy", Id_np)
 
 
@@ -84,9 +99,24 @@ def run_torch():
         logging.debug(f"  Dimension 2: min = {onephonon_torch.hkl_grid[:,2].min().item()}, max = {onephonon_torch.hkl_grid[:,2].max().item()}")
         logging.debug(f"PyTorch: q_grid range: min = {onephonon_torch.q_grid.min().item()}, max = {onephonon_torch.q_grid.max().item()}")
         
-        # Save for later comparison
+        # --- Save q-vectors and intensity to NPZ ---
+        q_vectors_torch = onephonon_torch.q_grid.detach().cpu().numpy()
+        intensity_torch_np = Id_torch.detach().cpu().numpy()
+
+        output_filename = "torch_grid_results.npz"
+        try:
+            np.savez_compressed(output_filename,
+                                q_vectors=q_vectors_torch,
+                                intensity=intensity_torch_np,
+                                map_shape=onephonon_torch.map_shape)  # Save map_shape too
+            logging.info(f"PyTorch Grid: Saved q-vectors ({q_vectors_torch.shape}) and intensity ({intensity_torch_np.shape}) to {output_filename}")
+            logging.info("PyTorch Grid diffuse intensity stats: min=%s, max=%s", 
+                         np.nanmin(intensity_torch_np), np.nanmax(intensity_torch_np))
+        except Exception as e:
+            logging.error(f"PyTorch Grid: Failed to save results to {output_filename}: {e}")
+        
+        # Also save original files for backward compatibility
         torch.save(Id_torch, "torch_diffuse_intensity.pt")
-        # Also save as NumPy array for easier comparison
         np.save("torch_diffuse_intensity.npy", Id_torch.detach().cpu().numpy())
         
         return Id_torch
@@ -205,7 +235,31 @@ def run_torch_arb_q():
         else:
             logging.warning("All intensity values are NaN!")
         
-        # Save results
+        # --- Save q-vectors and intensity to NPZ ---
+        q_vectors_arbq_np = q_vectors.detach().cpu().numpy()
+        intensity_arbq_np = Id_arb_q.detach().cpu().numpy()
+
+        output_filename = "torch_arbq_results.npz"
+        try:
+            np.savez_compressed(output_filename,
+                                q_vectors=q_vectors_arbq_np,
+                                intensity=intensity_arbq_np,
+                                map_shape=map_shape)  # Save the map_shape derived from grid
+            logging.info(f"Arb-Q: Saved q-vectors ({q_vectors_arbq_np.shape}) and intensity ({intensity_arbq_np.shape}) to {output_filename}")
+            
+            # Log stats from flat data
+            valid_intensity_np = intensity_arbq_np[~np.isnan(intensity_arbq_np)]
+            if valid_intensity_np.size > 0:
+                min_intensity = np.min(valid_intensity_np)
+                max_intensity = np.max(valid_intensity_np)
+                mean_intensity = np.mean(valid_intensity_np)
+                logging.info(f"Arb-Q flat intensity stats: min={min_intensity:.4f}, max={max_intensity:.4f}, mean={mean_intensity:.4f}")
+            else:
+                logging.warning("Arb-Q: All flat intensity values are NaN!")
+        except Exception as e:
+            logging.error(f"Arb-Q: Failed to save results to {output_filename}: {e}")
+        
+        # Also save original files for backward compatibility
         torch.save(Id_arb_q, "arb_q_diffuse_intensity.pt")
         np.save("arb_q_diffuse_intensity.npy", Id_arb_q.detach().cpu().numpy())
         
@@ -222,29 +276,67 @@ def visualize_results():
         import numpy as np
         import os
         
-        # Check if result files exist
-        np_file = "np_diffuse_intensity.npy"
-        torch_file = "torch_diffuse_intensity.npy"
-        arb_q_file = "arb_q_diffuse_intensity.npy"
+        # Define NPZ filenames
+        np_file = "np_results.npz"
+        torch_file = "torch_grid_results.npz"
+        arb_q_file = "torch_arbq_results.npz"
         
         files_exist = all(os.path.exists(f) for f in [np_file, torch_file, arb_q_file])
         if not files_exist:
-            logging.warning("Not all result files exist. Please run all three methods first.")
-            return
-        
-        # Load the data
-        Id_np = np.load(np_file)
-        Id_torch = np.load(torch_file)
-        Id_arb_q = np.load(arb_q_file)
-        
-        # Get the map shape
-        map_shape = Id_np.shape
-        logging.info(f"Visualization: Map shape = {map_shape}")
-        
-        # Check if Id_arb_q needs reshaping
-        if Id_arb_q.ndim == 1:
-            logging.info(f"Reshaping arbitrary q-vector results from 1D to 3D ({Id_arb_q.shape} -> {map_shape})")
-            Id_arb_q = Id_arb_q.reshape(map_shape)
+            missing = [f for f in [np_file, torch_file, arb_q_file] if not os.path.exists(f)]
+            logging.warning(f"Not all result files exist. Missing: {', '.join(missing)}. Please run all methods first.")
+            # Fall back to old files if available
+            old_np_file = "np_diffuse_intensity.npy"
+            old_torch_file = "torch_diffuse_intensity.npy"
+            old_arb_q_file = "arb_q_diffuse_intensity.npy"
+            if all(os.path.exists(f) for f in [old_np_file, old_torch_file, old_arb_q_file]):
+                logging.info("Found old .npy files, using those instead.")
+                Id_np = np.load(old_np_file)
+                Id_torch = np.load(old_torch_file)
+                Id_arb_q = np.load(old_arb_q_file)
+                
+                # Get the map shape
+                map_shape = Id_np.shape
+                logging.info(f"Visualization: Map shape = {map_shape}")
+                
+                # Check if Id_arb_q needs reshaping
+                if Id_arb_q.ndim == 1:
+                    logging.info(f"Reshaping arbitrary q-vector results from 1D to 3D ({Id_arb_q.shape} -> {map_shape})")
+                    Id_arb_q = Id_arb_q.reshape(map_shape)
+            else:
+                return
+        else:
+            # Load data from NPZ files
+            data_np = np.load(np_file)
+            Id_np = data_np['intensity']
+            q_np = data_np['q_vectors']
+            map_shape_np = tuple(data_np['map_shape']) if 'map_shape' in data_np else None
+            
+            data_torch = np.load(torch_file)
+            Id_torch = data_torch['intensity']
+            q_torch = data_torch['q_vectors']
+            map_shape_torch = tuple(data_torch['map_shape']) if 'map_shape' in data_torch else None
+            
+            data_arbq = np.load(arb_q_file)
+            Id_arb_q = data_arbq['intensity']
+            q_arbq = data_arbq['q_vectors']
+            map_shape_arbq = tuple(data_arbq['map_shape']) if 'map_shape' in data_arbq else None
+            
+            # Determine consistent map_shape
+            map_shape = map_shape_np or map_shape_torch or map_shape_arbq
+            if map_shape is None:
+                logging.error("Could not determine map_shape from any NPZ file.")
+                return
+            
+            logging.info(f"Using map_shape: {map_shape}")
+            
+            # Reshape if needed
+            if Id_np.ndim == 1 and Id_np.size == np.prod(map_shape):
+                Id_np = Id_np.reshape(map_shape)
+            if Id_torch.ndim == 1 and Id_torch.size == np.prod(map_shape):
+                Id_torch = Id_torch.reshape(map_shape)
+            if Id_arb_q.ndim == 1 and Id_arb_q.size == np.prod(map_shape):
+                Id_arb_q = Id_arb_q.reshape(map_shape)
         
         # Create figure for central slices
         fig, axes = plt.subplots(3, 3, figsize=(15, 15))

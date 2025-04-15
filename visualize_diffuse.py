@@ -49,39 +49,60 @@ def main(dataset='torch'):
     """
     # Determine which dataset file to use and set title
     if dataset.lower() == 'np':
-        npy_file = "np_diffuse_intensity.npy"
+        npz_file = "np_results.npz"
+        npy_file = "np_diffuse_intensity.npy"  # Fallback
         plot_title_prefix = "NumPy Grid"
     elif dataset.lower() == 'arbq':
-        npy_file = "arb_q_diffuse_intensity.npy"
+        npz_file = "torch_arbq_results.npz"
+        npy_file = "arb_q_diffuse_intensity.npy"  # Fallback
         plot_title_prefix = "PyTorch Arb-Q"
     else: # Default to 'torch'
-        npy_file = "torch_diffuse_intensity.npy"
+        npz_file = "torch_grid_results.npz"
+        npy_file = "torch_diffuse_intensity.npy"  # Fallback
         plot_title_prefix = "PyTorch Grid"
 
-    logging.info(f"Attempting to load dataset: {npy_file}")
+    logging.info(f"Attempting to load dataset: {npz_file}")
 
-    if not os.path.exists(npy_file):
-        logging.error(f"File not found: {npy_file}")
-        print(f"\nError: Could not find the required dataset file '{npy_file}'.")
+    # Try to load the NPZ file first
+    if os.path.exists(npz_file):
+        try:
+            data = np.load(npz_file)
+            intensity = data['intensity']
+            q_vectors = data['q_vectors']
+            map_shape = tuple(data['map_shape']) if 'map_shape' in data else None
+            logging.info(f"Successfully loaded NPZ data. Intensity shape: {intensity.shape}")
+            logging.info(f"Q-vectors shape: {q_vectors.shape}")
+            if map_shape:
+                logging.info(f"Map shape from file: {map_shape}")
+        except Exception as e:
+            logging.error(f"Failed to load {npz_file}: {e}")
+            intensity = None
+    else:
+        logging.warning(f"NPZ file not found: {npz_file}")
+        intensity = None
+        
+    # Fall back to NPY file if NPZ loading failed
+    if intensity is None and os.path.exists(npy_file):
+        logging.info(f"Falling back to NPY file: {npy_file}")
+        try:
+            intensity = np.load(npy_file)
+            logging.info(f"Successfully loaded NPY data. Shape: {intensity.shape}")
+        except Exception as e:
+            logging.error(f"Failed to load {npy_file}: {e}")
+            return None
+    elif intensity is None:
+        logging.error(f"Neither NPZ file {npz_file} nor NPY file {npy_file} found.")
+        print(f"\nError: Could not find the required dataset files.")
         print("Please ensure you have run the corresponding step in 'run_debug.py'.")
         return None
 
-    # Load the diffuse intensity data
-    try:
-        intensity = np.load(npy_file)
-        logging.info(f"Successfully loaded data. Initial shape: {intensity.shape}")
-    except Exception as e:
-        logging.error(f"Failed to load {npy_file}: {e}")
-        return None
-
-    # --- Reshape 1D Arbitrary-Q Data ---
-    map_shape = None
+    # --- Reshape 1D Data if needed ---
     if intensity.ndim == 1:
         logging.info("Loaded 1D data, attempting to reshape to 3D grid.")
-        # Try to infer shape from reference files
-        map_shape = get_map_shape_from_reference()
-
-        if map_shape:
+        
+        # First try to use map_shape from the NPZ file
+        if 'map_shape' in locals() and map_shape is not None:
+            logging.info(f"Using map_shape from NPZ file: {map_shape}")
             expected_size = np.prod(map_shape)
             if intensity.size == expected_size:
                 try:
@@ -89,13 +110,28 @@ def main(dataset='torch'):
                     logging.info(f"Reshaped data to: {intensity.shape}")
                 except ValueError as e:
                     logging.error(f"Failed to reshape 1D data to {map_shape}: {e}. Size mismatch?")
-                    map_shape = None # Reset map_shape if reshape failed
+                    map_shape = None  # Reset map_shape if reshape failed
             else:
                 logging.warning(f"Size of 1D data ({intensity.size}) does not match expected size "
-                                f"from inferred map shape {map_shape} ({expected_size}). Cannot reshape.")
-                map_shape = None # Reset map_shape as it's invalid for this data
-        else:
-            logging.warning("Could not infer map shape from reference files. Cannot reshape 1D data.")
+                                f"from map_shape {map_shape} ({expected_size}). Cannot reshape.")
+                map_shape = None  # Reset map_shape as it's invalid for this data
+        
+        # If no map_shape from NPZ or reshape failed, try to infer from reference files
+        if map_shape is None:
+            map_shape = get_map_shape_from_reference()
+            if map_shape:
+                expected_size = np.prod(map_shape)
+                if intensity.size == expected_size:
+                    try:
+                        intensity = intensity.reshape(map_shape)
+                        logging.info(f"Reshaped data to: {intensity.shape}")
+                    except ValueError as e:
+                        logging.error(f"Failed to reshape 1D data to {map_shape}: {e}. Size mismatch?")
+                else:
+                    logging.warning(f"Size of 1D data ({intensity.size}) does not match expected size "
+                                    f"from inferred map shape {map_shape} ({expected_size}). Cannot reshape.")
+            else:
+                logging.warning("Could not infer map shape from reference files. Cannot reshape 1D data.")
 
     # --- Visualization ---
     # If data is 3D (either loaded or reshaped), plot slices
@@ -198,9 +234,71 @@ if __name__ == '__main__':
         default='torch',
         help='Select which dataset to visualize: torch (PyTorch Grid), np (NumPy Grid), arbq (PyTorch Arbitrary-Q) (default: torch)'
     )
+    parser.add_argument(
+        '--plot-q',
+        action='store_true',
+        help='Plot q-vector distribution (only works with NPZ files)'
+    )
 
     # Parse arguments
     args = parser.parse_args()
 
     # Call main with the selected dataset
-    main(dataset=args.dataset)
+    intensity_data = main(dataset=args.dataset)
+    
+    # Plot q-vector distribution if requested and available
+    if args.plot_q:
+        # Determine which dataset file to use
+        if args.dataset.lower() == 'np':
+            npz_file = "np_results.npz"
+        elif args.dataset.lower() == 'arbq':
+            npz_file = "torch_arbq_results.npz"
+        else:  # Default to 'torch'
+            npz_file = "torch_grid_results.npz"
+            
+        if os.path.exists(npz_file):
+            try:
+                data = np.load(npz_file)
+                if 'q_vectors' in data:
+                    q_vectors = data['q_vectors']
+                    
+                    # Create a figure for q-vector distribution
+                    plt.figure(figsize=(10, 8))
+                    
+                    # Plot q-vector magnitude distribution
+                    q_magnitudes = np.linalg.norm(q_vectors, axis=1)
+                    plt.hist(q_magnitudes, bins=50)
+                    plt.title(f'Q-Vector Magnitude Distribution ({args.dataset})')
+                    plt.xlabel('|q| (Å⁻¹)')
+                    plt.ylabel('Frequency')
+                    plt.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                    plt.show()
+                    
+                    # Plot 3D scatter of q-vectors (subsample if too many points)
+                    from mpl_toolkits.mplot3d import Axes3D
+                    
+                    max_points = 5000  # Maximum number of points to plot
+                    if q_vectors.shape[0] > max_points:
+                        # Subsample points
+                        indices = np.random.choice(q_vectors.shape[0], max_points, replace=False)
+                        q_subset = q_vectors[indices]
+                    else:
+                        q_subset = q_vectors
+                    
+                    fig = plt.figure(figsize=(10, 8))
+                    ax = fig.add_subplot(111, projection='3d')
+                    ax.scatter(q_subset[:, 0], q_subset[:, 1], q_subset[:, 2], 
+                               s=2, alpha=0.5, c=np.linalg.norm(q_subset, axis=1))
+                    ax.set_xlabel('qx (Å⁻¹)')
+                    ax.set_ylabel('qy (Å⁻¹)')
+                    ax.set_zlabel('qz (Å⁻¹)')
+                    ax.set_title(f'Q-Vector Distribution ({args.dataset})')
+                    plt.tight_layout()
+                    plt.show()
+                else:
+                    print("No q-vectors found in the NPZ file.")
+            except Exception as e:
+                print(f"Error plotting q-vectors: {e}")
+        else:
+            print(f"NPZ file not found: {npz_file}. Cannot plot q-vectors.")
