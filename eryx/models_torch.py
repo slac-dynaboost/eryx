@@ -1816,7 +1816,7 @@ class OnePhonon:
                     Winv_idx = Winv_valid[i].to(self.complex_dtype)
                     
                     # Debug print for target q-index
-                    current_q_idx = idx.item()
+                    current_q_idx = actual_q_idx # Use the correct index variable
                     if current_q_idx == target_q_idx:
                         print(f"\n--- ARBITRARY-Q MODE (q_idx={current_q_idx}, i={i}) ---")
                         print(f"V_idx shape: {V_idx.shape}, dtype: {V_idx.dtype}")
