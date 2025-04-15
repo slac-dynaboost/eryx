@@ -395,7 +395,8 @@ class OnePhonon:
         
         # GNM model setup
         if self.model_type == 'gnm':
-            # Skip full phonon computation in arbitrary mode for now
+            # Always compute phonons and covariance matrix for GNM model
+            # regardless of whether we're in grid or arbitrary q-vector mode
             self.compute_gnm_phonons()
             self.compute_covariance_matrix()
 
@@ -1473,27 +1474,20 @@ class OnePhonon:
         efficiency. The covariance matrix is used to compute atomic
         displacement parameters (ADPs) that model thermal motions.
         
-        Supports both grid-based and arbitrary q-vector modes.
+        Supports both grid-based and arbitrary q-vector modes by using
+        the k-vectors stored in self.kvec regardless of mode.
         """
+        import logging
+        
         # Initialize covariance tensor
         self.covar = torch.zeros((self.n_asu * self.n_dof_per_asu,
                                 self.n_cell, self.n_asu * self.n_dof_per_asu),
                                dtype=self.complex_dtype, device=self.device)
         
-        # Define debug index for comparison
-        debug_idx = 1
-        
-        # Get total number of k-vectors based on mode
-        if getattr(self, 'use_arbitrary_q', False):
-            total_points = self.q_grid.shape[0]
-            print(f"Computing covariance matrix for {total_points} arbitrary q-vectors")
-        else:
-            # Use Brillouin zone dimensions to match NumPy implementation exactly
-            h_dim_bz = int(self.hsampling[2])
-            k_dim_bz = int(self.ksampling[2])
-            l_dim_bz = int(self.lsampling[2])
-            total_points = h_dim_bz * k_dim_bz * l_dim_bz
-            print(f"Computing covariance matrix for {total_points} grid points based on BZ sampling")
+        # Get total number of k-vectors from self.kvec (works for both modes)
+        total_points = self.kvec.shape[0]
+        mode_str = "arbitrary q-vectors" if getattr(self, 'use_arbitrary_q', False) else "grid points"
+        logging.debug(f"[compute_covariance_matrix] Computing for {total_points} {mode_str}")
         
         # Import helper functions for complex tensor operations
         from eryx.torch_utils import ComplexTensorOps
@@ -1512,167 +1506,84 @@ class OnePhonon:
         if hasattr(self, 'crystal'):
             gnm_torch.crystal = self.crystal
         else:
-            print("Warning: No crystal object found in OnePhonon model")
+            logging.warning("No crystal object found in OnePhonon model")
         
         # Compute the Hessian matrix
-        hessian = self.compute_hessian()
+        hessian = self.compute_hessian().to(self.complex_dtype)
         
-        if getattr(self, 'use_arbitrary_q', False):
-            # Arbitrary-q mode
-            # Compute inverse K matrices for all k-vectors at once
-            # This is a batch operation for efficiency
-            Kinv_all = gnm_torch.compute_Kinv(hessian, self.kvec, reshape=False)
-            print(f"Kinv_all computation complete, shape = {Kinv_all.shape}")
-            print(f"Kinv_all requires_grad: {Kinv_all.requires_grad}")
-            print(f"Kinv_all.grad_fn: {Kinv_all.grad_fn}")
+        # Compute inverse K matrices for all k-vectors at once (works for both modes)
+        # Ensure kvec is the correct dtype before passing to compute_Kinv
+        kvec_input = self.kvec.to(dtype=self.real_dtype)
+        Kinv_all = gnm_torch.compute_Kinv(hessian, kvec_input, reshape=False).to(self.complex_dtype)
+        logging.debug(f"[compute_covariance_matrix] Computed Kinv_all, shape={Kinv_all.shape}, total_points={total_points}")
+        
+        # Calculate phase factors and accumulate covariance contributions
+        for j_cell in range(self.n_cell):
+            # Get cell origin
+            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
             
-            # Debug print for specific k-vector
-            if total_points > debug_idx:
-                print(f"\n--- PyTorch Kinv Debug Index {debug_idx} ---")
-                print(f"DEBUG Arbitrary-Q: Kinv[{debug_idx}, 0, 0]: {Kinv_all[debug_idx,0,0].item():.8e}")
-                print(f"DEBUG Arbitrary-Q: Kinv[{debug_idx}, 5, 5]: {Kinv_all[debug_idx,5,5].item():.8e}")
+            # Calculate phase factors for all k-vectors
+            # Batched dot product: sum over last dim (3) -> shape [total_points]
+            all_phases = torch.sum(self.kvec * r_cell, dim=1)
+            cos_phases = torch.cos(all_phases)
+            sin_phases = torch.sin(all_phases)
+            eikr_all = torch.complex(cos_phases, sin_phases).to(self.complex_dtype)
             
-            # Note: We no longer calculate self.covar and self.ADP here
-            # as we now use the pre-calculated self.bz_averaged_adp from _compute_bz_averaged_adp
+            # Reshape phase factors for broadcasting: [total_points] -> [total_points, 1, 1]
+            eikr_reshaped = eikr_all.view(-1, 1, 1)
+            
+            # Element-wise multiply and sum over the k-points dimension (dim=0)
+            complex_sum = torch.sum(Kinv_all * eikr_reshaped, dim=0)
+            
+            # Accumulate averaged contribution in covariance tensor
+            self.covar[:, j_cell, :] = complex_sum / total_points
+        
+        # Get reference cell ID for [0,0,0]
+        ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
+        
+        # Extract diagonal elements for ADP calculation
+        # Use .real attribute instead of torch.real() to preserve gradient flow
+        diagonal_values = torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1)
+        self.ADP = diagonal_values.real
+        logging.debug(f"[compute_covariance_matrix] Extracted diagonal values, shape={diagonal_values.shape}")
+        
+        # Transform ADP using the displacement projection matrix
+        Amat = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu)
+        self.ADP = torch.matmul(Amat, self.ADP)
+        
+        # Sum over spatial dimensions (x,y,z)
+        self.ADP = torch.sum(self.ADP.reshape(int(self.ADP.shape[0] / 3), 3), dim=1)
+        
+        # Scale ADP to match experimental values
+        model_adp_tensor = self.array_to_tensor(self.model.adp)
+        
+        # Handle NaN values
+        valid_adp = self.ADP[~torch.isnan(self.ADP)]
+        if valid_adp.numel() > 0:
+            # Calculate mean of valid values only
+            adp_mean = torch.mean(valid_adp)
+            # Calculate scaling factor
+            ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
         else:
-            # Grid-based mode - Revised to match arbitrary-q mode structure
-            # First compute all Kinv matrices for all BZ points
-            Kinv_bz = []
-            kvec_bz = [] # Store the kvecs corresponding to BZ indices
-            
-            # Loop over Brillouin zone points to collect all Kinv values
-            for dh in range(h_dim_bz):
-                for dk in range(k_dim_bz):
-                    for dl in range(l_dim_bz):
-                        # Calculate the flat Brillouin zone index
-                        idx = self._3d_to_flat_indices_bz(
-                            torch.tensor([dh], device=self.device, dtype=torch.long),
-                            torch.tensor([dk], device=self.device, dtype=torch.long),
-                            torch.tensor([dl], device=self.device, dtype=torch.long)
-                        ).item()
-                        
-                        # Get k-vector for this index
-                        kvec = self.kvec[idx]
-                        kvec_bz.append(kvec)
-                        
-                        # Compute Kinv for this specific k-vector
-                        Kinv = gnm_torch.compute_Kinv(hessian, kvec.unsqueeze(0), reshape=False)[0]
-                        Kinv_bz.append(Kinv)
-                        
-                        # Debug print for our chosen debug index
-                        if idx == debug_idx:
-                            print(f"\nDEBUG Grid Mode (Revised): Matched debug_idx={debug_idx} at (dh,dk,dl)=({dh},{dk},{dl})")
-                            print(f"DEBUG Grid Mode (Revised): Kinv[{debug_idx}, 0, 0]: {Kinv[0, 0].item():.8e}")
-                            print(f"DEBUG Grid Mode (Revised): Kinv[{debug_idx}, 5, 5]: {Kinv[5, 5].item():.8e}")
-
-            # Stack all Kinv and kvec values
-            Kinv_all_bz = torch.stack(Kinv_bz) # Shape [total_k_points_bz, n_dof, n_dof]
-            kvec_all_bz = torch.stack(kvec_bz) # Shape [total_k_points_bz, 3]
-            
-            print(f"Grid Mode (Revised) Kinv_all_bz shape = {Kinv_all_bz.shape}")
-            
-            # Calculate phase factors and accumulate covariance contributions (like arbitrary-q mode)
-            for j_cell in range(self.n_cell):
-                # Get cell origin
-                r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
-                
-                # Calculate phase factors for all k-vectors
-                all_phases = torch.sum(kvec_all_bz * r_cell, dim=1)
-                cos_phases = torch.cos(all_phases)
-                sin_phases = torch.sin(all_phases)
-                eikr_all = torch.complex(cos_phases, sin_phases)
-                
-                # Debug print for specific phase
-                if total_points > debug_idx and j_cell < 3:
-                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, eikr[{debug_idx}]: {eikr_all[debug_idx].item()}")
-                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, phase[{debug_idx}]: {all_phases[debug_idx].item():.8e}")
-                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, r_cell: {r_cell.detach().cpu().numpy()}")
-                    print(f"DEBUG Grid Mode (Revised): Cell {j_cell}, kvec[{debug_idx}]: {kvec_all_bz[debug_idx].detach().cpu().numpy()}")
-                
-                # Reshape phase factors for matrix multiplication
-                eikr_reshaped = eikr_all.view(-1, 1, 1)
-                
-                # Sum over the BZ points (dim=0)
-                complex_sum = torch.sum(Kinv_all_bz * eikr_reshaped, dim=0)
-                
-                # Debug print for accumulated sum
-                if j_cell < 3:
-                    print(f"Grid Mode (Revised) Cell {j_cell} complex_sum[0,0]: {complex_sum[0,0].item()}")
-                
-                # Accumulate in covariance tensor (restore division by total_points)
-                self.covar[:, j_cell, :] = complex_sum / total_points
+            # Fallback if all values are NaN
+            ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
         
-        if not getattr(self, 'use_arbitrary_q', False):
-            # Only perform the remaining calculations for grid-based mode
-            # Arbitrary-q mode now uses bz_averaged_adp instead
-            
-            # Get reference cell ID for [0,0,0]
-            ref_cell_id = self.crystal.hkl_to_id([0, 0, 0])
-            
-            # Debug print for final covar values
-            print(f"\nDEBUG Grid Mode: Final covar[0,0,0]: {self.covar[0, 0, 0].item()}")
-            print(f"DEBUG Grid Mode: Final covar[5,0,5]: {self.covar[5, 0, 5].item()}")
-            
-            # Extract diagonal elements for ADP calculation
-            # Use .real attribute instead of torch.real() to preserve gradient flow
-            diagonal_values = torch.diagonal(self.covar[:, ref_cell_id, :], dim1=0, dim2=1)
-            self.ADP = diagonal_values.real
-            
-            # Debug print for diagonal values
-            print(f"Diagonal values shape: {diagonal_values.shape}")
-            print(f"First few diagonal values: {diagonal_values[:5].detach().cpu().numpy()}")
-            
-            # Transform ADP using the displacement projection matrix
-            Amat = torch.transpose(self.Amat, 0, 1).reshape(self.n_dof_per_asu_actual, self.n_asu * self.n_dof_per_asu)
-            self.ADP = torch.matmul(Amat, self.ADP)
-            
-            # Debug print after Amat transformation
-            print(f"ADP after Amat transform shape: {self.ADP.shape}")
-            print(f"First few ADP values after transform: {self.ADP[:5].detach().cpu().numpy()}")
-            
-            # Sum over spatial dimensions (x,y,z)
-            self.ADP = torch.sum(self.ADP.reshape(int(self.ADP.shape[0] / 3), 3), dim=1)
-            
-            # Debug print after spatial sum
-            print(f"ADP after spatial sum shape: {self.ADP.shape}")
-            print(f"First few ADP values after spatial sum: {self.ADP[:5].detach().cpu().numpy()}")
-            
-            # Scale ADP to match experimental values - exactly match NumPy behavior
-            model_adp_tensor = self.array_to_tensor(self.model.adp)
-            
-            # Handle NaN values exactly like NumPy
-            valid_adp = self.ADP[~torch.isnan(self.ADP)]
-            if valid_adp.numel() > 0:
-                # Calculate mean of valid values only
-                adp_mean = torch.mean(valid_adp)
-                # Calculate scaling factor exactly as in NumPy
-                ADP_scale = torch.mean(model_adp_tensor) / (8 * torch.pi * torch.pi * adp_mean / 3)
-            else:
-                # Fallback if all values are NaN
-                ADP_scale = torch.tensor(1.0, device=self.device, dtype=self.real_dtype)
-            
-            # Debug print for scaling
-            print(f"ADP scaling factor: {ADP_scale.item():.8e}")
-            
-            # Apply scaling to ADP and covariance matrix
-            self.ADP = self.ADP * ADP_scale
-            self.covar = self.covar * ADP_scale
-            
-            # Debug print after scaling
-            print(f"ADP after scaling, first few values: {self.ADP[:5].detach().cpu().numpy()}")
-            
-            # Reshape covariance matrix to final format
-            # Use .real attribute instead of torch.real() to preserve gradient flow
-            reshaped_covar = self.covar.reshape((self.n_asu, self.n_dof_per_asu,
-                                               self.n_cell, self.n_asu, self.n_dof_per_asu))
-            self.covar = reshaped_covar.real
-            
-            # Set requires_grad for ADP tensor
-            self.ADP.requires_grad_(True)
-            
-            print(f"ADP requires_grad: {self.ADP.requires_grad}")
-            print(f"ADP.grad_fn: {self.ADP.grad_fn}")
-            print(f"Covariance computation complete: ADP.shape={self.ADP.shape}")
+        logging.debug(f"[compute_covariance_matrix] ADP scaling factor: {ADP_scale.item():.8e}")
+        
+        # Apply scaling to ADP and covariance matrix
+        self.ADP = self.ADP * ADP_scale
+        self.covar = self.covar * ADP_scale
+        
+        # Reshape covariance matrix to final format
+        # Use .real attribute instead of torch.real() to preserve gradient flow
+        reshaped_covar = self.covar.reshape((self.n_asu, self.n_dof_per_asu,
+                                           self.n_cell, self.n_asu, self.n_dof_per_asu))
+        self.covar = reshaped_covar.real
+        
+        # Set requires_grad for ADP tensor
+        self.ADP.requires_grad_(True)
+        
+        logging.debug(f"[compute_covariance_matrix] Complete: ADP.shape={self.ADP.shape}, requires_grad={self.ADP.requires_grad}")
     
     #@debug
     def apply_disorder(self, rank: int = -1, outdir: Optional[str] = None, 
