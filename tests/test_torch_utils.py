@@ -6,6 +6,16 @@ including complex number operations, eigendecomposition, and gradient utilities.
 """
 
 import unittest
+import sys
+import os
+
+# Add project root to path if necessary
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Import the specific utility class/function
+from eryx.torch_utils import BrillouinZoneUtils # Or from models_torch if static
 import torch
 import numpy as np
 from eryx.torch_utils import ComplexTensorOps, EigenOps, GradientUtils
@@ -731,6 +741,82 @@ class TestGradientUtils(unittest.TestCase):
         
         self.assertTrue(torch.isfinite(norm))
         self.assertAlmostEqual(norm.item() / 1e10, np.sqrt(5), places=6)
+
+
+class TestBZMapping(unittest.TestCase):
+
+    def setUp(self):
+        self.device = torch.device('cpu')
+        self.dtype = torch.float64
+        # Example A_inv for a simple cubic cell a=10
+        # A = [[10,0,0],[0,10,0],[0,0,10]] -> A_inv = [[0.1,0,0],[0,0.1,0],[0,0,0.1]]
+        self.A_inv_simple = torch.tensor([[0.1, 0.0, 0.0],
+                                          [0.0, 0.1, 0.0],
+                                          [0.0, 0.0, 0.1]],
+                                         dtype=self.dtype, device=self.device)
+        # Example A_inv from 5zck (ensure this matches model!)
+        # Use actual value from model if possible, otherwise placeholder:
+        self.A_inv_5zck = torch.tensor([
+            [ 0.20777062, -0. ,        -0.        ],
+            [ 0. ,         0.05830564,  0.        ],
+            [ 0. ,         0. ,         0.03382492]
+        ], dtype=self.dtype, device=self.device) # Make sure this is float64
+
+    def test_map_q_to_k_bz_origin(self):
+        q_vec = torch.tensor([0.0, 0.0, 0.0], dtype=self.dtype, device=self.device)
+        k_bz = BrillouinZoneUtils._map_q_to_k_bz(q_vec, self.A_inv_simple)
+        expected_k_bz = torch.tensor([0.0, 0.0, 0.0], dtype=self.dtype, device=self.device)
+        self.assertTrue(torch.allclose(k_bz, expected_k_bz, atol=1e-12), f"Got {k_bz}")
+
+    def test_map_q_to_k_bz_inside(self):
+        # Corresponds to hkl = (0.1, -0.2, 0.3) - should map to itself
+        hkl = torch.tensor([0.1, -0.2, 0.3], dtype=self.dtype, device=self.device)
+        # k = hkl @ A_inv -> q = 2pi * k @ A_inv^T ??? No, q = 2pi * A_inv^-T @ hkl
+        # Easier: k = hkl @ A_inv -> q = 2pi * k
+        k_vec = torch.matmul(hkl.unsqueeze(0), self.A_inv_simple).squeeze(0)
+        q_vec = k_vec * (2.0 * torch.pi)
+        k_bz = BrillouinZoneUtils._map_q_to_k_bz(q_vec, self.A_inv_simple)
+        expected_k_bz = k_vec # Should map to itself
+        self.assertTrue(torch.allclose(k_bz, expected_k_bz, atol=1e-12), f"Got {k_bz}, Expected {expected_k_bz}")
+
+    def test_map_q_to_k_bz_outside(self):
+        # Corresponds to hkl = (0.6, 0.9, -1.2) -> maps to ( -0.4, -0.1, -0.2)
+        hkl_in = torch.tensor([0.6, 0.9, -1.2], dtype=self.dtype, device=self.device)
+        hkl_expected_bz = torch.tensor([-0.4, -0.1, -0.2], dtype=self.dtype, device=self.device)
+
+        k_in = torch.matmul(hkl_in.unsqueeze(0), self.A_inv_simple).squeeze(0)
+        q_in = k_in * (2.0 * torch.pi)
+        expected_k_bz = torch.matmul(hkl_expected_bz.unsqueeze(0), self.A_inv_simple).squeeze(0)
+
+        k_bz_calculated = BrillouinZoneUtils._map_q_to_k_bz(q_in, self.A_inv_simple)
+        self.assertTrue(torch.allclose(k_bz_calculated, expected_k_bz, atol=1e-12),
+                        f"Got {k_bz_calculated}, Expected {expected_k_bz}")
+
+    def test_map_q_to_k_bz_boundary(self):
+        # Corresponds to hkl = (0.5, -0.5, 0.0) -> maps to (-0.5, -0.5, 0.0)
+        hkl_in = torch.tensor([0.5, -0.5, 0.0], dtype=self.dtype, device=self.device)
+        hkl_expected_bz = torch.tensor([-0.5, -0.5, 0.0], dtype=self.dtype, device=self.device) # Boundary maps to -0.5
+
+        k_in = torch.matmul(hkl_in.unsqueeze(0), self.A_inv_simple).squeeze(0)
+        q_in = k_in * (2.0 * torch.pi)
+        expected_k_bz = torch.matmul(hkl_expected_bz.unsqueeze(0), self.A_inv_simple).squeeze(0)
+
+        k_bz_calculated = BrillouinZoneUtils._map_q_to_k_bz(q_in, self.A_inv_simple)
+        self.assertTrue(torch.allclose(k_bz_calculated, expected_k_bz, atol=1e-12),
+                        f"Got {k_bz_calculated}, Expected {expected_k_bz}")
+
+    # Add a test using the actual 5zck A_inv if possible
+    def test_map_q_to_k_bz_5zck(self):
+        # Example q from grid run (e.g., q_grid[9])
+        q_vec_9 = torch.tensor([-2.61092263, -0.54951769, -0.42505651], dtype=self.dtype, device=self.device)
+        # Expected k_bz for q_grid[9] (this should map to a k outside BZ initially, then map back)
+        # Manually calculate expected k_bz or get from a trusted source if possible.
+        # For now, just check it runs without error and returns *some* vector.
+        k_bz_9 = BrillouinZoneUtils._map_q_to_k_bz(q_vec_9, self.A_inv_5zck)
+        self.assertEqual(k_bz_9.shape, (3,))
+        self.assertEqual(k_bz_9.dtype, self.dtype)
+        print(f"BZ map for q_grid[9]: {q_vec_9.cpu().numpy()} -> k_bz={k_bz_9.cpu().numpy()}")
+
 
 if __name__ == '__main__':
     unittest.main()

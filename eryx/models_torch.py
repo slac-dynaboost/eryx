@@ -1115,7 +1115,26 @@ class OnePhonon:
         rounded_kvec = torch.round(self.kvec / tolerance) * tolerance
         unique_k_bz, inverse_indices = torch.unique(rounded_kvec, dim=0, return_inverse=True)
         n_unique_k = unique_k_bz.shape[0]
-        
+        logging.debug(f"[compute_gnm_phonons] Found {n_unique_k} unique k_BZ vectors to process.")
+        print(f"DEBUG: compute_gnm_phonons: Found {n_unique_k} unique k_BZ vectors.") # Add print
+
+        # --- Add detailed check for specific indices ---
+        indices_to_check = [9, 61] # Check original q_idx 9 and 61
+        if self.kvec.shape[0] > max(indices_to_check): # Ensure indices are valid
+             print("--- DEBUG: Unique K Mapping Check ---")
+             for i in indices_to_check:
+                 original_k = self.kvec[i]
+                 unique_idx = inverse_indices[i].item()
+                 mapped_unique_k = unique_k_bz[unique_idx]
+                 print(f"  q_idx {i}:")
+                 print(f"    kvec[i] (Mapped BZ): {original_k.cpu().numpy()}")
+                 print(f"    unique_idx (j):      {unique_idx}")
+                 print(f"    unique_k_bz[j]:      {mapped_unique_k.cpu().numpy()}")
+                 # Check if they are close
+                 print(f"    Match within tol?:   {torch.allclose(original_k, mapped_unique_k, atol=tolerance*1.1)}") # Use slightly larger tol
+             print("--- End Check ---")
+        # --- End detailed check ---
+
         total_points = self.kvec.shape[0]
         if getattr(self, 'use_arbitrary_q', False):
             print(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} arbitrary q-vectors")
@@ -1338,10 +1357,25 @@ class OnePhonon:
         # Now expand the unique results to match the original q-vector list
         self.V = V_unique[inverse_indices].detach()
         self.Winv = Winv_unique[inverse_indices]
-        
+
         # Ensure requires_grad is set correctly
         self.V.requires_grad_(False)
-        self.Winv.requires_grad_(eigenvalues_unique.requires_grad)
+        # self.Winv.requires_grad_(eigenvalues_unique.requires_grad) # Original line
+        self.Winv.requires_grad_(eigenvalues_unique.requires_grad) # Simplified (same effect)
+
+        # --- Add check after expansion ---
+        indices_to_check = [9, 61] # Check original q_idx 9 and 61
+        if self.Winv.shape[0] > max(indices_to_check):
+             print("--- DEBUG: Expansion Check ---")
+             for i in indices_to_check:
+                 unique_idx = inverse_indices[i].item()
+                 print(f"  q_idx {i} (unique_idx={unique_idx}):")
+                 # Compare first element of Winv
+                 print(f"    Winv[{i}][0]:         {self.Winv[i, 0].item()}")
+                 print(f"    Winv_unique[{unique_idx}][0]: {Winv_unique[unique_idx, 0].item()}")
+                 print(f"    Match?:              {torch.allclose(self.Winv[i, 0], Winv_unique[unique_idx, 0])}")
+             print("--- End Check ---")
+        # --- End check after expansion ---
         
         # --- Debug Print Trigger ---
         if DEBUG_IDX_BZ < self.V.shape[0]:
@@ -1872,6 +1906,23 @@ class OnePhonon:
                     # --- End Logging ---
 
                     intensity[i] = intensity_contribution
+
+                    # --- Add conditional logging ---
+                    target_q_idx = 9 # Define the target index to log
+                    if actual_q_idx == target_q_idx:
+                        mode_str = "ARB" # Already inside arbitrary mode block
+                        print(f"\n--- {mode_str} MODE (Processing q_idx={actual_q_idx}, loop i={i}) ---")
+                        # Print F_i, V_i, Winv_i, FV, etc. using .item() and .abs() as needed
+                        # Note: V_i and Winv_i are V_idx and Winv_idx here
+                        print(f"  F[{i}, 0] (abs): {torch.abs(F_i[0]).item():.6e}")
+                        print(f"  V[{i}, 0, 0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
+                        print(f"  Winv[{i}, 0] (real): {Winv_idx[0].real.item():.6e}")
+                        print(f"  FV[{i}, 0] (abs): {torch.abs(FV[0]).item():.6e}")
+                        print(f"  FV_abs_squared[{i}, 0]: {FV_abs_squared[0].item():.6e}")
+                        print(f"  real_winv[{i}, 0]: {real_winv_float64[0].item():.6e}")
+                        print(f"  Intensity Contribution: {intensity_contribution.item():.6e}")
+                    # --- End conditional logging ---
+
             else:
                 # Process single mode
                 intensity = torch.zeros(valid_indices.numel(), device=self.device)
@@ -2142,7 +2193,34 @@ class OnePhonon:
                         
                         # Accumulate intensity
                         Id.index_add_(0, valid_indices, intensity_contribution)
-            
+
+                        # --- Add conditional logging for Grid Mode ---
+                        target_q_idx = 9 # Define the target index to log
+                        target_indices_in_batch = torch.where(valid_indices == target_q_idx)[0]
+
+                        if target_indices_in_batch.numel() > 0:
+                            target_loop_idx = target_indices_in_batch[0].item() # Index within the current batch
+                            mode_str = "GRID"
+                            print(f"\n--- {mode_str} MODE (Processing q_idx={target_q_idx}, BZ idx={idx}, loop i={target_loop_idx}) ---")
+                            # Print F_i, V_k, Winv_k, FV, etc. using .item() and .abs() as needed
+                            # Note: V_k and Winv_k are for the BZ point, F and FV are for the specific q_idx
+                            F_target = F[target_loop_idx]
+                            FV_target = FV[target_loop_idx]
+                            FV_abs_sq_target = FV_abs_squared[target_loop_idx]
+                            intensity_cont_target = intensity_contribution[target_loop_idx]
+
+                            print(f"  F[{target_loop_idx}, 0] (abs): {torch.abs(F_target[0]).item():.6e}")
+                            # V_k and Winv_k are shared for the BZ point
+                            print(f"  V_k[0, 0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
+                            print(f"  Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
+                            # FV depends on the specific q_idx within the BZ group
+                            print(f"  FV[{target_loop_idx}, 0] (abs): {torch.abs(FV_target[0]).item():.6e}")
+                            print(f"  FV_abs_squared[{target_loop_idx}, 0]: {FV_abs_sq_target[0].item():.6e}")
+                            # real_winv is shared for the BZ point
+                            print(f"  real_winv[0]: {real_winv[0].item():.6e}")
+                            print(f"  Intensity Contribution: {intensity_cont_target.item():.6e}")
+                        # --- End conditional logging ---
+
             # Apply resolution mask
             Id_masked = Id.clone()
             Id_masked[~self.res_mask] = float('nan')
