@@ -10,6 +10,7 @@ References:
 """
 
 import os
+import logging
 import numpy as np
 import torch
 import torch.nn as nn
@@ -1291,11 +1292,11 @@ class OnePhonon:
         
         # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
         Linv_H_batch = Linv_H.unsqueeze(0).expand(n_unique_k, -1, -1)
-        if self.kvec.shape[0] > max(indices_to_check): # Ensure indices are valid
-             print("--- DEBUG: Unique K Mapping Check ---")
-             for i in indices_to_check:
-                 original_k = self.kvec[i]
-                 unique_idx = inverse_indices[i].item()
+        # if self.kvec.shape[0] > max(indices_to_check): # Ensure indices are valid
+        #      print("--- DEBUG: Unique K Mapping Check ---")
+        #      for i in indices_to_check:
+        #          original_k = self.kvec[i]
+        #          unique_idx = inverse_indices[i].item()
                  mapped_unique_k = unique_k_bz[unique_idx]
                  print(f"  q_idx {i}:")
                  print(f"    kvec[i] (Mapped BZ): {original_k.cpu().numpy()}")
@@ -1433,7 +1434,7 @@ class OnePhonon:
                 print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
                 if D_i_hermitian.numel() > 0:
                     print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
-                    debug_data_arbq['D_00'] = D_i_hermitian[0,0].item()
+                    # debug_data_arbq['D_00'] = D_i_hermitian[0,0].item()
             
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
@@ -1452,8 +1453,8 @@ class OnePhonon:
                 if v_i_no_grad.numel() > 0:
                     print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
                     print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
-                    debug_data_arbq['v_00'] = v_i_no_grad[0,0].item()
-                    debug_data_arbq['v_0N'] = v_i_no_grad[0,-1].item()
+                    # debug_data_arbq['v_00'] = v_i_no_grad[0,0].item()
+                    # debug_data_arbq['v_0N'] = v_i_no_grad[0,-1].item()
             
             # Use eigenvectors directly from eigh (ascending eigenvalue order)
             eigenvectors_unique_detached_list.append(v_i_no_grad)
@@ -1471,8 +1472,8 @@ class OnePhonon:
                 if eigenvalues_tensor.numel() > 0:
                     print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
                     print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
-                    debug_data_arbq['eig_0'] = eigenvalues_tensor[0].item()
-                    debug_data_arbq['eig_N'] = eigenvalues_tensor[-1].item()
+                    # debug_data_arbq['eig_0'] = eigenvalues_tensor[0].item()
+                    # debug_data_arbq['eig_N'] = eigenvalues_tensor[-1].item()
             
             # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
             eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
@@ -1497,8 +1498,8 @@ class OnePhonon:
                 if eigenvalues_processed.numel() > 0:
                     print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
                     print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-                    debug_data_arbq['eig_p0'] = eigenvalues_processed[0].item()
-                    debug_data_arbq['eig_pN'] = eigenvalues_processed[-1].item()
+                    # debug_data_arbq['eig_p0'] = eigenvalues_processed[0].item()
+                    # debug_data_arbq['eig_pN'] = eigenvalues_processed[-1].item()
                 print(f"--- End DEBUG Phonon Loop (unique i={i}) ---")
         
         # Stack results for unique k-vectors
