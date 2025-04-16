@@ -472,6 +472,69 @@ class BrillouinZoneUtils:
         
         return unique_k, inverse_indices
 
+    @staticmethod
+    def map_q_to_k_bz(q_vector: torch.Tensor, A_inv_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Maps a q vector to its equivalent k-vector in the first Brillouin zone.
+        
+        This function implements the standard crystallographic mapping from an arbitrary
+        q-vector in reciprocal space to its equivalent k-vector within the first
+        Brillouin zone. This mapping is essential for correctly calculating phonon
+        properties which are periodic in reciprocal space.
+        
+        The mapping follows these steps:
+        1. Convert q to k = q/(2π)
+        2. Convert k to fractional coordinates hkl using the reciprocal lattice vectors
+        3. Map each fractional coordinate to the range [-0.5, 0.5) using modular arithmetic
+        4. Convert the mapped fractional coordinates back to Cartesian k-vector
+        
+        Args:
+            q_vector: Q-vector in reciprocal space (Å⁻¹) of shape (3,) or (batch_size, 3)
+            A_inv_tensor: Inverse of the real-space unit cell matrix, shape (3,3)
+            
+        Returns:
+            Equivalent k-vector in the first Brillouin zone, same shape as input q_vector
+        """
+        # Ensure high precision
+        real_dtype = torch.float64
+        
+        # Handle both single vectors and batches
+        is_batch = q_vector.dim() > 1
+        if not is_batch:
+            q_vector = q_vector.unsqueeze(0)  # Add batch dimension
+            
+        q_vector = q_vector.to(dtype=real_dtype)
+        A_inv_tensor = A_inv_tensor.to(dtype=real_dtype)
+
+        # 1. Calculate direct k = q / (2*pi)
+        two_pi = torch.tensor(2.0 * torch.pi, dtype=real_dtype, device=q_vector.device)
+        k_direct = q_vector / two_pi
+
+        # 2. Calculate direct fractional coordinates hkl = k @ A_inv^(-T) = k @ A
+        # We need A = (A_inv)^-1
+        try:
+            # Use pseudo-inverse for potentially non-invertible A_inv
+            A_tensor = torch.linalg.pinv(A_inv_tensor)
+        except torch._C._LinAlgError:
+            print("Warning: A_inv matrix inversion failed during BZ mapping. Using pseudo-inverse.")
+            A_tensor = torch.linalg.pinv(A_inv_tensor)
+
+        # Ensure correct dimensions for matmul
+        hkl_direct = torch.matmul(k_direct, A_tensor)
+
+        # 3. Map fractional coordinates to [-0.5, 0.5)
+        # More robust mapping: (x + 0.5) % 1.0 - 0.5
+        hkl_bz = torch.remainder(hkl_direct + 0.5, 1.0) - 0.5
+
+        # 4. Calculate k_bz = hkl_bz @ A_inv^T
+        k_bz = torch.matmul(hkl_bz, A_inv_tensor.T)
+
+        # Return k_bz with high precision, removing batch dimension if input was a single vector
+        if not is_batch:
+            k_bz = k_bz.squeeze(0)
+            
+        return k_bz.to(dtype=real_dtype)
+
 
 class GradientUtils:
     """

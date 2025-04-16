@@ -690,10 +690,11 @@ class OnePhonon:
 
             # Pre-allocate kvec tensor
             self.kvec = torch.zeros((n_points, 3), dtype=self.real_dtype, device=self.device)
+            from eryx.torch_utils import BrillouinZoneUtils # Import the utility class
             
-            # Map each q vector to its k_BZ equivalent
-            for i in range(n_points):
-                self.kvec[i] = self._map_q_to_k_bz(self.q_grid[i], A_inv_tensor)
+            # Map each q vector to its k_BZ equivalent using the utility function
+            # Pass tensors directly, the utility handles batching
+            self.kvec = BrillouinZoneUtils.map_q_to_k_bz(self.q_grid, A_inv_tensor)
 
             # Calculate norm based on the mapped k_BZ vectors
             self.kvec_norm = torch.linalg.norm(self.kvec, dim=1, keepdim=True).to(dtype=self.real_dtype)
@@ -795,59 +796,7 @@ class OnePhonon:
         centered_index = int(((x - L / 2) % L) - L / 2)
         return float(centered_index) / float(L)
     
-    @staticmethod
-    def _map_q_to_k_bz(q_vector: torch.Tensor, A_inv_tensor: torch.Tensor) -> torch.Tensor:
-        """
-        Maps a q vector to its equivalent k-vector in the first Brillouin zone.
-        
-        This function implements the standard crystallographic mapping from an arbitrary
-        q-vector in reciprocal space to its equivalent k-vector within the first
-        Brillouin zone. This mapping is essential for correctly calculating phonon
-        properties which are periodic in reciprocal space.
-        
-        The mapping follows these steps:
-        1. Convert q to k = q/(2π)
-        2. Convert k to fractional coordinates hkl using the reciprocal lattice vectors
-        3. Map each fractional coordinate to the range [-0.5, 0.5) using modular arithmetic
-        4. Convert the mapped fractional coordinates back to Cartesian k-vector
-        
-        Args:
-            q_vector: Q-vector in reciprocal space (Å⁻¹) of shape (3,)
-            A_inv_tensor: Inverse of the real-space unit cell matrix, shape (3,3)
-            
-        Returns:
-            Equivalent k-vector in the first Brillouin zone, shape (3,)
-        """
-        # Ensure high precision
-        real_dtype = torch.float64
-        q_vector = q_vector.to(dtype=real_dtype)
-        A_inv_tensor = A_inv_tensor.to(dtype=real_dtype)
-
-        # 1. Calculate direct k = q / (2*pi)
-        two_pi = torch.tensor(2.0 * torch.pi, dtype=real_dtype, device=q_vector.device)
-        k_direct = q_vector / two_pi
-
-        # 2. Calculate direct fractional coordinates hkl = k @ A_inv^(-T) = k @ A
-        # We need A = (A_inv)^-1
-        try:
-            # Use pseudo-inverse for potentially non-invertible A_inv
-            A_tensor = torch.linalg.pinv(A_inv_tensor)
-        except torch._C._LinAlgError:
-            print("Warning: A_inv matrix inversion failed during BZ mapping. Using pseudo-inverse.")
-            A_tensor = torch.linalg.pinv(A_inv_tensor)
-
-        # Ensure correct dimensions for matmul
-        hkl_direct = torch.matmul(k_direct.unsqueeze(0), A_tensor).squeeze(0)
-
-        # 3. Map fractional coordinates to [-0.5, 0.5)
-        # More robust mapping: (x + 0.5) % 1.0 - 0.5
-        hkl_bz = torch.remainder(hkl_direct + 0.5, 1.0) - 0.5
-
-        # 4. Calculate k_bz = hkl_bz @ A_inv^T
-        k_bz = torch.matmul(hkl_bz.unsqueeze(0), A_inv_tensor.T).squeeze(0)
-
-        # Return k_bz with high precision
-        return k_bz.to(dtype=real_dtype)
+    # Note: _map_q_to_k_bz moved to BrillouinZoneUtils in eryx/torch_utils.py
     
     def _at_kvec_from_miller_points(self, indices_or_batch: Union[Tuple[int, int, int], torch.Tensor, int]) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
