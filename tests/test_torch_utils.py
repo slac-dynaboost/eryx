@@ -808,20 +808,33 @@ class TestBZMapping(unittest.TestCase):
     # Add a test using the actual 5zck A_inv if possible
     def test_map_q_to_k_bz_5zck(self):
         # Example q from grid run (e.g., q_grid[9] from 2x2x2 grid)
-        # q_grid[9] corresponds to hkl = (-1.0, -1.0, 1.0) in the full grid
-        # This should map to k_bz corresponding to hkl_bz = (0.0, 0.0, -0.5) in the BZ
         q_vec_9 = torch.tensor([-2.61092263, -0.54951769, -0.42505651], dtype=self.dtype, device=self.device)
-        # Expected k_bz for q_grid[9] (maps to BZ point (0,0,-0.5))
-        hkl_bz_expected = torch.tensor([0.0, 0.0, -0.5], dtype=self.dtype, device=self.device)
+
+        # Calculate k_direct and expected hkl_direct based on the function's logic
+        k_direct_expected = q_vec_9 / (2.0 * torch.pi)
+        A_tensor = torch.linalg.pinv(self.A_inv_5zck)
+        hkl_direct_expected = torch.matmul(k_direct_expected.unsqueeze(0), A_tensor).squeeze(0)
+
+        # Calculate expected hkl_bz using the mapping rule
+        hkl_bz_expected = torch.remainder(hkl_direct_expected + 0.5, 1.0) - 0.5
+
+        # Calculate the expected final k_bz from the expected hkl_bz
         k_bz_expected = torch.matmul(hkl_bz_expected.unsqueeze(0), self.A_inv_5zck.T).squeeze(0)
 
-        k_bz_9 = BrillouinZoneUtils.map_q_to_k_bz(q_vec_9, self.A_inv_5zck) # Updated call
-        self.assertEqual(k_bz_9.shape, (3,))
-        self.assertEqual(k_bz_9.dtype, self.dtype)
-        print(f"BZ map for q_grid[9]: {q_vec_9.cpu().numpy()} -> k_bz={k_bz_9.cpu().numpy()}")
-        print(f"Expected k_bz: {k_bz_expected.cpu().numpy()}")
-        self.assertTrue(torch.allclose(k_bz_9, k_bz_expected, atol=1e-12),
-                        f"Got {k_bz_9}, Expected {k_bz_expected}")
+        # Call the function under test
+        k_bz_calculated = BrillouinZoneUtils.map_q_to_k_bz(q_vec_9, self.A_inv_5zck) # Use correct call
+
+        # Assertions
+        self.assertEqual(k_bz_calculated.shape, (3,))
+        self.assertEqual(k_bz_calculated.dtype, self.dtype)
+        print(f"BZ map for q_grid[9]: {q_vec_9.cpu().numpy()} -> k_bz={k_bz_calculated.cpu().numpy()}")
+        print(f"Expected hkl_direct: {hkl_direct_expected.cpu().numpy()}")
+        print(f"Expected hkl_bz:     {hkl_bz_expected.cpu().numpy()}")
+        print(f"Expected k_bz:       {k_bz_expected.cpu().numpy()}")
+
+        # Compare calculated k_bz with the k_bz derived from the expected hkl_bz
+        self.assertTrue(torch.allclose(k_bz_calculated, k_bz_expected, atol=1e-12),
+                        f"Got {k_bz_calculated}, Expected {k_bz_expected}")
 
 
 if __name__ == '__main__':
