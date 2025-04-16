@@ -1660,6 +1660,17 @@ class OnePhonon:
         # Import structure_factors function
         from eryx.scatter_torch import structure_factors
         
+        # Get valid indices directly from the resolution mask (same for both modes)
+        n_points = self.q_grid.shape[0]
+        valid_indices = torch.where(self.res_mask)[0]
+        
+        if getattr(self, 'use_arbitrary_q', False):
+            logging.debug(f"[apply_disorder] ARBITRARY-Q MODE (using direct indexing)")
+        else:
+            logging.debug(f"[apply_disorder] GRID MODE (using direct indexing)")
+        
+        logging.debug(f"[apply_disorder] Total points: {n_points}, Valid points (res_mask): {valid_indices.numel()}")
+        
         if getattr(self, 'use_arbitrary_q', False):
             # In arbitrary q-vector mode, we process all provided q-vectors directly
             n_points = self.q_grid.shape[0]
