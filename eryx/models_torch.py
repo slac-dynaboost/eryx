@@ -445,24 +445,7 @@ class OnePhonon:
                     #     assigned_block = self.Amat[i_asu, i_atom*3:(i_atom+1)*3, :]
                     #     print(f"  Torch Atom {i_atom} Assigned Block:\n{assigned_block.detach().cpu().numpy()}")
             
-            # Add debug prints to compare with NumPy implementation
-            # if self.n_asu > 0 and self.n_atoms_per_asu > 0:
-            #     print(f"\nDEBUG _build_A: First ASU, first atom Amat block:")
-            #     print(self.Amat[0, 0:3, :].detach().cpu().numpy())
-            #     if self.n_atoms_per_asu > 1:
-            #         print(f"\nDEBUG _build_A: First ASU, second atom Amat block:")
-            #         print(self.Amat[0, 3:6, :].detach().cpu().numpy())
-            #     if self.n_atoms_per_asu > 2:
-            #         print(f"\nDEBUG _build_A: First ASU, third atom Amat block:")
-            #         print(self.Amat[0, 6:9, :].detach().cpu().numpy())
-                
-            #     # Print the entire Amat shape and a summary of its values
-            #     print(f"\nDEBUG _build_A: Amat shape: {self.Amat.shape}")
-            #     print(f"DEBUG _build_A: Amat min: {self.Amat.min().item()}, max: {self.Amat.max().item()}")
-            #     print(f"DEBUG _build_A: Amat mean: {self.Amat.mean().item()}, std: {self.Amat.std().item()}")
-            
             # Keep high precision
-            # Do NOT convert back to float32
             
             # Set requires_grad after construction
             self.Amat.requires_grad_(True)
