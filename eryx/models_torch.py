@@ -1297,14 +1297,14 @@ class OnePhonon:
         #      for i in indices_to_check:
         #          original_k = self.kvec[i]
         #          unique_idx = inverse_indices[i].item()
-                 mapped_unique_k = unique_k_bz[unique_idx]
-                 print(f"  q_idx {i}:")
-                 print(f"    kvec[i] (Mapped BZ): {original_k.cpu().numpy()}")
-                 print(f"    unique_idx (j):      {unique_idx}")
-                 print(f"    unique_k_bz[j]:      {mapped_unique_k.cpu().numpy()}")
-                 # Check if they are close
-                 print(f"    Match within tol?:   {torch.allclose(original_k, mapped_unique_k, atol=tolerance*1.1)}") # Use slightly larger tol
-             print("--- End Check ---")
+        #          mapped_unique_k = unique_k_bz[unique_idx]
+        #          print(f"  q_idx {i}:")
+        #          print(f"    kvec[i] (Mapped BZ): {original_k.cpu().numpy()}")
+        #          print(f"    unique_idx (j):      {unique_idx}")
+        #          print(f"    unique_k_bz[j]:      {mapped_unique_k.cpu().numpy()}")
+        #          # Check if they are close
+        #          print(f"    Match within tol?:   {torch.allclose(original_k, mapped_unique_k, atol=tolerance*1.1)}") # Use slightly larger tol
+        #      print("--- End Check ---")
         # --- End detailed check ---
 
         total_points = self.kvec.shape[0]
