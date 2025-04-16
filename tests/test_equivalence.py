@@ -84,20 +84,71 @@ class TestModeEquivalence(unittest.TestCase):
         are_close = np.allclose(intensity_grid_np, intensity_q_np,
                                 rtol=self.rtol, atol=self.atol, equal_nan=True)
 
+        # Inside _run_and_compare, after are_close is calculated:
         if not are_close:
-            mask = ~np.isnan(intensity_grid_np) & ~np.isnan(intensity_q_np)
-            if np.any(mask):
-                 max_diff = np.max(np.abs(intensity_grid_np[mask] - intensity_q_np[mask]))
-                 print(f"Max difference: {max_diff}")
-                 max_idx = np.unravel_index(np.argmax(np.abs(intensity_grid_np[mask] - intensity_q_np[mask])), intensity_grid_np[mask].shape) # Find index within the masked array
-                 # Map back to original index if needed (more complex)
-                 print(f"Example mismatch at an index (within valid mask): grid={intensity_grid_np[mask][max_idx]}, q={intensity_q_np[mask][max_idx]}")
+            print("\n--- DETAILED COMPARISON (Equivalence Failed) ---")
+            # Ensure NaNs are handled consistently for calculations
+            nan_mask = np.isnan(intensity_grid_np) | np.isnan(intensity_q_np)
+            valid_mask = ~nan_mask
+
+            if np.sum(valid_mask) == 0:
+                print("Comparison failed, and NO valid (non-NaN) points found to compare.")
             else:
-                 print("Comparison skipped - all values are NaN.")
+                # Calculate differences only on valid points
+                grid_valid = intensity_grid_np[valid_mask]
+                q_valid = intensity_q_np[valid_mask]
+                abs_diff_valid = np.abs(grid_valid - q_valid)
+                # Add epsilon to avoid division by zero for relative diff
+                rel_diff_valid = abs_diff_valid / (np.abs(grid_valid) + 1e-9)
 
+                # --- Overall Statistics ---
+                max_abs_diff = np.max(abs_diff_valid)
+                mean_abs_diff = np.mean(abs_diff_valid)
+                max_rel_diff = np.max(rel_diff_valid)
+                mean_rel_diff = np.mean(rel_diff_valid)
+                print(f"Overall Max Abs Diff:  {max_abs_diff:.6e}")
+                print(f"Overall Mean Abs Diff: {mean_abs_diff:.6e}")
+                print(f"Overall Max Rel Diff:  {max_rel_diff:.6e}")
+                print(f"Overall Mean Rel Diff: {mean_rel_diff:.6e}")
 
-        self.assertTrue(are_close, f"Intensity results differ between modes (use_data_adp={use_data_adp})")
-        print(f"Equivalence test PASSED (use_data_adp={use_data_adp})")
+                # --- Find Problematic Indices ---
+                # Define thresholds (adjust if needed)
+                rel_diff_threshold = 0.001 # 0.1% relative difference
+                # Ignore points where grid intensity is very small compared to max
+                grid_max_valid = np.max(grid_valid)
+                abs_intensity_threshold = 1e-5 * grid_max_valid
+
+                problematic_indices_valid = np.where(
+                    (rel_diff_valid > rel_diff_threshold) &
+                    (np.abs(grid_valid) > abs_intensity_threshold)
+                )[0]
+
+                # Map valid indices back to original flat indices
+                original_indices = np.arange(intensity_grid_np.size)
+                valid_original_indices = original_indices[valid_mask]
+                problematic_original_indices = valid_original_indices[problematic_indices_valid]
+
+                print(f"\nFound {len(problematic_original_indices)} points with RelDiff > {rel_diff_threshold:.1e} and Grid Intensity > {abs_intensity_threshold:.1e}")
+
+                # Print details for a few problematic points
+                num_to_print = min(10, len(problematic_original_indices))
+                if num_to_print > 0:
+                    print(f"\nDetails for first {num_to_print} problematic points (Original Index):")
+                    print("Idx      Grid Val       Q Val          Abs Diff       Rel Diff")
+                    print("--------------------------------------------------------------------")
+                    for i in range(num_to_print):
+                        orig_idx = problematic_original_indices[i]
+                        valid_idx = problematic_indices_valid[i] # Index within the _valid arrays
+                        g_val = grid_valid[valid_idx]
+                        q_val = q_valid[valid_idx]
+                        a_diff = abs_diff_valid[valid_idx]
+                        r_diff = rel_diff_valid[valid_idx]
+                        print(f"{orig_idx:<7d} {g_val:<14.6e} {q_val:<14.6e} {a_diff:<14.6e} {r_diff:<14.6e}")
+
+            # Raise the original assertion failure
+            self.assertTrue(are_close, f"Intensity results differ between modes (use_data_adp={use_data_adp})")
+        else:
+            print(f"\nEquivalence test PASSED (use_data_adp={use_data_adp})")
 
     def test_equivalence_with_data_adp(self):
         """Test equivalence using ADPs from PDB data."""
