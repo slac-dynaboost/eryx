@@ -1527,7 +1527,7 @@ class OnePhonon:
                 1.0 / torch.maximum(eigenvalues_all, eps_div) # Ensure division is float64
             ).to(dtype=self.real_dtype) # Ensure final real dtype
             self.Winv = winv_all_real.to(dtype=self.complex_dtype) # Cast to complex
-        else:
+            
             # --- Debug Print Trigger (Grid Mode) ---
             if DEBUG_IDX_BZ < self.V.shape[0]:
                 print(f"\n--- DEBUG Final Grid (idx={DEBUG_IDX_BZ}) ---")
