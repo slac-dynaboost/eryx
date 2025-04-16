@@ -21,7 +21,6 @@ from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
 from eryx.autotest.debug import debug
 from eryx.adapters import PDBToTensor, TensorToNumpy
 
-class OnePhonon:
     """
     PyTorch implementation of the OnePhonon model for diffuse scattering calculations.
     
@@ -39,7 +38,8 @@ class OnePhonon:
     2. Arbitrary q-vector mode:
        - Directly specify q_vectors parameter as a tensor of shape [n_points, 3]
        - Evaluates diffuse scattering only at specified q-vectors
-       - Enables targeted evaluation and gradient-based optimization
+       - Maps each q-vector to its equivalent k-vector in the first Brillouin zone
+       - Enables targeted evaluation with physically correct phonon properties
        
     The arbitrary q-vector mode is particularly useful for:
     - Focusing computation on specific regions of interest
@@ -682,23 +682,38 @@ class OnePhonon:
         Compute all k-vectors and their norm in the first Brillouin zone.
         
         In grid mode: Regularly samples [-0.5,0.5[ for h, k and l.
-        In arbitrary mode: Derives k-vectors directly from q-vectors as k = q/(2π).
+        In arbitrary mode: Maps each q-vector to its equivalent k-vector in the first BZ.
         """
         import logging
         logging.debug(f"[_build_kvec_Brillouin] use_arbitrary_q={getattr(self, 'use_arbitrary_q', False)}")
         
         if getattr(self, 'use_arbitrary_q', False):
-            # Arbitrary q-vector mode
-            # k = q/(2π)
-            two_pi = torch.tensor(2.0 * torch.pi, dtype=self.real_dtype, device=self.device)
-            self.kvec = (self.q_grid / two_pi).to(dtype=self.real_dtype) # Ensure division and final dtype
-            self.kvec_norm = torch.linalg.norm(self.kvec, dim=1, keepdim=True).to(dtype=self.real_dtype) # Use linalg.norm
-
-            # Ensure tensors require gradients
-            self.kvec.requires_grad_(True)
-            self.kvec_norm.requires_grad_(True)
+            # Arbitrary q-vector mode with BZ mapping
+            n_points = self.q_grid.shape[0]
             
-            logging.debug(f"[_build_kvec_Brillouin] Arbitrary mode: kvec.shape={self.kvec.shape}, kvec_norm.shape={self.kvec_norm.shape}")
+            # Ensure A_inv is a tensor on the correct device/dtype
+            if isinstance(self.model.A_inv, torch.Tensor):
+                A_inv_tensor = self.model.A_inv.to(dtype=self.real_dtype, device=self.device)
+            else:
+                A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
+
+            # Pre-allocate kvec tensor
+            self.kvec = torch.zeros((n_points, 3), dtype=self.real_dtype, device=self.device)
+            
+            # Map each q vector to its k_BZ equivalent
+            for i in range(n_points):
+                self.kvec[i] = self._map_q_to_k_bz(self.q_grid[i], A_inv_tensor)
+
+            # Calculate norm based on the mapped k_BZ vectors
+            self.kvec_norm = torch.linalg.norm(self.kvec, dim=1, keepdim=True).to(dtype=self.real_dtype)
+
+            # The mapping operation breaks direct gradient flow from q to k
+            # Detach to make this explicit and avoid potential gradient issues
+            self.kvec = self.kvec.detach()
+            self.kvec_norm = self.kvec_norm.detach()
+            
+            logging.debug(f"[_build_kvec_Brillouin] Arbitrary mode with BZ mapping: kvec.shape={self.kvec.shape}, "
+                         f"kvec_norm.shape={self.kvec_norm.shape}, requires_grad=False")
         else:
             # Grid-based mode
             logging.debug("[_build_kvec_Brillouin] Grid-based mode. Using Brillouin zone sampling dimensions.")
@@ -788,6 +803,60 @@ class OnePhonon:
         # Ensure the final result is a Python float (which corresponds to float64 precision)
         centered_index = int(((x - L / 2) % L) - L / 2)
         return float(centered_index) / float(L)
+    
+    @staticmethod
+    def _map_q_to_k_bz(q_vector: torch.Tensor, A_inv_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        Maps a q vector to its equivalent k-vector in the first Brillouin zone.
+        
+        This function implements the standard crystallographic mapping from an arbitrary
+        q-vector in reciprocal space to its equivalent k-vector within the first
+        Brillouin zone. This mapping is essential for correctly calculating phonon
+        properties which are periodic in reciprocal space.
+        
+        The mapping follows these steps:
+        1. Convert q to k = q/(2π)
+        2. Convert k to fractional coordinates hkl using the reciprocal lattice vectors
+        3. Map each fractional coordinate to the range [-0.5, 0.5) using modular arithmetic
+        4. Convert the mapped fractional coordinates back to Cartesian k-vector
+        
+        Args:
+            q_vector: Q-vector in reciprocal space (Å⁻¹) of shape (3,)
+            A_inv_tensor: Inverse of the real-space unit cell matrix, shape (3,3)
+            
+        Returns:
+            Equivalent k-vector in the first Brillouin zone, shape (3,)
+        """
+        # Ensure high precision
+        real_dtype = torch.float64
+        q_vector = q_vector.to(dtype=real_dtype)
+        A_inv_tensor = A_inv_tensor.to(dtype=real_dtype)
+
+        # 1. Calculate direct k = q / (2*pi)
+        two_pi = torch.tensor(2.0 * torch.pi, dtype=real_dtype, device=q_vector.device)
+        k_direct = q_vector / two_pi
+
+        # 2. Calculate direct fractional coordinates hkl = k @ A_inv^(-T) = k @ A
+        # We need A = (A_inv)^-1
+        try:
+            # Use pseudo-inverse for potentially non-invertible A_inv
+            A_tensor = torch.linalg.pinv(A_inv_tensor)
+        except torch._C._LinAlgError:
+            print("Warning: A_inv matrix inversion failed during BZ mapping. Using pseudo-inverse.")
+            A_tensor = torch.linalg.pinv(A_inv_tensor)
+
+        # Ensure correct dimensions for matmul
+        hkl_direct = torch.matmul(k_direct.unsqueeze(0), A_tensor).squeeze(0)
+
+        # 3. Map fractional coordinates to [-0.5, 0.5)
+        # More robust mapping: (x + 0.5) % 1.0 - 0.5
+        hkl_bz = torch.remainder(hkl_direct + 0.5, 1.0) - 0.5
+
+        # 4. Calculate k_bz = hkl_bz @ A_inv^T
+        k_bz = torch.matmul(hkl_bz.unsqueeze(0), A_inv_tensor.T).squeeze(0)
+
+        # Return k_bz with high precision
+        return k_bz.to(dtype=real_dtype)
     
     def _at_kvec_from_miller_points(self, indices_or_batch: Union[Tuple[int, int, int], torch.Tensor, int]) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
@@ -1024,6 +1093,11 @@ class OnePhonon:
         simultaneously to improve performance. Supports both grid-based and
         arbitrary q-vector modes.
         
+        In arbitrary q-vector mode with BZ mapping, this method optimizes by:
+        1. Finding unique k-vectors in the first BZ
+        2. Computing phonons only for these unique k-vectors
+        3. Expanding the results back to match the original q-vector list
+        
         The eigenvalues (Winv) and eigenvectors (V) are stored for intensity calculation.
         """
         # --- Modifications for Debugging ---
@@ -1045,8 +1119,24 @@ class OnePhonon:
         
         # Number of points depends on mode
         if getattr(self, 'use_arbitrary_q', False):
+            # Arbitrary q-vector mode with BZ mapping
             total_points = self.q_grid.shape[0]
-            print(f"Computing phonons for {total_points} arbitrary q-vectors")
+            
+            # Find unique k_BZ vectors to avoid redundant calculations
+            # Use a small tolerance for floating point comparisons
+            tolerance = 1e-10
+            rounded_kvec = torch.round(self.kvec / tolerance) * tolerance
+            unique_k_bz, inverse_indices = torch.unique(rounded_kvec, dim=0, return_inverse=True)
+            n_unique_k = unique_k_bz.shape[0]
+            
+            print(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} arbitrary q-vectors")
+            
+            # Initialize output tensors for unique k-vectors first
+            dof_total = self.n_asu * self.n_dof_per_asu
+            V_unique = torch.zeros((n_unique_k, dof_total, dof_total),
+                                  dtype=self.complex_dtype, device=self.device)
+            Winv_unique = torch.zeros((n_unique_k, dof_total),
+                                     dtype=self.complex_dtype, device=self.device)
         else:
             # Use Brillouin zone sampling dimensions instead of map_shape
             h_dim_bz = int(self.hsampling[2])
@@ -1054,15 +1144,15 @@ class OnePhonon:
             l_dim_bz = int(self.lsampling[2])
             total_points = h_dim_bz * k_dim_bz * l_dim_bz
             print(f"Computing phonons for {total_points} grid points based on BZ sampling ({h_dim_bz}x{k_dim_bz}x{l_dim_bz})")
-        
-        # Initialize output tensors with proper shapes for both modes
-        self.V = torch.zeros((total_points,
-                              self.n_asu * self.n_dof_per_asu,
-                              self.n_asu * self.n_dof_per_asu),
-                            dtype=self.complex_dtype, device=self.device)
-        self.Winv = torch.zeros((total_points,
-                                self.n_asu * self.n_dof_per_asu),
-                               dtype=self.complex_dtype, device=self.device)
+            
+            # Initialize output tensors with proper shapes for grid mode
+            self.V = torch.zeros((total_points,
+                                  self.n_asu * self.n_dof_per_asu,
+                                  self.n_asu * self.n_dof_per_asu),
+                                dtype=self.complex_dtype, device=self.device)
+            self.Winv = torch.zeros((total_points,
+                                    self.n_asu * self.n_dof_per_asu),
+                                   dtype=self.complex_dtype, device=self.device)
         
         # Create GNM instance for K matrix computation
         from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
@@ -1096,304 +1186,432 @@ class OnePhonon:
         # Convert Linv to complex for matrix operations
         Linv_complex = self.Linv.to(dtype=self.complex_dtype)
         
-        # Compute K matrices for all k-vectors at once
-        Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
-        print(f"Kmat_all requires_grad: {Kmat_all.requires_grad}")
-        print(f"Kmat_all.grad_fn: {Kmat_all.grad_fn}")
+        # Compute K matrices - different approach based on mode
+        if getattr(self, 'use_arbitrary_q', False):
+            # For arbitrary mode, compute K matrices only for unique k-vectors
+            Kmat_unique = gnm_torch.compute_K(hessian, unique_k_bz)
+            print(f"Kmat_unique requires_grad: {Kmat_unique.requires_grad}")
+            print(f"Kmat_unique.grad_fn: {Kmat_unique.grad_fn}")
+            
+            # Reshape K matrices to 2D form for each unique k-vector
+            dof_total = self.n_asu * self.n_dof_per_asu
+            Kmat_unique_2d = Kmat_unique.reshape(n_unique_k, dof_total, dof_total)
+        else:
+            # For grid mode, compute K matrices for all k-vectors at once
+            Kmat_all = gnm_torch.compute_K(hessian, self.kvec)
+            print(f"Kmat_all requires_grad: {Kmat_all.requires_grad}")
+            print(f"Kmat_all.grad_fn: {Kmat_all.grad_fn}")
         
         # --- Debug Print Start ---
         print_idx = 1  # Choose a non-zero index for detailed prints
-        if total_points > print_idx: 
-            print(f"\n--- PyTorch Debug Index {print_idx} ---")
-            # Correctly index the Kmat_all tensor (5D) and then call .item()
-            # Kmat_all shape is [batch, n_asu, n_atoms, n_asu, n_atoms]
-            # Kmat_all[print_idx] is [n_asu, n_atoms, n_asu, n_atoms]
-            # Kmat_all[print_idx, 0, 0] is [n_asu, n_atoms]
-            # Need Kmat_all[print_idx, 0, 0, 0, 0] if n_atoms > 0 else handle empty case
-            if Kmat_all.dim() >= 3 and Kmat_all.shape[1] > 0 and Kmat_all.shape[2] > 0 and Kmat_all.shape[3] > 0 and Kmat_all.shape[4] > 0:
-                print(f"PyTorch Kmat_all[{print_idx},0,0,0,0]: {Kmat_all[print_idx,0,0,0,0].item():.8e}")
-            else:
-                print(f"PyTorch Kmat_all shape: {Kmat_all.shape}")
+        if getattr(self, 'use_arbitrary_q', False):
+            if n_unique_k > print_idx:
+                print(f"\n--- PyTorch Debug Index {print_idx} (Unique K) ---")
+                # Debug print for unique k-vectors
+                if Kmat_unique.dim() >= 3 and Kmat_unique.shape[1] > 0 and Kmat_unique.shape[2] > 0 and Kmat_unique.shape[3] > 0 and Kmat_unique.shape[4] > 0:
+                    print(f"PyTorch Kmat_unique[{print_idx},0,0,0,0]: {Kmat_unique[print_idx,0,0,0,0].item():.8e}")
+                else:
+                    print(f"PyTorch Kmat_unique shape: {Kmat_unique.shape}")
+        else:
+            if total_points > print_idx: 
+                print(f"\n--- PyTorch Debug Index {print_idx} ---")
+                # Correctly index the Kmat_all tensor (5D) and then call .item()
+                if Kmat_all.dim() >= 3 and Kmat_all.shape[1] > 0 and Kmat_all.shape[2] > 0 and Kmat_all.shape[3] > 0 and Kmat_all.shape[4] > 0:
+                    print(f"PyTorch Kmat_all[{print_idx},0,0,0,0]: {Kmat_all[print_idx,0,0,0,0].item():.8e}")
+                else:
+                    print(f"PyTorch Kmat_all shape: {Kmat_all.shape}")
         # --- Debug Print End -----
         
-        # Reshape K matrices to 2D form for each k-vector
-        dof_total = self.n_asu * self.n_dof_per_asu
-        Kmat_all_2d = Kmat_all.reshape(total_points, dof_total, dof_total)
-        
-        print(f"Compute_K complete, Kmat_all_2d shape = {Kmat_all_2d.shape}")
-        
-        # Compute dynamical matrices (D = L^(-1) K L^(-H)) for all k-vectors
-        # Use torch.bmm for batched matrix multiplication
-        Linv_batch = Linv_complex.unsqueeze(0).expand(total_points, -1, -1)
-        # Use conjugate transpose (.H) for complex matrices instead of just transpose (.T)
-        Linv_H_batch = Linv_complex.conj().T.unsqueeze(0).expand(total_points, -1, -1)
-        
-        # First multiply Kmat_all_2d with Linv_H_batch
-        temp = torch.bmm(Kmat_all_2d, Linv_H_batch)
-        # Then multiply Linv_batch with the result
-        Dmat_all = torch.bmm(Linv_batch, temp)
+        # Compute dynamical matrices (D = L^(-1) K L^(-H))
+        if getattr(self, 'use_arbitrary_q', False):
+            # For arbitrary mode with unique k-vectors
+            print(f"Compute_K complete, Kmat_unique_2d shape = {Kmat_unique_2d.shape}")
+            
+            # Use torch.bmm for batched matrix multiplication
+            Linv_batch = Linv_complex.unsqueeze(0).expand(n_unique_k, -1, -1)
+            # Use conjugate transpose (.H) for complex matrices
+            Linv_H_batch = Linv_complex.conj().T.unsqueeze(0).expand(n_unique_k, -1, -1)
+            
+            # First multiply Kmat_unique_2d with Linv_H_batch
+            temp = torch.bmm(Kmat_unique_2d, Linv_H_batch)
+            # Then multiply Linv_batch with the result
+            Dmat_unique = torch.bmm(Linv_batch, temp)
+        else:
+            # For grid mode, reshape K matrices to 2D form for each k-vector
+            dof_total = self.n_asu * self.n_dof_per_asu
+            Kmat_all_2d = Kmat_all.reshape(total_points, dof_total, dof_total)
+            
+            print(f"Compute_K complete, Kmat_all_2d shape = {Kmat_all_2d.shape}")
+            
+            # Use torch.bmm for batched matrix multiplication
+            Linv_batch = Linv_complex.unsqueeze(0).expand(total_points, -1, -1)
+            # Use conjugate transpose (.H) for complex matrices
+            Linv_H_batch = Linv_complex.conj().T.unsqueeze(0).expand(total_points, -1, -1)
+            
+            # First multiply Kmat_all_2d with Linv_H_batch
+            temp = torch.bmm(Kmat_all_2d, Linv_H_batch)
+            # Then multiply Linv_batch with the result
+            Dmat_all = torch.bmm(Linv_batch, temp)
         
         # --- Debug Print Start ---
-        if total_points > print_idx: 
-            # Print first element of the matrix at index print_idx
-            if Dmat_all.dim() >= 3:
-                print(f"PyTorch Dmat_all[{print_idx},0,0]: {Dmat_all[print_idx,0,0].item() if Dmat_all[print_idx,0,0].numel() == 1 else Dmat_all[print_idx,0,0][0,0].item():.8e}")
-            else:
-                print(f"PyTorch Dmat_all shape: {Dmat_all.shape}")
+        if getattr(self, 'use_arbitrary_q', False):
+            if n_unique_k > print_idx:
+                # Print first element of the matrix at index print_idx for unique k-vectors
+                if Dmat_unique.dim() >= 3:
+                    print(f"PyTorch Dmat_unique[{print_idx},0,0]: {Dmat_unique[print_idx,0,0].item() if Dmat_unique[print_idx,0,0].numel() == 1 else Dmat_unique[print_idx,0,0][0,0].item():.8e}")
+                else:
+                    print(f"PyTorch Dmat_unique shape: {Dmat_unique.shape}")
+                print(f"Dmat_unique computation complete, shape = {Dmat_unique.shape}")
+                print(f"Dmat_unique requires_grad: {Dmat_unique.requires_grad}")
+        else:
+            if total_points > print_idx:
+                # Print first element of the matrix at index print_idx
+                if Dmat_all.dim() >= 3:
+                    print(f"PyTorch Dmat_all[{print_idx},0,0]: {Dmat_all[print_idx,0,0].item() if Dmat_all[print_idx,0,0].numel() == 1 else Dmat_all[print_idx,0,0][0,0].item():.8e}")
+                else:
+                    print(f"PyTorch Dmat_all shape: {Dmat_all.shape}")
+                print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
+                print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
         # --- Debug Print End -----
-        
-        print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
-        print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
         
         # Initialize v_all *outside* the try block
         v_all = None
         
-        print(f"Dmat_all computation complete, shape = {Dmat_all.shape}")
-        print(f"Dmat_all requires_grad: {Dmat_all.requires_grad}")
-
-        # This method needs restructuring to handle both modes cleanly for debugging.
-        # Let's process k-vectors one by one for debugging clarity.
-        
-        total_points = self.kvec.shape[0] # Get total points from self.kvec
-        print(f"[DEBUG compute_gnm_phonons] Processing {total_points} k-vectors. ArbitraryQ={getattr(self, 'use_arbitrary_q', False)}")
-        
-        # Pre-calculate Linv_complex.H once
-        Linv_complex = self.Linv.to(dtype=self.complex_dtype)
-        Linv_H = Linv_complex.H # Conjugate transpose
-        
-        # Initialize lists to store results before stacking
-        eigenvalues_all_list = []
-        eigenvectors_detached_list = []
-        
-        for i in range(total_points):
-            current_kvec = self.kvec[i]
-            
-            # Check if this is our target k-vector
-            is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
-            mode_string = "ArbitraryQ" if getattr(self, 'use_arbitrary_q', False) else "Grid"
-            
-            # Also keep the original debug trigger
-            is_grid_mode = not getattr(self, 'use_arbitrary_q', False)
-            is_target_idx = (is_grid_mode and i == DEBUG_IDX_BZ)
-            
-            if is_target_kvec:
-                print(f"\n--- {mode_string} Mode DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (index {i}) ---")
-                print(f"  Input kvec: {current_kvec.detach().cpu().numpy()}")
-                print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
-            
-            D_i = Dmat_all[i]
-            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
-            
-            if is_target_idx or is_target_kvec:
-                print(f"\n--- DEBUG Phonon Loop ({mode_string} Mode i={i}) ---")
-                print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
-                if D_i_hermitian.numel() > 0:
-                    print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
-                    debug_data_grid['D_00'] = D_i_hermitian[0,0].item()
-            
-            # 1. Get eigenvectors WITHOUT gradient tracking using eigh
-            with torch.no_grad():
-                try:
-                    # Get both eigenvalues and eigenvectors
-                    w_sq_i, v_i_no_grad = torch.linalg.eigh(D_i_hermitian)
-                except torch._C._LinAlgError as e:
-                     print(f"Warning: eigh failed for matrix {i} in no_grad context. Using identity. Error: {e}")
-                     n_dof = D_i_hermitian.shape[0]
-                     w_sq_i = torch.ones(n_dof, dtype=self.real_dtype, device=self.device) # Placeholder eigenvalues
-                     v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
-            
-            if is_target_idx or is_target_kvec:
-                print(f"  Raw eigh w_sq_i[0]: {w_sq_i[0].item():.8e}")
-                print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
-                if v_i_no_grad.numel() > 0:
-                    print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
-                    print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
-                    debug_data_grid['v_00'] = v_i_no_grad[0,0].item()
-                    debug_data_grid['v_0N'] = v_i_no_grad[0,-1].item()
-            
-            # Use eigenvectors directly from eigh (ascending eigenvalue order)
-            eigenvectors_detached_list.append(v_i_no_grad)
-            
-            if is_target_idx or is_target_kvec:
-                print(f"  v_i_no_grad shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
-                if v_i_no_grad.numel() > 0:
-                    print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
-                    print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
-                    debug_data_grid['v_00'] = v_i_no_grad[0,0].item()
-                    debug_data_grid['v_0N'] = v_i_no_grad[0,-1].item()
-            
-            # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
-            # Try using the eigenvalues directly from eigh but ensure grads flow from D_i
-            eigenvalues_tensor = w_sq_i.real # Eigenvalues from eigh should be real
-            if D_i.requires_grad and not eigenvalues_tensor.requires_grad:
-                 eigenvalues_tensor = eigenvalues_tensor + 0.0 * D_i.real.sum() # Connect graph
-            
-            if is_target_idx or is_target_kvec:
-                print(f"  Eigenvalues from eigh (real) [0]: {eigenvalues_tensor[0].item():.8e}")
-                print(f"  Eigenvalues requires_grad: {eigenvalues_tensor.requires_grad}")
-                print(f"  eigenvalues_tensor shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
-                if eigenvalues_tensor.numel() > 0:
-                    print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
-                    print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
-                    debug_data_grid['eig_0'] = eigenvalues_tensor[0].item()
-                    debug_data_grid['eig_N'] = eigenvalues_tensor[-1].item()
-            
-            # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
-            eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
-            eigenvalues_processed = torch.where(
-                eigenvalues_tensor < eps,
-                torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
-                eigenvalues_tensor # Already real_dtype
-            )
-
-            if is_target_idx or is_target_kvec:
-                print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
-                if eigenvalues_processed.numel() > 0:
-                    print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
-                    print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-                    print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
-            
-            # Keep eigenvalues in ascending order (as eigh gives them)
-            eigenvalues_all_list.append(eigenvalues_processed)
-            
-            if is_target_idx or is_target_kvec:
-                print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
-                if eigenvalues_processed.numel() > 0:
-                    print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
-                    print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-                    debug_data_grid['eig_p0'] = eigenvalues_processed[0].item()
-                    debug_data_grid['eig_pN'] = eigenvalues_processed[-1].item()
-                print(f"--- End DEBUG Phonon Loop ({mode_string} Mode i={i}) ---")
-
-
-        # Stack results
-        eigenvalues_all = torch.stack(eigenvalues_all_list)  # Differentiable eigenvalues
-        v_all_detached = torch.stack(eigenvectors_detached_list) # Non-differentiable eigenvectors
-
-        print(f"Recomputed eigenvalues using eigh complete")
-        print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}") # Should be True
-        print(f"v_all_detached requires_grad: {v_all_detached.requires_grad}") # Should be False
-
-        # --- Debug Print Trigger (Arbitrary-Q Mode) ---
-        is_arb_q_mode = getattr(self, 'use_arbitrary_q', False)
-        if is_arb_q_mode and DEBUG_IDX_FULL < eigenvalues_all.shape[0]:
-            print(f"\n--- DEBUG Arb-Q After Loop (idx={DEBUG_IDX_FULL}) ---")
-            print(f"  eigenvalues_all[{DEBUG_IDX_FULL}] shape: {eigenvalues_all[DEBUG_IDX_FULL].shape}, dtype: {eigenvalues_all[DEBUG_IDX_FULL].dtype}")
-            if eigenvalues_all[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  eigenvalues_all[{DEBUG_IDX_FULL}, 0]: {eigenvalues_all[DEBUG_IDX_FULL, 0].item()}")
-                print(f"  eigenvalues_all[{DEBUG_IDX_FULL}, -1]: {eigenvalues_all[DEBUG_IDX_FULL, -1].item()}")
-                nan_count_arb = torch.isnan(eigenvalues_all[DEBUG_IDX_FULL]).sum().item()
-                print(f"  NaN count in eigenvalues_all[{DEBUG_IDX_FULL}]: {nan_count_arb}")
-                debug_data_arbq['eig_pf0'] = eigenvalues_all[DEBUG_IDX_FULL, 0].item()
-                debug_data_arbq['eig_pfN'] = eigenvalues_all[DEBUG_IDX_FULL, -1].item()
-                debug_data_arbq['nan_count'] = nan_count_arb
-
-            print(f"  v_all_detached[{DEBUG_IDX_FULL}] shape: {v_all_detached[DEBUG_IDX_FULL].shape}, dtype: {v_all_detached[DEBUG_IDX_FULL].dtype}")
-            if v_all_detached[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, 0]: {v_all_detached[DEBUG_IDX_FULL, 0, 0].item()}")
-                print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, -1]: {v_all_detached[DEBUG_IDX_FULL, 0, -1].item()}")
-                debug_data_arbq['vf_00'] = v_all_detached[DEBUG_IDX_FULL, 0, 0].item()
-                debug_data_arbq['vf_0N'] = v_all_detached[DEBUG_IDX_FULL, 0, -1].item()
-        # --- End Debug Print Trigger ---
-
-        # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
-        Linv_H_batch = Linv_H.unsqueeze(0).expand(total_points, -1, -1)
-        self.V = torch.matmul(
-            Linv_H_batch,
-            v_all_detached # Use the detached eigenvectors here
-        ).detach()
-
-        # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
-        eps_div = torch.tensor(1e-8, dtype=self.real_dtype, device=self.device) # Use tensor for eps_div
-        winv_all_real = torch.where(
-            torch.isnan(eigenvalues_all),
-            torch.tensor(float('nan'), device=eigenvalues_all.device, dtype=self.real_dtype),
-            1.0 / torch.maximum(eigenvalues_all, eps_div) # Ensure division is float64
-        ).to(dtype=self.real_dtype) # Ensure final real dtype
-        self.Winv = winv_all_real.to(dtype=self.complex_dtype) # Cast to complex
-
-        # --- Debug Print Trigger (Both Modes) ---
-        # Grid Mode: Check if i == DEBUG_IDX_BZ was set in the loop's debug_data_grid
-        is_grid_mode = not getattr(self, 'use_arbitrary_q', False)
-        if is_grid_mode and DEBUG_IDX_BZ < self.V.shape[0]:
-            print(f"\n--- DEBUG Final Grid (idx={DEBUG_IDX_BZ}) ---")
-            print(f"  Linv_complex.H shape: {Linv_H_batch[DEBUG_IDX_BZ].shape}, dtype: {Linv_H_batch[DEBUG_IDX_BZ].dtype}")
-            if Linv_H_batch[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  Linv_complex.H[0,0]: {Linv_H_batch[DEBUG_IDX_BZ, 0, 0].item()}")
-            if v_all_detached[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  v_all_detached[{DEBUG_IDX_BZ}, 0, 0]: {v_all_detached[DEBUG_IDX_BZ, 0, 0].item()}")
-            print(f"  self.V[{DEBUG_IDX_BZ}] (calculated) shape: {self.V[DEBUG_IDX_BZ].shape}, dtype: {self.V[DEBUG_IDX_BZ].dtype}")
-            if self.V[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
-                print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
-            print(f"  winv_all_real[{DEBUG_IDX_BZ}] (calculated) shape: {winv_all_real[DEBUG_IDX_BZ].shape}, dtype: {winv_all_real[DEBUG_IDX_BZ].dtype}")
-            if winv_all_real[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  winv_all_real[{DEBUG_IDX_BZ}, 0]: {winv_all_real[DEBUG_IDX_BZ, 0].item()}")
-                print(f"  winv_all_real[{DEBUG_IDX_BZ}, -1]: {winv_all_real[DEBUG_IDX_BZ, -1].item()}")
-                nan_count_final = torch.isnan(winv_all_real[DEBUG_IDX_BZ]).sum().item()
-                print(f"  NaN count in winv_all_real[{DEBUG_IDX_BZ}]: {nan_count_final}")
-            print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
-            if self.Winv[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
-                print(f"  self.Winv[{DEBUG_IDX_BZ}, -1]: {self.Winv[DEBUG_IDX_BZ, -1].item()}")
-
-        # Arbitrary-Q Mode: Check if DEBUG_IDX_FULL exists
-        if is_arb_q_mode and DEBUG_IDX_FULL < self.V.shape[0]:
-            print(f"\n--- DEBUG Final Arb-Q (idx={DEBUG_IDX_FULL}) ---")
-            print(f"  Linv_complex.H shape: {Linv_H_batch[DEBUG_IDX_FULL].shape}, dtype: {Linv_H_batch[DEBUG_IDX_FULL].dtype}")
-            if Linv_H_batch[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  Linv_complex.H[0,0]: {Linv_H_batch[DEBUG_IDX_FULL, 0, 0].item()}")
-            # Use the previously stored debug value for v_all_detached if available
-            if 'vf_00' in debug_data_arbq and v_all_detached[DEBUG_IDX_FULL].numel() > 0:
-                 print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, 0] (from storage): {debug_data_arbq['vf_00']}")
-            elif v_all_detached[DEBUG_IDX_FULL].numel() > 0:
-                 print(f"  v_all_detached[{DEBUG_IDX_FULL}, 0, 0]: {v_all_detached[DEBUG_IDX_FULL, 0, 0].item()}") # Fallback
-
-            print(f"  self.V[{DEBUG_IDX_FULL}] (calculated) shape: {self.V[DEBUG_IDX_FULL].shape}, dtype: {self.V[DEBUG_IDX_FULL].dtype}")
-            if self.V[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  self.V[{DEBUG_IDX_FULL}, 0, 0]: {self.V[DEBUG_IDX_FULL, 0, 0].item()}")
-                print(f"  self.V[{DEBUG_IDX_FULL}, 0, -1]: {self.V[DEBUG_IDX_FULL, 0, -1].item()}")
-            print(f"  winv_all_real[{DEBUG_IDX_FULL}] (calculated) shape: {winv_all_real[DEBUG_IDX_FULL].shape}, dtype: {winv_all_real[DEBUG_IDX_FULL].dtype}")
-            if winv_all_real[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  winv_all_real[{DEBUG_IDX_FULL}, 0]: {winv_all_real[DEBUG_IDX_FULL, 0].item()}")
-                print(f"  winv_all_real[{DEBUG_IDX_FULL}, -1]: {winv_all_real[DEBUG_IDX_FULL, -1].item()}")
-                nan_count_final_arb = torch.isnan(winv_all_real[DEBUG_IDX_FULL]).sum().item()
-                print(f"  NaN count in winv_all_real[{DEBUG_IDX_FULL}]: {nan_count_final_arb}")
-            print(f"  self.Winv[{DEBUG_IDX_FULL}] (final) shape: {self.Winv[DEBUG_IDX_FULL].shape}, dtype: {self.Winv[DEBUG_IDX_FULL].dtype}")
-            if self.Winv[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  self.Winv[{DEBUG_IDX_FULL}, 0]: {self.Winv[DEBUG_IDX_FULL, 0].item()}")
-                print(f"  self.Winv[{DEBUG_IDX_FULL}, -1]: {self.Winv[DEBUG_IDX_FULL, -1].item()}")
-        
-        # Final check for the target k-vector
-        target_index_to_print = -1
+        # Process k-vectors one by one for debugging clarity
         if getattr(self, 'use_arbitrary_q', False):
-            # Find the index in the arbitrary list
+            # For arbitrary mode with unique k-vectors
+            print(f"[DEBUG compute_gnm_phonons] Processing {n_unique_k} unique k-vectors for arbitrary q-mode")
+            
+            # Pre-calculate Linv_complex.H once
+            Linv_complex = self.Linv.to(dtype=self.complex_dtype)
+            Linv_H = Linv_complex.H # Conjugate transpose
+            
+            # Initialize lists to store results before stacking
+            eigenvalues_unique_list = []
+            eigenvectors_unique_detached_list = []
+            
+            for i in range(n_unique_k):
+                current_kvec = unique_k_bz[i]
+                
+                # Check if this is our target k-vector
+                is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
+                
+                if is_target_kvec:
+                    print(f"\n--- ArbitraryQ Mode DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (unique index {i}) ---")
+                    print(f"  Input unique kvec: {current_kvec.detach().cpu().numpy()}")
+                    print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
+                
+                D_i = Dmat_unique[i]
+                D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
+                
+                if is_target_kvec:
+                    print(f"\n--- DEBUG Phonon Loop (ArbitraryQ Mode unique i={i}) ---")
+                    print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
+                    if D_i_hermitian.numel() > 0:
+                        print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
+                        debug_data_arbq['D_00'] = D_i_hermitian[0,0].item()
+                
+                # 1. Get eigenvectors WITHOUT gradient tracking using eigh
+                with torch.no_grad():
+                    try:
+                        # Get both eigenvalues and eigenvectors
+                        w_sq_i, v_i_no_grad = torch.linalg.eigh(D_i_hermitian)
+                    except torch._C._LinAlgError as e:
+                        print(f"Warning: eigh failed for unique matrix {i} in no_grad context. Using identity. Error: {e}")
+                        n_dof = D_i_hermitian.shape[0]
+                        w_sq_i = torch.ones(n_dof, dtype=self.real_dtype, device=self.device) # Placeholder eigenvalues
+                        v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
+                
+                if is_target_kvec:
+                    print(f"  Raw eigh w_sq_i[0]: {w_sq_i[0].item():.8e}")
+                    print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
+                    if v_i_no_grad.numel() > 0:
+                        print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
+                        print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
+                        debug_data_arbq['v_00'] = v_i_no_grad[0,0].item()
+                        debug_data_arbq['v_0N'] = v_i_no_grad[0,-1].item()
+                
+                # Use eigenvectors directly from eigh (ascending eigenvalue order)
+                eigenvectors_unique_detached_list.append(v_i_no_grad)
+                
+                # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
+                # Try using the eigenvalues directly from eigh but ensure grads flow from D_i
+                eigenvalues_tensor = w_sq_i.real # Eigenvalues from eigh should be real
+                if D_i.requires_grad and not eigenvalues_tensor.requires_grad:
+                    eigenvalues_tensor = eigenvalues_tensor + 0.0 * D_i.real.sum() # Connect graph
+                
+                if is_target_kvec:
+                    print(f"  Eigenvalues from eigh (real) [0]: {eigenvalues_tensor[0].item():.8e}")
+                    print(f"  Eigenvalues requires_grad: {eigenvalues_tensor.requires_grad}")
+                    print(f"  eigenvalues_tensor shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
+                    if eigenvalues_tensor.numel() > 0:
+                        print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
+                        print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
+                        debug_data_arbq['eig_0'] = eigenvalues_tensor[0].item()
+                        debug_data_arbq['eig_N'] = eigenvalues_tensor[-1].item()
+                
+                # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
+                eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
+                eigenvalues_processed = torch.where(
+                    eigenvalues_tensor < eps,
+                    torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
+                    eigenvalues_tensor # Already real_dtype
+                )
+                
+                if is_target_kvec:
+                    print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+                    if eigenvalues_processed.numel() > 0:
+                        print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+                        print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+                        print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
+                
+                # Keep eigenvalues in ascending order (as eigh gives them)
+                eigenvalues_unique_list.append(eigenvalues_processed)
+                
+                if is_target_kvec:
+                    print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+                    if eigenvalues_processed.numel() > 0:
+                        print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+                        print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+                        debug_data_arbq['eig_p0'] = eigenvalues_processed[0].item()
+                        debug_data_arbq['eig_pN'] = eigenvalues_processed[-1].item()
+                    print(f"--- End DEBUG Phonon Loop (ArbitraryQ Mode unique i={i}) ---")
+            
+            # Stack results for unique k-vectors
+            eigenvalues_unique = torch.stack(eigenvalues_unique_list)  # Differentiable eigenvalues
+            v_unique_detached = torch.stack(eigenvectors_unique_detached_list) # Non-differentiable eigenvectors
+            
+            print(f"Recomputed eigenvalues using eigh complete for unique k-vectors")
+            print(f"eigenvalues_unique requires_grad: {eigenvalues_unique.requires_grad}")
+            print(f"v_unique_detached requires_grad: {v_unique_detached.requires_grad}")
+            
+            # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
+            Linv_H_batch = Linv_H.unsqueeze(0).expand(n_unique_k, -1, -1)
+            V_unique = torch.matmul(
+                Linv_H_batch,
+                v_unique_detached # Use the detached eigenvectors here
+            ).detach()
+            
+            # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
+            eps_div = torch.tensor(1e-8, dtype=self.real_dtype, device=self.device) # Use tensor for eps_div
+            winv_unique_real = torch.where(
+                torch.isnan(eigenvalues_unique),
+                torch.tensor(float('nan'), device=eigenvalues_unique.device, dtype=self.real_dtype),
+                1.0 / torch.maximum(eigenvalues_unique, eps_div) # Ensure division is float64
+            ).to(dtype=self.real_dtype) # Ensure final real dtype
+            Winv_unique = winv_unique_real.to(dtype=self.complex_dtype) # Cast to complex
+            
+            # Now expand the unique results to match the original q-vector list
+            self.V = V_unique[inverse_indices].detach()
+            self.Winv = Winv_unique[inverse_indices]
+            
+            # Ensure requires_grad is set correctly
+            self.V.requires_grad_(False)
+            self.Winv.requires_grad_(eigenvalues_unique.requires_grad)
+            
+            print(f"Expanded unique results to full size: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
+            
+        else:
+            # For grid mode, process all k-vectors
+            total_points = self.kvec.shape[0] # Get total points from self.kvec
+            print(f"[DEBUG compute_gnm_phonons] Processing {total_points} k-vectors for grid mode")
+            
+            # Pre-calculate Linv_complex.H once
+            Linv_complex = self.Linv.to(dtype=self.complex_dtype)
+            Linv_H = Linv_complex.H # Conjugate transpose
+            
+            # Initialize lists to store results before stacking
+            eigenvalues_all_list = []
+            eigenvectors_detached_list = []
+            
+            for i in range(total_points):
+                current_kvec = self.kvec[i]
+                
+                # Check if this is our target k-vector
+                is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
+                is_target_idx = (i == DEBUG_IDX_BZ)
+                
+                if is_target_kvec:
+                    print(f"\n--- Grid Mode DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (index {i}) ---")
+                    print(f"  Input kvec: {current_kvec.detach().cpu().numpy()}")
+                    print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
+                
+                D_i = Dmat_all[i]
+                D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
+                
+                if is_target_idx or is_target_kvec:
+                    print(f"\n--- DEBUG Phonon Loop (Grid Mode i={i}) ---")
+                    print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
+                    if D_i_hermitian.numel() > 0:
+                        print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
+                        debug_data_grid['D_00'] = D_i_hermitian[0,0].item()
+                
+                # 1. Get eigenvectors WITHOUT gradient tracking using eigh
+                with torch.no_grad():
+                    try:
+                        # Get both eigenvalues and eigenvectors
+                        w_sq_i, v_i_no_grad = torch.linalg.eigh(D_i_hermitian)
+                    except torch._C._LinAlgError as e:
+                        print(f"Warning: eigh failed for matrix {i} in no_grad context. Using identity. Error: {e}")
+                        n_dof = D_i_hermitian.shape[0]
+                        w_sq_i = torch.ones(n_dof, dtype=self.real_dtype, device=self.device) # Placeholder eigenvalues
+                        v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
+                
+                if is_target_idx or is_target_kvec:
+                    print(f"  Raw eigh w_sq_i[0]: {w_sq_i[0].item():.8e}")
+                    print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
+                    if v_i_no_grad.numel() > 0:
+                        print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
+                        print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
+                        debug_data_grid['v_00'] = v_i_no_grad[0,0].item()
+                        debug_data_grid['v_0N'] = v_i_no_grad[0,-1].item()
+                
+                # Use eigenvectors directly from eigh (ascending eigenvalue order)
+                eigenvectors_detached_list.append(v_i_no_grad)
+                
+                # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
+                # Try using the eigenvalues directly from eigh but ensure grads flow from D_i
+                eigenvalues_tensor = w_sq_i.real # Eigenvalues from eigh should be real
+                if D_i.requires_grad and not eigenvalues_tensor.requires_grad:
+                    eigenvalues_tensor = eigenvalues_tensor + 0.0 * D_i.real.sum() # Connect graph
+                
+                if is_target_idx or is_target_kvec:
+                    print(f"  Eigenvalues from eigh (real) [0]: {eigenvalues_tensor[0].item():.8e}")
+                    print(f"  Eigenvalues requires_grad: {eigenvalues_tensor.requires_grad}")
+                    print(f"  eigenvalues_tensor shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
+                    if eigenvalues_tensor.numel() > 0:
+                        print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
+                        print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
+                        debug_data_grid['eig_0'] = eigenvalues_tensor[0].item()
+                        debug_data_grid['eig_N'] = eigenvalues_tensor[-1].item()
+                
+                # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
+                eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
+                eigenvalues_processed = torch.where(
+                    eigenvalues_tensor < eps,
+                    torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
+                    eigenvalues_tensor # Already real_dtype
+                )
+                
+                if is_target_idx or is_target_kvec:
+                    print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+                    if eigenvalues_processed.numel() > 0:
+                        print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+                        print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+                        print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
+                
+                # Keep eigenvalues in ascending order (as eigh gives them)
+                eigenvalues_all_list.append(eigenvalues_processed)
+                
+                if is_target_idx or is_target_kvec:
+                    print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+                    if eigenvalues_processed.numel() > 0:
+                        print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+                        print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+                        debug_data_grid['eig_p0'] = eigenvalues_processed[0].item()
+                        debug_data_grid['eig_pN'] = eigenvalues_processed[-1].item()
+                    print(f"--- End DEBUG Phonon Loop (Grid Mode i={i}) ---")
+            
+            # Stack results
+            eigenvalues_all = torch.stack(eigenvalues_all_list)  # Differentiable eigenvalues
+            v_all_detached = torch.stack(eigenvectors_detached_list) # Non-differentiable eigenvectors
+            
+            print(f"Recomputed eigenvalues using eigh complete")
+            print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}") # Should be True
+            print(f"v_all_detached requires_grad: {v_all_detached.requires_grad}") # Should be False
+
+            # --- Debug Print Trigger (Arbitrary-Q Mode) ---
+            if DEBUG_IDX_FULL < self.V.shape[0]:
+                print(f"\n--- DEBUG Arb-Q After Loop (idx={DEBUG_IDX_FULL}) ---")
+                print(f"  self.V[{DEBUG_IDX_FULL}] shape: {self.V[DEBUG_IDX_FULL].shape}, dtype: {self.V[DEBUG_IDX_FULL].dtype}")
+                if self.V[DEBUG_IDX_FULL].numel() > 0:
+                    print(f"  self.V[{DEBUG_IDX_FULL}, 0, 0]: {self.V[DEBUG_IDX_FULL, 0, 0].item()}")
+                    print(f"  self.V[{DEBUG_IDX_FULL}, 0, -1]: {self.V[DEBUG_IDX_FULL, 0, -1].item()}")
+                print(f"  self.Winv[{DEBUG_IDX_FULL}] shape: {self.Winv[DEBUG_IDX_FULL].shape}, dtype: {self.Winv[DEBUG_IDX_FULL].dtype}")
+                if self.Winv[DEBUG_IDX_FULL].numel() > 0:
+                    print(f"  self.Winv[{DEBUG_IDX_FULL}, 0]: {self.Winv[DEBUG_IDX_FULL, 0].item()}")
+                    print(f"  self.Winv[{DEBUG_IDX_FULL}, -1]: {self.Winv[DEBUG_IDX_FULL, -1].item()}")
+                    nan_count_final_arb = torch.isnan(self.Winv[DEBUG_IDX_FULL].real).sum().item()
+                    print(f"  NaN count in self.Winv[{DEBUG_IDX_FULL}]: {nan_count_final_arb}")
+            # --- End Debug Print Trigger ---
+            
+            # Final check for the target k-vector in arbitrary mode
+            target_index_to_print = -1
             matches = torch.where(torch.all(torch.isclose(self.kvec, kvec_target_tensor, atol=debug_kvec_atol), dim=1))[0]
             if matches.numel() > 0:
                 target_index_to_print = matches[0].item()
+            
+            if target_index_to_print != -1:
+                print(f"\n--- ArbitraryQ Mode FINAL CHECK (index {target_index_to_print}) ---")
+                print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
+                print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
+            
+            print(f"V requires_grad: {self.V.requires_grad}") # Should be False
+            print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
+            print(f"Phonon computation complete for arbitrary mode: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
+            
         else:
-            # Use the BZ index for grid mode
+            # For grid mode, transform eigenvectors and calculate Winv
+            # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
+            Linv_H_batch = Linv_H.unsqueeze(0).expand(total_points, -1, -1)
+            self.V = torch.matmul(
+                Linv_H_batch,
+                v_all_detached # Use the detached eigenvectors here
+            ).detach()
+            
+            # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
+            eps_div = torch.tensor(1e-8, dtype=self.real_dtype, device=self.device) # Use tensor for eps_div
+            winv_all_real = torch.where(
+                torch.isnan(eigenvalues_all),
+                torch.tensor(float('nan'), device=eigenvalues_all.device, dtype=self.real_dtype),
+                1.0 / torch.maximum(eigenvalues_all, eps_div) # Ensure division is float64
+            ).to(dtype=self.real_dtype) # Ensure final real dtype
+            self.Winv = winv_all_real.to(dtype=self.complex_dtype) # Cast to complex
+            
+            # --- Debug Print Trigger (Grid Mode) ---
+            if DEBUG_IDX_BZ < self.V.shape[0]:
+                print(f"\n--- DEBUG Final Grid (idx={DEBUG_IDX_BZ}) ---")
+                print(f"  Linv_complex.H shape: {Linv_H_batch[DEBUG_IDX_BZ].shape}, dtype: {Linv_H_batch[DEBUG_IDX_BZ].dtype}")
+                if Linv_H_batch[DEBUG_IDX_BZ].numel() > 0:
+                    print(f"  Linv_complex.H[0,0]: {Linv_H_batch[DEBUG_IDX_BZ, 0, 0].item()}")
+                if v_all_detached[DEBUG_IDX_BZ].numel() > 0:
+                    print(f"  v_all_detached[{DEBUG_IDX_BZ}, 0, 0]: {v_all_detached[DEBUG_IDX_BZ, 0, 0].item()}")
+                print(f"  self.V[{DEBUG_IDX_BZ}] (calculated) shape: {self.V[DEBUG_IDX_BZ].shape}, dtype: {self.V[DEBUG_IDX_BZ].dtype}")
+                if self.V[DEBUG_IDX_BZ].numel() > 0:
+                    print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
+                    print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
+                print(f"  winv_all_real[{DEBUG_IDX_BZ}] (calculated) shape: {winv_all_real[DEBUG_IDX_BZ].shape}, dtype: {winv_all_real[DEBUG_IDX_BZ].dtype}")
+                if winv_all_real[DEBUG_IDX_BZ].numel() > 0:
+                    print(f"  winv_all_real[{DEBUG_IDX_BZ}, 0]: {winv_all_real[DEBUG_IDX_BZ, 0].item()}")
+                    print(f"  winv_all_real[{DEBUG_IDX_BZ}, -1]: {winv_all_real[DEBUG_IDX_BZ, -1].item()}")
+                    nan_count_final = torch.isnan(winv_all_real[DEBUG_IDX_BZ]).sum().item()
+                    print(f"  NaN count in winv_all_real[{DEBUG_IDX_BZ}]: {nan_count_final}")
+                print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
+                if self.Winv[DEBUG_IDX_BZ].numel() > 0:
+                    print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
+                    print(f"  self.Winv[{DEBUG_IDX_BZ}, -1]: {self.Winv[DEBUG_IDX_BZ, -1].item()}")
+            # --- End Debug Print Trigger ---
+            
+            # Final check for the target k-vector in grid mode
             target_index_to_print = 1 # Corresponds to (0,0,1) in 2x2x2 BZ
-        
-        if target_index_to_print != -1:
-            mode_string = "ArbitraryQ" if getattr(self, 'use_arbitrary_q', False) else "Grid"
-            print(f"\n--- {mode_string} Mode FINAL CHECK (index {target_index_to_print}) ---")
-            print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
-            print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
-        # --- End Modifications ---
-
-        # Ensure requires_grad is set correctly for Winv (V is handled by using detached vecs)
-        if not self.Winv.requires_grad and eigenvalues_all.requires_grad:
-             self.Winv = self.Winv + 0 * eigenvalues_all.sum().to(self.complex_dtype) # Reconnect if needed
-
-        # V should NOT require grad as it uses detached eigenvectors
-        self.V.requires_grad_(False)
-        # Winv SHOULD require grad if eigenvalues_all did
-        self.Winv.requires_grad_(eigenvalues_all.requires_grad)
-
-        print(f"V requires_grad: {self.V.requires_grad}") # Should be False now
-        print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
-        print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
+            
+            if target_index_to_print < self.V.shape[0]:
+                print(f"\n--- Grid Mode FINAL CHECK (index {target_index_to_print}) ---")
+                print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
+                print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
+            
+            # Ensure requires_grad is set correctly for Winv (V is handled by using detached vecs)
+            if not self.Winv.requires_grad and eigenvalues_all.requires_grad:
+                self.Winv = self.Winv + 0 * eigenvalues_all.sum().to(self.complex_dtype) # Reconnect if needed
+            
+            # V should NOT require grad as it uses detached eigenvectors
+            self.V.requires_grad_(False)
+            # Winv SHOULD require grad if eigenvalues_all did
+            self.Winv.requires_grad_(eigenvalues_all.requires_grad)
+            
+            print(f"V requires_grad: {self.V.requires_grad}") # Should be False now
+            print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
+            print(f"Phonon computation complete for grid mode: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
     
     #@debug
     def compute_gnm_K(self, hessian: torch.Tensor, kvec: torch.Tensor = None) -> torch.Tensor:
