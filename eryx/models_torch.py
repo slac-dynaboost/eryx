@@ -203,12 +203,12 @@ class OnePhonon:
         
         # Use PDBToTensor adapter to extract element weights
         from eryx.adapters import PDBToTensor
-        pdb_adapter = PDBToTensor(device=self.device)
+        pdb_adapter = PDBToTensor(device=self.device, dtype=self.real_dtype) # Pass dtype
         element_weights = pdb_adapter.extract_element_weights(self.model)
-        self.model.element_weights = element_weights
+        self.model.element_weights = element_weights # This should already be the correct dtype from adapter
         logging.debug(f"[_setup] Extracted {len(element_weights)} element weights.")
-        
-        from eryx.map_utils import generate_grid
+
+        # Note: NumPy generate_grid is used below, ensure its output is converted correctly
         logging.debug(f"[_setup] use_arbitrary_q={getattr(self, 'use_arbitrary_q', False)}")
         
         if getattr(self, 'use_arbitrary_q', False):
@@ -218,10 +218,11 @@ class OnePhonon:
             
             # Derive hkl_grid from q_vectors using q = 2π * A_inv^T * hkl  => hkl = (1/(2π)) * q * (A_inv^T)^{-1}
             A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
-            scaling_factor = 1.0 / (2.0 * torch.pi)
-            A_inv_T_inv = torch.inverse(A_inv_tensor.T)
-            self.hkl_grid = torch.matmul(self.q_grid * scaling_factor, A_inv_T_inv)
-            
+            scaling_factor = torch.tensor(1.0 / (2.0 * torch.pi), dtype=self.real_dtype, device=self.device) # Use tensor for scaling
+            A_inv_T_inv = torch.linalg.inv(A_inv_tensor.T) # Use linalg.inv
+            # Ensure matmul inputs have correct dtype
+            self.hkl_grid = torch.matmul(self.q_grid * scaling_factor, A_inv_T_inv).to(dtype=self.real_dtype)
+
             # For arbitrary mode, we set a dummy map_shape (number of points,1,1)
             self.map_shape = (self.q_grid.shape[0], 1, 1)
         else:
@@ -244,13 +245,16 @@ class OnePhonon:
 
             # Calculate q_grid using matrix multiplication with tensors
             # Ensure A_inv_tensor uses high precision
-            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device) 
-            self.q_grid = 2 * torch.pi * torch.matmul(
-                A_inv_tensor.T, 
-                self.hkl_grid.T 
+            A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device)
+            two_pi = torch.tensor(2.0 * torch.pi, dtype=self.real_dtype, device=self.device)
+            # Ensure matmul inputs have correct dtype
+            self.q_grid = two_pi * torch.matmul(
+                A_inv_tensor.T,
+                self.hkl_grid.T # hkl_grid is already real_dtype
             ).T # Transpose the result back
+            self.q_grid = self.q_grid.to(dtype=self.real_dtype) # Ensure final dtype
             logging.debug(f"[_setup] Calculated q_grid shape={self.q_grid.shape}, q_grid.dtype={self.q_grid.dtype}")
-        
+
         # Ensure q_grid requires gradients if it's float
         if self.q_grid.dtype.is_floating_point:
             self.q_grid.requires_grad_(True)
@@ -259,20 +263,22 @@ class OnePhonon:
         # Compute resolution mask using PyTorch functions
         from eryx.map_utils_torch import compute_resolution
         cell_tensor = torch.tensor(self.model.cell, dtype=self.real_dtype, device=self.device)
-        resolution = compute_resolution(cell_tensor, self.hkl_grid)
-        logging.debug(f"[_setup] resolution computed, shape={resolution.shape}")
-        self.res_mask = resolution > res_limit
-        
+        # Ensure hkl_grid is real_dtype before passing to compute_resolution
+        resolution = compute_resolution(cell_tensor, self.hkl_grid.to(dtype=self.real_dtype))
+        logging.debug(f"[_setup] resolution computed, shape={resolution.shape}, dtype={resolution.dtype}")
+        # Ensure comparison uses correct dtype
+        self.res_mask = resolution > torch.tensor(res_limit, dtype=self.real_dtype, device=self.device)
+
         # Setup Crystal
         self.crystal = Crystal(self.model)
         self.crystal.supercell_extent(nx=1, ny=1, nz=1)
-        self.id_cell_ref = self.crystal.hkl_to_id([0, 0, 0])
-        self.n_cell = self.crystal.n_cell
-        
-        # Setup PDBToTensor adapter for tensor conversions
-        pdb_adapter = PDBToTensor(device=self.device)
-        self.crystal = pdb_adapter.convert_crystal(self.crystal)
-        
+        self.id_cell_ref = self.crystal.hkl_to_id([0, 0, 0]) # This returns int, no dtype issue
+        self.n_cell = self.crystal.n_cell # This is int, no dtype issue
+
+        # Setup PDBToTensor adapter for tensor conversions (ensure it uses correct dtypes)
+        pdb_adapter = PDBToTensor(device=self.device, dtype=self.real_dtype) # Pass dtype
+        self.crystal = pdb_adapter.convert_crystal(self.crystal) # Adapter should handle internal dtypes
+
         # Set key dimensions.
         self.n_asu = self.model.n_asu
         logging.debug(f"[_setup] n_asu={self.n_asu}")
@@ -684,9 +690,10 @@ class OnePhonon:
         if getattr(self, 'use_arbitrary_q', False):
             # Arbitrary q-vector mode
             # k = q/(2π)
-            self.kvec = self.q_grid / (2.0 * torch.pi)
-            self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-            
+            two_pi = torch.tensor(2.0 * torch.pi, dtype=self.real_dtype, device=self.device)
+            self.kvec = (self.q_grid / two_pi).to(dtype=self.real_dtype) # Ensure division and final dtype
+            self.kvec_norm = torch.linalg.norm(self.kvec, dim=1, keepdim=True).to(dtype=self.real_dtype) # Use linalg.norm
+
             # Ensure tensors require gradients
             self.kvec.requires_grad_(True)
             self.kvec_norm.requires_grad_(True)
@@ -713,24 +720,24 @@ class OnePhonon:
                 # Convert from NumPy array with correct dtype
                 A_inv_tensor = torch.tensor(self.model.A_inv, dtype=self.real_dtype, device=self.device) 
             
-            # Generate 1D tensors for h, k, l coordinates using _center_kvec (ensure float64)
-            h_coords = torch.tensor([self._center_kvec(dh, h_dim_bz) for dh in range(h_dim_bz)], 
-                                   device=self.device, dtype=self.real_dtype)
-            k_coords = torch.tensor([self._center_kvec(dk, k_dim_bz) for dk in range(k_dim_bz)], 
-                                   device=self.device, dtype=self.real_dtype)
-            l_coords = torch.tensor([self._center_kvec(dl, l_dim_bz) for dl in range(l_dim_bz)], 
-                                   device=self.device, dtype=self.real_dtype)
-            
+            # Generate 1D tensors for h, k, l coordinates using _center_kvec (which returns float64)
+            h_coords = torch.tensor([self._center_kvec(dh, h_dim_bz) for dh in range(h_dim_bz)],
+                                   device=self.device, dtype=self.real_dtype) # Explicit dtype
+            k_coords = torch.tensor([self._center_kvec(dk, k_dim_bz) for dk in range(k_dim_bz)],
+                                   device=self.device, dtype=self.real_dtype) # Explicit dtype
+            l_coords = torch.tensor([self._center_kvec(dl, l_dim_bz) for dl in range(l_dim_bz)],
+                                   device=self.device, dtype=self.real_dtype) # Explicit dtype
+
             # Create meshgrid and reshape to [total_k_points, 3]
             h_grid, k_grid, l_grid = torch.meshgrid(h_coords, k_coords, l_coords, indexing='ij')
             # Ensure hkl_fractional is float64
             hkl_fractional = torch.stack([h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], dim=1).to(dtype=self.real_dtype)
-            
+
             # Compute kvec and kvec_norm (ensure float64)
-            self.kvec = torch.matmul(hkl_fractional, A_inv_tensor)
-            self.kvec_norm = torch.norm(self.kvec, dim=1, keepdim=True)
-            
-            # Ensure final tensors have the correct dtype
+            self.kvec = torch.matmul(hkl_fractional, A_inv_tensor).to(dtype=self.real_dtype) # Ensure output dtype
+            self.kvec_norm = torch.linalg.norm(self.kvec, dim=1, keepdim=True).to(dtype=self.real_dtype) # Use linalg.norm and ensure output dtype
+
+            # Ensure final tensors have the correct dtype (redundant but safe)
             self.kvec = self.kvec.to(dtype=self.real_dtype)
             self.kvec_norm = self.kvec_norm.to(dtype=self.real_dtype)
             
@@ -975,9 +982,9 @@ class OnePhonon:
         # Compute Hessian using PyTorch implementation
         hessian_allatoms = gnm_torch.compute_hessian()
         
-        # Create identity matrix for Kronecker product
+        # Create identity matrix for Kronecker product (use complex dtype)
         eye3 = torch.eye(3, device=self.device, dtype=self.complex_dtype)
-        
+
         for i_cell in range(self.n_cell):
             for i_asu in range(self.n_asu):
                 for j_asu in range(self.n_asu):
@@ -987,18 +994,19 @@ class OnePhonon:
                     h_expanded = torch.zeros((h_block.shape[0] * 3, h_block.shape[1] * 3), 
                                             dtype=self.complex_dtype, device=self.device)
                     
-                    # Manually implement the Kronecker product
+                    # Manually implement the Kronecker product (ensure h_block is complex)
+                    h_block_complex = h_block.to(self.complex_dtype)
                     for i in range(h_block.shape[0]):
                         for j in range(h_block.shape[1]):
-                            h_expanded[i*3:(i+1)*3, j*3:(j+1)*3] = h_block[i, j] * eye3
-                    
+                            h_expanded[i*3:(i+1)*3, j*3:(j+1)*3] = h_block_complex[i, j] * eye3 # Multiply complex * complex
+
                     # Perform matrix multiplication with expanded hessian
                     # Ensure all tensors are complex for compatibility
                     proj = torch.matmul(self.Amat[i_asu].T.to(self.complex_dtype),
-                                        torch.matmul(h_expanded,
+                                        torch.matmul(h_expanded, # Already complex
                                                      self.Amat[j_asu].to(self.complex_dtype)))
-                    hessian[i_asu, :, i_cell, j_asu, :] = proj
-        
+                    hessian[i_asu, :, i_cell, j_asu, :] = proj.to(self.complex_dtype) # Ensure final assignment is complex
+
         # Ensure hessian requires gradients
         if not hessian.requires_grad and hessian.is_complex():
             # For complex tensors we need a different approach to enable gradients
@@ -1232,13 +1240,13 @@ class OnePhonon:
                     debug_data_grid['eig_N'] = eigenvalues_tensor[-1].item()
             
             # 3. Process eigenvalues (thresholding, flipping)
-            eps = 1e-6
+            eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
             eigenvalues_processed = torch.where(
                 eigenvalues_tensor < eps,
                 torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
-                eigenvalues_tensor
+                eigenvalues_tensor # Already real_dtype
             )
-            
+
             if is_target_idx or is_target_kvec:
                 print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
                 if eigenvalues_processed.numel() > 0:
@@ -1298,14 +1306,13 @@ class OnePhonon:
         ).detach()
 
         # Calculate Winv = 1 / eigenvalues (using differentiable eigenvalues)
-        eps_div = 1e-8 # Use a small epsilon for division stability
-        winv_all = torch.where(
+        eps_div = torch.tensor(1e-8, dtype=self.real_dtype, device=self.device) # Use tensor for eps_div
+        winv_all_real = torch.where(
             torch.isnan(eigenvalues_all),
             torch.tensor(float('nan'), device=eigenvalues_all.device, dtype=self.real_dtype),
-            1.0 / torch.maximum(eigenvalues_all, torch.tensor(eps_div, device=eigenvalues_all.device)) # Use maximum instead of adding
-            #1.0 / (eigenvalues_all + eps_div)
-        )
-        self.Winv = winv_all.to(dtype=self.complex_dtype) # Cast to complex
+            1.0 / torch.maximum(eigenvalues_all, eps_div) # Ensure division is float64
+        ).to(dtype=self.real_dtype) # Ensure final real dtype
+        self.Winv = winv_all_real.to(dtype=self.complex_dtype) # Cast to complex
 
         # --- Debug Print Trigger (Both Modes) ---
         # Grid Mode: Check if i == DEBUG_IDX_BZ was set in the loop's debug_data_grid
@@ -1348,12 +1355,12 @@ class OnePhonon:
             if self.V[DEBUG_IDX_FULL].numel() > 0:
                 print(f"  self.V[{DEBUG_IDX_FULL}, 0, 0]: {self.V[DEBUG_IDX_FULL, 0, 0].item()}")
                 print(f"  self.V[{DEBUG_IDX_FULL}, 0, -1]: {self.V[DEBUG_IDX_FULL, 0, -1].item()}")
-            print(f"  winv_all[{DEBUG_IDX_FULL}] (calculated) shape: {winv_all[DEBUG_IDX_FULL].shape}, dtype: {winv_all[DEBUG_IDX_FULL].dtype}")
-            if winv_all[DEBUG_IDX_FULL].numel() > 0:
-                print(f"  winv_all[{DEBUG_IDX_FULL}, 0]: {winv_all[DEBUG_IDX_FULL, 0].item()}")
-                print(f"  winv_all[{DEBUG_IDX_FULL}, -1]: {winv_all[DEBUG_IDX_FULL, -1].item()}")
-                nan_count_final_arb = torch.isnan(winv_all[DEBUG_IDX_FULL]).sum().item()
-                print(f"  NaN count in winv_all[{DEBUG_IDX_FULL}]: {nan_count_final_arb}")
+            print(f"  winv_all_real[{DEBUG_IDX_FULL}] (calculated) shape: {winv_all_real[DEBUG_IDX_FULL].shape}, dtype: {winv_all_real[DEBUG_IDX_FULL].dtype}")
+            if winv_all_real[DEBUG_IDX_FULL].numel() > 0:
+                print(f"  winv_all_real[{DEBUG_IDX_FULL}, 0]: {winv_all_real[DEBUG_IDX_FULL, 0].item()}")
+                print(f"  winv_all_real[{DEBUG_IDX_FULL}, -1]: {winv_all_real[DEBUG_IDX_FULL, -1].item()}")
+                nan_count_final_arb = torch.isnan(winv_all_real[DEBUG_IDX_FULL]).sum().item()
+                print(f"  NaN count in winv_all_real[{DEBUG_IDX_FULL}]: {nan_count_final_arb}")
             print(f"  self.Winv[{DEBUG_IDX_FULL}] (final) shape: {self.Winv[DEBUG_IDX_FULL].shape}, dtype: {self.Winv[DEBUG_IDX_FULL].dtype}")
             if self.Winv[DEBUG_IDX_FULL].numel() > 0:
                 print(f"  self.Winv[{DEBUG_IDX_FULL}, 0]: {self.Winv[DEBUG_IDX_FULL, 0].item()}")
@@ -1524,16 +1531,17 @@ class OnePhonon:
         
         # Calculate phase factors and accumulate covariance contributions
         for j_cell in range(self.n_cell):
-            # Get cell origin
-            r_cell = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
-            
+            # Get cell origin (ensure it's a tensor with correct dtype)
+            r_cell_np = self.crystal.get_unitcell_origin(self.crystal.id_to_hkl(j_cell))
+            r_cell = torch.tensor(r_cell_np, dtype=self.real_dtype, device=self.device)
+
             # Calculate phase factors for all BZ k-vectors
             # Batched dot product: sum over last dim (3) -> shape [total_bz_points]
-            all_phases = torch.sum(kvec_bz_local * r_cell, dim=1)
-            cos_phases = torch.cos(all_phases)
-            sin_phases = torch.sin(all_phases)
-            eikr_all = torch.complex(cos_phases, sin_phases).to(self.complex_dtype)
-            
+            all_phases = torch.sum(kvec_bz_local * r_cell, dim=1).to(dtype=self.real_dtype) # Ensure real_dtype
+            cos_phases = torch.cos(all_phases) # Output should match input dtype (real_dtype)
+            sin_phases = torch.sin(all_phases) # Output should match input dtype (real_dtype)
+            eikr_all = torch.complex(cos_phases, sin_phases).to(self.complex_dtype) # Ensure complex_dtype
+
             # Reshape phase factors for broadcasting: [total_bz_points] -> [total_bz_points, 1, 1]
             eikr_reshaped = eikr_all.view(-1, 1, 1)
             
@@ -2160,12 +2168,12 @@ class OnePhonon:
             
             return Id_masked
 
-    def array_to_tensor(self, array: Union[np.ndarray, torch.Tensor], requires_grad: bool = True, dtype=None) -> torch.Tensor:
+    def array_to_tensor(self, array: Union[np.ndarray, torch.Tensor, float, int], requires_grad: bool = True, dtype=None) -> torch.Tensor:
         """
-        Convert a NumPy array to a PyTorch tensor with gradient support.
-        
+        Convert a NumPy array, scalar, or existing tensor to a PyTorch tensor with gradient support.
+
         This is a helper method that ensures consistent tensor conversion
-        throughout the class, with proper handling of gradient requirements.
+        throughout the class, with proper handling of gradient requirements and dtypes.
         
         Args:
             array: NumPy array or PyTorch tensor to convert
@@ -2181,29 +2189,44 @@ class OnePhonon:
         
         # Set default dtype if not provided
         if dtype is None:
-            dtype = torch.float64
-            
-        # Handle complex arrays
+            dtype = self.real_dtype # Use self.real_dtype as default
+
+        # Handle complex arrays/scalars
+        is_complex = False
         if isinstance(array, np.ndarray) and np.iscomplexobj(array):
-            dtype = torch.complex128
-        
-        # If already a tensor, move to correct device and set requires_grad
+            is_complex = True
+        elif isinstance(array, complex):
+            is_complex = True
+        elif isinstance(array, torch.Tensor) and array.is_complex():
+            is_complex = True
+
+        if is_complex:
+            dtype = self.complex_dtype # Use self.complex_dtype for complex
+
+        # If already a tensor, move to correct device, set dtype, and handle requires_grad
         if isinstance(array, torch.Tensor):
             tensor = array.to(device=self.device, dtype=dtype)
             if requires_grad and tensor.dtype.is_floating_point:
                 tensor.requires_grad_(True)
             return tensor
-        
-        # Handle empty arrays
-        if isinstance(array, np.ndarray) and array.size == 0:
+
+        # Handle scalars (float, int, complex)
+        if isinstance(array, (float, int, complex)):
+            tensor = torch.tensor(array, dtype=dtype, device=self.device)
+        # Handle NumPy arrays (including empty ones)
+        elif isinstance(array, np.ndarray):
+            # Allow empty arrays
             tensor = torch.from_numpy(array.copy()).to(dtype=dtype, device=self.device)
-            return tensor
-        
-        # Create tensor and set requires_grad if appropriate
-        tensor = torch.tensor(array, dtype=dtype, device=self.device)
-        if requires_grad and tensor.dtype.is_floating_point:
+        else:
+            raise TypeError(f"Unsupported type for array_to_tensor: {type(array)}")
+
+        # Set requires_grad if appropriate (only for float/complex tensors)
+        if requires_grad and tensor.dtype.is_floating_point or tensor.dtype.is_complex():
+            # Ensure it's a leaf tensor before setting requires_grad
+            if not tensor.is_leaf:
+                tensor = tensor.clone().detach()
             tensor.requires_grad_(True)
-            
+
         return tensor
 
     def to_batched_shape(self, tensor: torch.Tensor) -> torch.Tensor:

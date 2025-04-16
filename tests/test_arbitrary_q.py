@@ -490,8 +490,8 @@ class TestArbitraryQVectors(TestBase):
             [0.1, 0.2, 0.3],
             [0.4, 0.5, 0.6],
             [0.7, 0.8, 0.9]
-        ], device=self.device, requires_grad=True)
-        
+        ], device=self.device, dtype=torch.float64, requires_grad=True) # Add dtype
+
         # Create model with these q-vectors
         # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
@@ -526,8 +526,8 @@ class TestArbitraryQVectors(TestBase):
             [0.123, 0.456, 0.789],
             [1.234, 2.345, 3.456],
             [-0.123, -0.456, -0.789]
-        ], device=self.device)
-        
+        ], device=self.device, dtype=torch.float64) # Add dtype
+
         # Create model with these q-vectors
         # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
@@ -546,15 +546,15 @@ class TestArbitraryQVectors(TestBase):
         
         # Verify map_shape is set correctly
         self.assertEqual(model.map_shape, (3, 1, 1))
-        
         # Verify hkl_grid is computed correctly
         # q = 2π * A_inv^T * hkl, so hkl = (1/2π) * q * (A_inv^T)^-1
-        A_inv_tensor = torch.tensor(model.model.A_inv, dtype=torch.float32, device=self.device)
-        scaling_factor = 1.0 / (2.0 * torch.pi)
-        A_inv_T_inv = torch.inverse(A_inv_tensor.T)
-        expected_hkl = torch.matmul(q_vectors * scaling_factor, A_inv_T_inv)
-        
-        self.assertTrue(torch.allclose(model.hkl_grid, expected_hkl, rtol=1e-5, atol=1e-8))
+        A_inv_tensor = torch.tensor(model.model.A_inv, dtype=torch.float64, device=self.device) # Use float64
+        scaling_factor = torch.tensor(1.0 / (2.0 * torch.pi), dtype=torch.float64, device=self.device) # Use float64 tensor
+        A_inv_T_inv = torch.linalg.inv(A_inv_tensor.T) # Use linalg.inv
+        expected_hkl = torch.matmul(q_vectors * scaling_factor, A_inv_T_inv).to(dtype=torch.float64) # Ensure float64
+
+        # Use higher precision for comparison
+        self.assertTrue(torch.allclose(model.hkl_grid, expected_hkl, rtol=1e-7, atol=1e-9))
     
     def test_basic_initialization(self):
         """
@@ -565,8 +565,8 @@ class TestArbitraryQVectors(TestBase):
             [0.123, 0.456, 0.789],
             [1.234, 2.345, 3.456],
             [-0.123, -0.456, -0.789]
-        ], device=self.device)
-        
+        ], device=self.device, dtype=torch.float64) # Add dtype
+
         # Create model with these q-vectors
         # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
@@ -592,9 +592,11 @@ class TestArbitraryQVectors(TestBase):
         # Verify V and Winv tensors exist and have requires_grad
         self.assertTrue(hasattr(model, 'V'))
         self.assertTrue(hasattr(model, 'Winv'))
-        self.assertTrue(model.V.requires_grad)
-        self.assertTrue(model.Winv.requires_grad)
-    
+        # V should NOT require grad after fix for Issue #4
+        self.assertFalse(model.V.requires_grad, "V should be detached and not require grad")
+        # Winv SHOULD require grad if inputs did (which they do by default in GNM)
+        self.assertTrue(model.Winv.requires_grad, "Winv should require grad")
+
     def test_build_kvec_brillouin(self):
         """
         Test _build_kvec_Brillouin method with arbitrary q-vectors.
@@ -604,8 +606,8 @@ class TestArbitraryQVectors(TestBase):
             [0.123, 0.456, 0.789],
             [1.234, 2.345, 3.456],
             [-0.123, -0.456, -0.789]
-        ], device=self.device, requires_grad=True)
-        
+        ], device=self.device, dtype=torch.float64, requires_grad=True) # Add dtype
+
         # Create model with these q-vectors
         # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
@@ -622,11 +624,11 @@ class TestArbitraryQVectors(TestBase):
         # Verify kvec and kvec_norm tensor shapes
         self.assertEqual(model.kvec.shape, (3, 3))
         self.assertEqual(model.kvec_norm.shape, (3, 1))
-        
         # Verify kvec = q_grid/(2π)
-        expected_kvec = q_vectors / (2.0 * torch.pi)
-        self.assertTrue(torch.allclose(model.kvec, expected_kvec, rtol=1e-5, atol=1e-8))
-        
+        two_pi = torch.tensor(2.0 * torch.pi, dtype=torch.float64, device=self.device) # Use float64 tensor
+        expected_kvec = (q_vectors / two_pi).to(dtype=torch.float64) # Ensure float64
+        self.assertTrue(torch.allclose(model.kvec, expected_kvec, rtol=1e-7, atol=1e-9)) # Use tighter tolerance
+
         # Verify both tensors have requires_grad=True
         self.assertTrue(model.kvec.requires_grad)
         self.assertTrue(model.kvec_norm.requires_grad)
@@ -651,8 +653,8 @@ class TestArbitraryQVectors(TestBase):
             [0.123, 0.456, 0.789],
             [1.234, 2.345, 3.456],
             [-0.123, -0.456, -0.789]
-        ], device=self.device)
-        
+        ], device=self.device, dtype=torch.float64) # Add dtype
+
         # Create model with these q-vectors
         # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
@@ -697,8 +699,8 @@ class TestArbitraryQVectors(TestBase):
             [0.123, 0.456, 0.789],
             [1.234, 2.345, 3.456],
             [-0.123, -0.456, -0.789]
-        ], device=self.device)
-        
+        ], device=self.device, dtype=torch.float64) # Add dtype
+
         # Create model with these q-vectors
         # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
