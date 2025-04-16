@@ -171,12 +171,16 @@ def run_torch_arb_q():
         
         # Now create the arbitrary q-vector model
         logging.info("Creating arbitrary q-vector model...")
+        # Pass sampling parameters explicitly as they are required for ADP calculation in GNM model
+        hsampling_params = [-4, 4, 3]
+        ksampling_params = [-17, 17, 3]
+        lsampling_params = [-29, 29, 3]
         arb_q_model = OnePhonon(
             pdb_path,
             q_vectors=q_vectors,
-            hsampling=[-4, 4, 3],  # Still needed for ADP calculation
-            ksampling=[-17, 17, 3],
-            lsampling=[-29, 29, 3],
+            hsampling=hsampling_params, # Pass sampling params
+            ksampling=ksampling_params,
+            lsampling=lsampling_params,
             expand_p1=True,
             res_limit=0.0,
             gnm_cutoff=4.0,
@@ -184,35 +188,11 @@ def run_torch_arb_q():
             gamma_inter=1.0,
             device=device
         )
-        
-        # Explicitly calculate phonon modes (they're skipped in initialization)
-        logging.info("Explicitly calculating phonon modes...")
-        try:
-            # Original calculation
-            arb_q_model.compute_gnm_phonons()
-            logging.info("Phonon modes calculated successfully")
-        except RuntimeError as e:
-            if "you can only change requires_grad flags of leaf variables" in str(e):
-                logging.warning("Handling gradient issue. Manually detaching V tensor.")
-                # If V was created but error occurred on requires_grad, manually detach it
-                if hasattr(arb_q_model, 'V') and arb_q_model.V is not None:
-                    arb_q_model.V = arb_q_model.V.detach()
-                    logging.info("Successfully detached V tensor.")
-            else:
-                # Re-raise if it's a different error
-                raise
-        
-        # Calculate covariance matrix if needed
-        if hasattr(arb_q_model, 'compute_covariance_matrix'):
-            try:
-                arb_q_model.compute_covariance_matrix()
-                logging.info("Covariance matrix calculated successfully")
-            except Exception as e:
-                logging.warning(f"Error calculating covariance matrix: {e}")
-        
+        logging.info("Arbitrary q-vector model initialized (phonons/ADPs calculated automatically).")
+
         # Verify phonon tensors exist and contain non-zero values
-        if hasattr(arb_q_model, 'V') and hasattr(arb_q_model, 'Winv'):
-            v_nonzero = torch.count_nonzero(torch.abs(arb_q_model.V)).item() if arb_q_model.V is not None else 0
+        if hasattr(arb_q_model, 'V') and hasattr(arb_q_model, 'Winv') and arb_q_model.V is not None and arb_q_model.Winv is not None:
+            v_nonzero = torch.count_nonzero(torch.abs(arb_q_model.V)).item()
             winv_nonzero = torch.count_nonzero(~torch.isnan(arb_q_model.Winv)).item() if arb_q_model.Winv is not None else 0
             
             logging.info(f"Phonon eigenvectors (V) shape: {arb_q_model.V.shape}")

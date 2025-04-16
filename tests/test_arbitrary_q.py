@@ -462,12 +462,16 @@ class TestArbitraryQVectors(TestBase):
         q_vectors, grid_model = self.create_q_vectors_from_grid()
         
         # Create arbitrary q-vector model with the same q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         q_model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
+
         # Compare q_grid tensors (should be identical)
         self.assertTrue(torch.allclose(grid_model.q_grid, q_model.q_grid))
         
@@ -489,12 +493,16 @@ class TestArbitraryQVectors(TestBase):
         ], device=self.device, requires_grad=True)
         
         # Create model with these q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
+
         # Verify q_grid has gradients enabled
         self.assertTrue(model.q_grid.requires_grad)
         
@@ -521,12 +529,16 @@ class TestArbitraryQVectors(TestBase):
         ], device=self.device)
         
         # Create model with these q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
+
         # Verify model attributes
         self.assertTrue(model.use_arbitrary_q)
         self.assertEqual(model.q_grid.shape, (3, 3))
@@ -556,12 +568,16 @@ class TestArbitraryQVectors(TestBase):
         ], device=self.device)
         
         # Create model with these q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
+
         # Verify model attributes
         self.assertTrue(model.use_arbitrary_q)
         self.assertEqual(model.q_grid.shape, (3, 3))
@@ -591,15 +607,18 @@ class TestArbitraryQVectors(TestBase):
         ], device=self.device, requires_grad=True)
         
         # Create model with these q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
-        # Call _build_kvec_Brillouin explicitly
-        model._build_kvec_Brillouin()
-        
+
+        # _build_kvec_Brillouin is called during __init__, no need to call explicitly
+
         # Verify kvec and kvec_norm tensor shapes
         self.assertEqual(model.kvec.shape, (3, 3))
         self.assertEqual(model.kvec_norm.shape, (3, 1))
@@ -635,12 +654,16 @@ class TestArbitraryQVectors(TestBase):
         ], device=self.device)
         
         # Create model with these q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
+
         # Test with direct index input
         direct_idx = 1
         result = model._at_kvec_from_miller_points(direct_idx)
@@ -677,12 +700,16 @@ class TestArbitraryQVectors(TestBase):
         ], device=self.device)
         
         # Create model with these q-vectors
+        # Pass sampling parameters as they are required for GNM model initialization
         model = OnePhonon(
             self.pdb_path,
             q_vectors=q_vectors,
-            device=self.device
+            hsampling=self.hsampling, # Pass sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device, **self.common_params # Include common params
         )
-        
+
         # Create test tensors
         test_tensor_2d = torch.rand((3, 5), device=self.device)
         test_tensor_3d = torch.rand((3, 3, 3), device=self.device)
@@ -744,15 +771,12 @@ class TestArbitraryQVectors(TestBase):
         model_q.complex_dtype = torch.complex128
 
         # --- 2. Execute Phonon Calculation ---
-        # Note: compute_gnm_phonons is called during __init__ for model_grid
-        # We need to explicitly call it for model_q if it wasn't called during its init
-        # (Check if _setup_phonons already calls it based on model type 'gnm')
-        # Let's assume it was called or call it explicitly for safety
-        if not hasattr(model_q, 'V') or model_q.V is None:
-             print("Explicitly calling compute_gnm_phonons on model_q...")
-             model_q.compute_gnm_phonons()
-        print("Phonon calculation assumed complete for both models.")
-
+        # Phonon calculation is now done automatically during __init__ for both models
+        print("Phonon calculation assumed complete for both models (called during __init__).")
+        self.assertTrue(hasattr(model_grid, 'V') and model_grid.V is not None, "model_grid missing V tensor after init")
+        self.assertTrue(hasattr(model_q, 'V') and model_q.V is not None, "model_q missing V tensor after init")
+        self.assertTrue(hasattr(model_grid, 'Winv') and model_grid.Winv is not None, "model_grid missing Winv tensor after init")
+        self.assertTrue(hasattr(model_q, 'Winv') and model_q.Winv is not None, "model_q missing Winv tensor after init")
 
         # --- 3. Get BZ to Full Grid Mapping ---
         try:

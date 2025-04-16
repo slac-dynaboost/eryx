@@ -146,31 +146,38 @@ class OnePhonon:
         # Set high precision as default
         self.real_dtype = torch.float64
         self.complex_dtype = torch.complex128
-        
-        # Validate inputs
+
+        # --- START VALIDATION ---
+        self.use_arbitrary_q = False
         if q_vectors is not None:
-            # Validate q_vectors
+            # Validate q_vectors tensor shape and type
             if not isinstance(q_vectors, torch.Tensor):
                 raise ValueError("q_vectors must be a PyTorch tensor")
             if q_vectors.dim() != 2 or q_vectors.shape[1] != 3:
                 raise ValueError(f"q_vectors must have shape [n_points, 3], got {q_vectors.shape}")
-            
-            # Set arbitrary q-vector mode
             self.use_arbitrary_q = True
-            self.q_vectors = q_vectors.to(device=self.device)
+            self.q_vectors = q_vectors.to(device=self.device) # Store input
             if not self.q_vectors.requires_grad and self.q_vectors.dtype.is_floating_point:
-                self.q_vectors.requires_grad_(True)
-            logging.debug("[INIT] use_arbitrary_q=True, loaded q_vectors "
-                          f"with shape={self.q_vectors.shape}")
+                 self.q_vectors.requires_grad_(True)
+            logging.debug("[INIT] Arbitrary Q-Mode detected.")
         elif hsampling is None or ksampling is None or lsampling is None:
-            raise ValueError("Either q_vectors or all three sampling parameters (hsampling, ksampling, lsampling) must be provided")
+            # If not arbitrary mode, grid params are essential
+            raise ValueError("Grid mode requires hsampling, ksampling, and lsampling.")
         else:
-            # Grid-based mode
-            self.use_arbitrary_q = False
-            logging.debug("[INIT] use_arbitrary_q=False; will generate grid-based q_vectors.")
-        
+             logging.debug("[INIT] Grid Mode detected.")
+
+        # Additional validation: If model is GNM, sampling params are ALWAYS needed for ADP calc
+        if model == 'gnm' and (hsampling is None or ksampling is None or lsampling is None):
+            raise ValueError("hsampling, ksampling, and lsampling are required when model='gnm' (for ADP calculation), even in arbitrary q-vector mode.")
+        # --- END VALIDATION ---
+
+        # Store sampling parameters regardless of mode if provided
+        self.hsampling = hsampling
+        self.ksampling = ksampling
+        self.lsampling = lsampling
+
         logging.debug(f"[INIT] final use_arbitrary_q={self.use_arbitrary_q}")
-        
+
         self._setup(pdb_path, expand_p1, res_limit, group_by)
         self._setup_phonons(pdb_path, model, gnm_cutoff, gamma_intra, gamma_inter)
 
@@ -326,81 +333,52 @@ class OnePhonon:
         """
         Compute phonons either from a Gaussian Network Model of the
         molecules or by direct definition of the dynamical matrix.
-        
+
         This method supports both grid-based and arbitrary q-vector modes.
         """
         import logging
-        import logging
-        logging.debug(f"[_setup_phonons] use_arbitrary_q={getattr(self, 'use_arbitrary_q', False)}, model={model}")
-        
-        # Decide dimensions based on mode
-        if getattr(self, 'use_arbitrary_q', False):
-            # In arbitrary mode, use the number of provided q-vectors
-            total_points = self.q_grid.shape[0]
-            logging.debug(f"[_setup_phonons] Arbitrary mode: q_grid.shape={self.q_grid.shape}, total_points={total_points}")
-            
-            # Initialize tensors based on number of q-vectors
-            self.kvec = torch.zeros((total_points, 3), dtype=self.real_dtype, device=self.device)
-            self.kvec_norm = torch.zeros((total_points, 1), dtype=self.real_dtype, device=self.device)
-            
-            # Initialize V and Winv tensors with batched shape
-            self.V = torch.zeros((total_points,
-                                self.n_asu * self.n_dof_per_asu,
-                                self.n_asu * self.n_dof_per_asu),
-                              dtype=self.complex_dtype, device=self.device)
-            self.Winv = torch.zeros((total_points,
-                                    self.n_asu * self.n_dof_per_asu),
-                                   dtype=self.complex_dtype, device=self.device)
-            
-            # Ensure complex tensors require gradients
-            self.V.requires_grad_(True)
-            self.Winv.requires_grad_(True)
-            
-            # Ensure complex tensors require gradients
-            self.V.requires_grad_(True)
-            self.Winv.requires_grad_(True)
-        else:
-            # In grid mode, use the dimensions from map_shape
-            h_dim, k_dim, l_dim = self.map_shape
-            total_points = h_dim * k_dim * l_dim
-            logging.debug(f"[_setup_phonons] Grid mode: map_shape={self.map_shape}, total_points={total_points}")
-            
-            # Initialize tensors for grid mode
-            self.kvec = torch.zeros((total_points, 3), dtype=self.real_dtype, device=self.device)
-            self.kvec_norm = torch.zeros((total_points, 1), dtype=self.real_dtype, device=self.device)
-            
-            # Initialize V and Winv tensors with batched shape
-            self.V = torch.zeros((total_points,
-                                self.n_asu * self.n_dof_per_asu,
-                                self.n_asu * self.n_dof_per_asu),
-                              dtype=self.complex_dtype, device=self.device)
-            self.Winv = torch.zeros((total_points,
-                                    self.n_asu * self.n_dof_per_asu),
-                                   dtype=self.complex_dtype, device=self.device)
-        
-        # Common initialization for both modes
+        logging.debug(f"[_setup_phonons] STARTING: mode={'arbitrary' if getattr(self, 'use_arbitrary_q', False) else 'grid'}, model_type={model}")
+
+        # 1. Build structural/mass matrices (mode-independent)
         self._build_A()
         self._build_M()
-        self._build_kvec_Brillouin()
-        
-        # Setup gamma parameters
-        self._setup_gamma_parameters(pdb_path, model, gnm_cutoff, gamma_intra, gamma_inter)
-        
-        if model == 'gnm':
-            # Skip full phonon computation in arbitrary mode for now
-            self.compute_gnm_phonons()
-            self.compute_covariance_matrix()
-        else:
-            self.compute_rb_phonons()
-        
-        # GNM model setup
-        if self.model_type == 'gnm':
-            # Always compute phonons and covariance matrix for GNM model
-            # regardless of whether we're in grid or arbitrary q-vector mode
-            self.compute_gnm_phonons()
-            self.compute_covariance_matrix()
+        logging.debug("[_setup_phonons] Built A and M matrices.")
 
-        logging.debug("[_setup_phonons] done.")
+        # 2. Build k-vectors (logic differs based on mode)
+        self._build_kvec_Brillouin() # This method already handles the mode difference
+        logging.debug(f"[_setup_phonons] Built kvec, shape: {self.kvec.shape}")
+
+        # 3. Initialize V and Winv based on kvec size (handled inside _build_kvec_Brillouin if resizing is needed)
+        # Add a check here to be sure
+        expected_k_points = self.kvec.shape[0]
+        if not hasattr(self, 'V') or self.V is None or self.V.shape[0] != expected_k_points:
+             logging.warning(f"[_setup_phonons] Re-initializing V/Winv to size {expected_k_points}")
+             # Re-initialize V and Winv tensors with correct batched shape
+             dof_total = self.n_asu * self.n_dof_per_asu
+             self.V = torch.zeros((expected_k_points, dof_total, dof_total), dtype=self.complex_dtype, device=self.device, requires_grad=True)
+             self.Winv = torch.zeros((expected_k_points, dof_total), dtype=self.complex_dtype, device=self.device, requires_grad=True)
+
+        # 4. Setup GNM specifics if needed
+        if model == 'gnm':
+            self._setup_gamma_parameters(pdb_path, model, gnm_cutoff, gamma_intra, gamma_inter)
+            logging.debug("[_setup_phonons] Setup GNM gamma parameters.")
+            # Call phonon calculation
+            logging.debug("[_setup_phonons] Calling compute_gnm_phonons...")
+            self.compute_gnm_phonons() # Assumes Issue #4 fix is in place
+            logging.debug("[_setup_phonons] compute_gnm_phonons finished.")
+            # Call covariance/ADP calculation
+            logging.debug("[_setup_phonons] Calling compute_covariance_matrix...")
+            self.compute_covariance_matrix() # Uses hsampling etc. internally
+            logging.debug("[_setup_phonons] compute_covariance_matrix finished.")
+        elif model == 'rb':
+            # Call RB phonon calculation if implemented
+            logging.debug("[_setup_phonons] Calling compute_rb_phonons...")
+            self.compute_rb_phonons()
+            logging.debug("[_setup_phonons] compute_rb_phonons finished.")
+        else:
+             logging.warning(f"[_setup_phonons] Unknown model type '{model}', skipping phonon/covariance calculations.")
+
+        logging.debug("[_setup_phonons] FINISHED.")
     
     #@debug
     def _build_A(self):
