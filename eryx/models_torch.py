@@ -1511,37 +1511,6 @@ class OnePhonon:
             print(f"eigenvalues_all requires_grad: {eigenvalues_all.requires_grad}") # Should be True
             print(f"v_all_detached requires_grad: {v_all_detached.requires_grad}") # Should be False
 
-            # --- Debug Print Trigger (Arbitrary-Q Mode) ---
-            if DEBUG_IDX_FULL < self.V.shape[0]:
-                print(f"\n--- DEBUG Arb-Q After Loop (idx={DEBUG_IDX_FULL}) ---")
-                print(f"  self.V[{DEBUG_IDX_FULL}] shape: {self.V[DEBUG_IDX_FULL].shape}, dtype: {self.V[DEBUG_IDX_FULL].dtype}")
-                if self.V[DEBUG_IDX_FULL].numel() > 0:
-                    print(f"  self.V[{DEBUG_IDX_FULL}, 0, 0]: {self.V[DEBUG_IDX_FULL, 0, 0].item()}")
-                    print(f"  self.V[{DEBUG_IDX_FULL}, 0, -1]: {self.V[DEBUG_IDX_FULL, 0, -1].item()}")
-                print(f"  self.Winv[{DEBUG_IDX_FULL}] shape: {self.Winv[DEBUG_IDX_FULL].shape}, dtype: {self.Winv[DEBUG_IDX_FULL].dtype}")
-                if self.Winv[DEBUG_IDX_FULL].numel() > 0:
-                    print(f"  self.Winv[{DEBUG_IDX_FULL}, 0]: {self.Winv[DEBUG_IDX_FULL, 0].item()}")
-                    print(f"  self.Winv[{DEBUG_IDX_FULL}, -1]: {self.Winv[DEBUG_IDX_FULL, -1].item()}")
-                    nan_count_final_arb = torch.isnan(self.Winv[DEBUG_IDX_FULL].real).sum().item()
-                    print(f"  NaN count in self.Winv[{DEBUG_IDX_FULL}]: {nan_count_final_arb}")
-            # --- End Debug Print Trigger ---
-            
-            # Final check for the target k-vector in arbitrary mode
-            target_index_to_print = -1
-            matches = torch.where(torch.all(torch.isclose(self.kvec, kvec_target_tensor, atol=debug_kvec_atol), dim=1))[0]
-            if matches.numel() > 0:
-                target_index_to_print = matches[0].item()
-            
-            if target_index_to_print != -1:
-                print(f"\n--- ArbitraryQ Mode FINAL CHECK (index {target_index_to_print}) ---")
-                print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
-                print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
-            
-            print(f"V requires_grad: {self.V.requires_grad}") # Should be False
-            print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
-            print(f"Phonon computation complete for arbitrary mode: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
-            
-        else:
             # For grid mode, transform eigenvectors and calculate Winv
             # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
             Linv_H_batch = Linv_H.unsqueeze(0).expand(total_points, -1, -1)
@@ -1558,7 +1527,7 @@ class OnePhonon:
                 1.0 / torch.maximum(eigenvalues_all, eps_div) # Ensure division is float64
             ).to(dtype=self.real_dtype) # Ensure final real dtype
             self.Winv = winv_all_real.to(dtype=self.complex_dtype) # Cast to complex
-            
+        else:
             # --- Debug Print Trigger (Grid Mode) ---
             if DEBUG_IDX_BZ < self.V.shape[0]:
                 print(f"\n--- DEBUG Final Grid (idx={DEBUG_IDX_BZ}) ---")
