@@ -493,8 +493,8 @@ class OnePhonon:
             Mmat = Mmat.reshape((self.n_asu * self.n_dof_per_asu, self.n_asu * self.n_dof_per_asu))
             
             # Debug print for reshaped Mmat
-            print(f"\nPyTorch reshaped Mmat shape: {Mmat.shape}")
-            print(f"PyTorch reshaped Mmat[0,0]: {Mmat[0,0].item()}")
+            # print(f"\nPyTorch reshaped Mmat shape: {Mmat.shape}")
+            # print(f"PyTorch reshaped Mmat[0,0]: {Mmat[0,0].item()}")
             
             # Robust regularization - single value that works
             eps = 1e-6
@@ -506,11 +506,11 @@ class OnePhonon:
                 # Try standard Cholesky decomposition first
                 L = torch.linalg.cholesky(Mmat_reg)
                 self.Linv = torch.linalg.inv(L)
-                print(f"PyTorch Cholesky L[0,0]: {L[0,0].item()}")
+                # print(f"PyTorch Cholesky L[0,0]: {L[0,0].item()}")
             except RuntimeError as e:
                 # Print diagnostic info
-                print(f"Cholesky decomposition failed: {e}")
-                print(f"Matrix condition number: {torch.linalg.cond(Mmat_reg).item()}")
+                logging.warning(f"Cholesky decomposition failed: {e}")
+                logging.warning(f"Matrix condition number: {torch.linalg.cond(Mmat_reg).item()}")
                 
                 # Add stronger regularization and try again
                 stronger_eps = 1e-4
@@ -518,20 +518,20 @@ class OnePhonon:
                 try:
                     L = torch.linalg.cholesky(Mmat_reg)
                     self.Linv = torch.linalg.inv(L)
-                    print("Succeeded with stronger regularization")
-                    print(f"PyTorch Cholesky L[0,0] (stronger reg): {L[0,0].item()}")
+                    logging.warning("Succeeded with stronger regularization")
+                    # print(f"PyTorch Cholesky L[0,0] (stronger reg): {L[0,0].item()}")
                 except RuntimeError:
                     # Final fallback to SVD approach
-                    print("Falling back to SVD decomposition")
+                    logging.warning("Falling back to SVD decomposition")
                     U, S, V = torch.linalg.svd(Mmat_reg, full_matrices=False)
                     S = torch.clamp(S, min=1e-8)
                     self.Linv = U @ torch.diag(1.0 / torch.sqrt(S)) @ V
-                    print(f"PyTorch SVD U[0,0]: {U[0,0].item()}, S[0]: {S[0].item()}")
+                    # print(f"PyTorch SVD U[0,0]: {U[0,0].item()}, S[0]: {S[0].item()}")
             
             # Debug print for Linv
-            print(f"PyTorch Linv shape: {self.Linv.shape}")
-            print(f"PyTorch Linv dtype: {self.Linv.dtype}")
-            print(f"PyTorch Linv[0,0]: {self.Linv[0,0].item()}")
+            # print(f"PyTorch Linv shape: {self.Linv.shape}")
+            # print(f"PyTorch Linv dtype: {self.Linv.dtype}")
+            # print(f"PyTorch Linv[0,0]: {self.Linv[0,0].item()}")
             
             # Ensure Linv is float64 (real_dtype)
             self.Linv = self.Linv.to(dtype=self.real_dtype)
@@ -552,36 +552,36 @@ class OnePhonon:
         dtype = self.real_dtype
         
         # Debug print for NumPy comparison
-        print("\n--- _build_M_allatoms Debug ---")
+        # print("\n--- _build_M_allatoms Debug ---")
         
         # Try to directly access the same weights as NumPy implementation
         weights = []
         if hasattr(self.model, 'elements'):
-            print("Accessing weights directly from model.elements (NumPy approach)")
+            # print("Accessing weights directly from model.elements (NumPy approach)")
             try:
                 # This matches the NumPy implementation exactly
                 weights = [element.weight for structure in self.model.elements for element in structure]
-                print(f"Direct weights extraction: count={len(weights)}")
-                print(f"First few weights: {weights[:5]}")
-                print(f"Weight stats: min={min(weights)}, max={max(weights)}, mean={sum(weights)/len(weights)}")
+                # print(f"Direct weights extraction: count={len(weights)}")
+                # print(f"First few weights: {weights[:5]}")
+                # print(f"Weight stats: min={min(weights)}, max={max(weights)}, mean={sum(weights)/len(weights)}")
             except Exception as e:
-                print(f"Error in direct weight extraction: {e}")
+                logging.error(f"Error in direct weight extraction: {e}")
         
         # Create mass array from weights
         if weights:
             mass_array = torch.tensor(weights, dtype=dtype, device=self.device)
-            print(f"mass_array from weights: shape={mass_array.shape}, dtype={mass_array.dtype}")
-            print(f"mass_array stats: min={mass_array.min().item()}, max={mass_array.max().item()}, mean={mass_array.mean().item()}")
+            # print(f"mass_array from weights: shape={mass_array.shape}, dtype={mass_array.dtype}")
+            # print(f"mass_array stats: min={mass_array.min().item()}, max={mass_array.max().item()}, mean={mass_array.mean().item()}")
         else:
             # Fallback to ones
-            print("Fallback: Using ones for mass_array")
+            logging.warning("Fallback: Using ones for mass_array in _build_M_allatoms")
             mass_array = torch.ones(self.n_asu * self.n_atoms_per_asu, dtype=dtype, device=self.device)
         
         # Create block diagonal matrix
         eye3 = torch.eye(3, device=self.device, dtype=dtype)
         
         # Debug print for block construction approach
-        print("\nCreating block diagonal matrix...")
+        # print("\nCreating block diagonal matrix...")
         
         # Create mass_list exactly like NumPy implementation
         mass_list = []
@@ -591,8 +591,9 @@ class OnePhonon:
             mass_list.append(block)
         
         # Print first few blocks for debugging
-        print(f"First block shape: {mass_list[0].shape}")
-        print(f"First block:\n{mass_list[0].detach().cpu().numpy()}")
+        # if mass_list:
+        #     print(f"First block shape: {mass_list[0].shape}")
+        #     print(f"First block:\n{mass_list[0].detach().cpu().numpy()}")
         
         # Create block diagonal matrix
         total_dim = self.n_asu * self.n_atoms_per_asu * 3
@@ -606,18 +607,19 @@ class OnePhonon:
             current_idx += block_size
         
         # Debug print for block diagonal matrix
-        print(f"M_block_diag shape: {M_block_diag.shape}")
-        print(f"M_block_diag diagonal elements (first few): {torch.diagonal(M_block_diag)[:15].detach().cpu().numpy()}")
+        # print(f"M_block_diag shape: {M_block_diag.shape}")
+        # print(f"M_block_diag diagonal elements (first few): {torch.diagonal(M_block_diag)[:15].detach().cpu().numpy()}")
         
         # Reshape to 4D tensor
         M_allatoms = M_block_diag.reshape(self.n_asu, self.n_dof_per_asu_actual,
                                         self.n_asu, self.n_dof_per_asu_actual)
         
         # Debug prints for M_allatoms
-        print(f"\nPyTorch M_allatoms shape: {M_allatoms.shape}")
-        print(f"PyTorch M_allatoms diag[0:5]: {torch.diagonal(M_allatoms[0,:,0,:]).cpu().numpy()[0:5]}")
-        if M_allatoms.shape[0] > 1 and M_allatoms.shape[2] > 1:
-            print(f"PyTorch M_allatoms[0,0,1,0]: {M_allatoms[0,0,1,0].item()}")
+        # print(f"\nPyTorch M_allatoms shape: {M_allatoms.shape}")
+        # if M_allatoms.shape[0] > 0 and M_allatoms.shape[2] > 0:
+        #     print(f"PyTorch M_allatoms diag[0:5]: {torch.diagonal(M_allatoms[0,:,0,:]).cpu().numpy()[0:5]}")
+        # if M_allatoms.shape[0] > 1 and M_allatoms.shape[2] > 1:
+        #     print(f"PyTorch M_allatoms[0,0,1,0]: {M_allatoms[0,0,1,0].item()}")
         
         # Set requires_grad
         M_allatoms.requires_grad_(True)
@@ -659,11 +661,11 @@ class OnePhonon:
                 )
         
         # Debug prints for Mmat
-        print(f"\nPyTorch Mmat shape: {Mmat.shape}")
-        if Mmat.shape[0] > 0 and Mmat.shape[2] > 0:
-            print(f"PyTorch Mmat[0,0,0,0]: {Mmat[0,0,0,0].item()}")
-            if Mmat.shape[1] > 1 and Mmat.shape[3] > 1:
-                print(f"PyTorch Mmat[0,1,0,1]: {Mmat[0,1,0,1].item()}")
+        # print(f"\nPyTorch Mmat shape: {Mmat.shape}")
+        # if Mmat.shape[0] > 0 and Mmat.shape[2] > 0:
+        #     print(f"PyTorch Mmat[0,0,0,0]: {Mmat[0,0,0,0].item()}")
+        #     if Mmat.shape[1] > 1 and Mmat.shape[3] > 1:
+        #         print(f"PyTorch Mmat[0,1,0,1]: {Mmat[0,1,0,1].item()}")
         
         return Mmat
     
@@ -1050,9 +1052,9 @@ class OnePhonon:
         
         DEBUG_IDX_BZ = 1 # Corresponds to BZ index (0,0,1) in 2x2x2 grid
         DEBUG_IDX_FULL = 9 # Corresponding full grid index (based on previous mapping)
-        debug_data_grid = {}
-        debug_data_arbq = {}
-        print(f"\n[compute_gnm_phonons] DEBUG_IDX_BZ={DEBUG_IDX_BZ}, DEBUG_IDX_FULL={DEBUG_IDX_FULL}")
+        # debug_data_grid = {}
+        # debug_data_arbq = {}
+        # print(f"\n[compute_gnm_phonons] DEBUG_IDX_BZ={DEBUG_IDX_BZ}, DEBUG_IDX_FULL={DEBUG_IDX_FULL}")
         # --- End Modifications ---
 
         # Compute the Hessian matrix first (works for both modes)
@@ -1065,10 +1067,230 @@ class OnePhonon:
         unique_k_bz, inverse_indices = torch.unique(rounded_kvec, dim=0, return_inverse=True)
         n_unique_k = unique_k_bz.shape[0]
         logging.debug(f"[compute_gnm_phonons] Found {n_unique_k} unique k_BZ vectors to process.")
-        print(f"DEBUG: compute_gnm_phonons: Found {n_unique_k} unique k_BZ vectors.") # Add print
+        # print(f"DEBUG: compute_gnm_phonons: Found {n_unique_k} unique k_BZ vectors.") # Add print
 
         # --- Add detailed check for specific indices ---
-        indices_to_check = [9, 61] # Check original q_idx 9 and 61
+        # indices_to_check = [9, 61] # Check original q_idx 9 and 61
+        # if self.kvec.shape[0] > max(indices_to_check): # Ensure indices are valid
+        #      print("--- DEBUG: Unique K Mapping Check ---")
+        #      for i in indices_to_check:
+        #          original_k = self.kvec[i]
+        #          unique_idx = inverse_indices[i].item()
+        #          mapped_unique_k = unique_k_bz[unique_idx]
+        #          print(f"  q_idx {i}:")
+        #          print(f"    kvec[i] (Mapped BZ): {original_k.cpu().numpy()}")
+        #          print(f"    unique_idx (j):      {unique_idx}")
+        #          print(f"    unique_k_bz[j]:      {mapped_unique_k.cpu().numpy()}")
+        #          # Check if they are close
+        #          print(f"    Match within tol?:   {torch.allclose(original_k, mapped_unique_k, atol=tolerance*1.1)}") # Use slightly larger tol
+        #      print("--- End Check ---")
+        # --- End detailed check ---
+
+        total_points = self.kvec.shape[0]
+        if getattr(self, 'use_arbitrary_q', False):
+            logging.debug(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} arbitrary q-vectors")
+        else:
+            h_dim_bz = int(self.hsampling[2])
+            k_dim_bz = int(self.ksampling[2])
+            l_dim_bz = int(self.lsampling[2])
+            logging.debug(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} grid points ({h_dim_bz}x{k_dim_bz}x{l_dim_bz})")
+        
+        logging.debug(f"[compute_gnm_phonons] Found {n_unique_k} unique k_BZ vectors to process.")
+        
+        # Initialize output tensors for unique k-vectors first
+        dof_total = self.n_asu * self.n_dof_per_asu
+        V_unique = torch.zeros((n_unique_k, dof_total, dof_total),
+                              dtype=self.complex_dtype, device=self.device)
+        Winv_unique = torch.zeros((n_unique_k, dof_total),
+                                 dtype=self.complex_dtype, device=self.device)
+        
+        # Create GNM instance for K matrix computation
+        from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
+        gnm_torch = GaussianNetworkModelTorch()
+        gnm_torch.n_asu = self.n_asu
+        gnm_torch.n_atoms_per_asu = self.n_atoms_per_asu
+        gnm_torch.n_cell = self.n_cell
+        gnm_torch.id_cell_ref = self.id_cell_ref
+        gnm_torch.device = self.device
+        gnm_torch.real_dtype = self.real_dtype
+        gnm_torch.complex_dtype = self.complex_dtype
+        
+        # Ensure crystal is properly set
+        if hasattr(self, 'crystal'):
+            gnm_torch.crystal = self.crystal
+        else:
+            logging.warning("No crystal object found in OnePhonon model")
+        
+        # Set gamma for the GNM
+        if hasattr(self, 'gamma_tensor'):
+            gnm_torch.gamma = self.gamma_tensor
+        # Fallback to NumPy GNM gamma if needed
+        elif hasattr(self.gnm, 'gamma'):
+            from eryx.adapters import PDBToTensor
+            adapter = PDBToTensor(device=self.device)
+            gnm_torch.gamma = adapter.array_to_tensor(self.gnm.gamma, dtype=self.real_dtype)
+            
+            # Copy neighbor list structure
+            gnm_torch.asu_neighbors = self.gnm.asu_neighbors
+        
+        # Convert Linv to complex for matrix operations
+        Linv_complex = self.Linv.to(dtype=self.complex_dtype)
+        
+        # For all modes, compute K matrices only for unique k-vectors
+        Kmat_unique = gnm_torch.compute_K(hessian, unique_k_bz)
+        # print(f"Kmat_unique requires_grad: {Kmat_unique.requires_grad}")
+        # print(f"Kmat_unique.grad_fn: {Kmat_unique.grad_fn}")
+        
+        # Reshape K matrices to 2D form for each unique k-vector
+        dof_total = self.n_asu * self.n_dof_per_asu
+        Kmat_unique_2d = Kmat_unique.reshape(n_unique_k, dof_total, dof_total)
+        
+        # --- Debug Print Start ---
+        # print_idx = 1  # Choose a non-zero index for detailed prints
+        # if n_unique_k > print_idx:
+        #     print(f"\n--- PyTorch Debug Index {print_idx} (Unique K) ---")
+        #     # Debug print for unique k-vectors
+        #     if Kmat_unique.dim() >= 3 and Kmat_unique.shape[1] > 0 and Kmat_unique.shape[2] > 0 and Kmat_unique.shape[3] > 0 and Kmat_unique.shape[4] > 0:
+        #         print(f"PyTorch Kmat_unique[{print_idx},0,0,0,0]: {Kmat_unique[print_idx,0,0,0,0].item():.8e}")
+        #     else:
+        #         print(f"PyTorch Kmat_unique shape: {Kmat_unique.shape}")
+        # --- Debug Print End -----
+        
+        # Compute dynamical matrices (D = L^(-1) K L^(-H))
+        logging.debug(f"Compute_K complete, Kmat_unique_2d shape = {Kmat_unique_2d.shape}")
+        
+        # Use torch.bmm for batched matrix multiplication
+        Linv_batch = Linv_complex.unsqueeze(0).expand(n_unique_k, -1, -1)
+        # Use conjugate transpose (.H) for complex matrices
+        Linv_H_batch = Linv_complex.conj().T.unsqueeze(0).expand(n_unique_k, -1, -1)
+        
+        # First multiply Kmat_unique_2d with Linv_H_batch
+        temp = torch.bmm(Kmat_unique_2d, Linv_H_batch)
+        # Then multiply Linv_batch with the result
+        Dmat_unique = torch.bmm(Linv_batch, temp)
+        
+        # --- Debug Print Start ---
+        # if n_unique_k > print_idx:
+        #     # Print first element of the matrix at index print_idx for unique k-vectors
+        #     if Dmat_unique.dim() >= 3:
+        #         print(f"PyTorch Dmat_unique[{print_idx},0,0]: {Dmat_unique[print_idx,0,0].item() if Dmat_unique[print_idx,0,0].numel() == 1 else Dmat_unique[print_idx,0,0][0,0].item():.8e}")
+        #     else:
+        #         print(f"PyTorch Dmat_unique shape: {Dmat_unique.shape}")
+        #     print(f"Dmat_unique computation complete, shape = {Dmat_unique.shape}")
+        #     print(f"Dmat_unique requires_grad: {Dmat_unique.requires_grad}")
+        # --- Debug Print End -----
+        
+        # Initialize v_all *outside* the try block
+        v_all = None
+        
+        # Process unique k-vectors one by one for debugging clarity
+        logging.debug(f"[DEBUG compute_gnm_phonons] Processing {n_unique_k} unique k-vectors")
+        
+        # Pre-calculate Linv_complex.H once
+        Linv_complex = self.Linv.to(dtype=self.complex_dtype)
+        Linv_H = Linv_complex.H # Conjugate transpose
+        
+        # Initialize lists to store results before stacking
+        eigenvalues_unique_list = []
+        eigenvectors_unique_detached_list = []
+        
+        for i in range(n_unique_k):
+            current_kvec = unique_k_bz[i]
+            
+            # Check if this is our target k-vector
+            is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
+            
+            # if is_target_kvec:
+            #     print(f"\n--- DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (unique index {i}) ---")
+            #     print(f"  Input unique kvec: {current_kvec.detach().cpu().numpy()}")
+            #     print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
+            
+            D_i = Dmat_unique[i]
+            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
+            
+            # if is_target_kvec:
+            #     print(f"\n--- DEBUG Phonon Loop (unique i={i}) ---")
+            #     print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
+            #     if D_i_hermitian.numel() > 0:
+            #         print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
+            #         debug_data_arbq['D_00'] = D_i_hermitian[0,0].item()
+            
+            # 1. Get eigenvectors WITHOUT gradient tracking using eigh
+            with torch.no_grad():
+                try:
+                    # Get both eigenvalues and eigenvectors
+                    w_sq_i, v_i_no_grad = torch.linalg.eigh(D_i_hermitian)
+                except torch._C._LinAlgError as e:
+                    logging.warning(f"eigh failed for unique matrix {i} in no_grad context. Using identity. Error: {e}")
+                    n_dof = D_i_hermitian.shape[0]
+                    w_sq_i = torch.ones(n_dof, dtype=self.real_dtype, device=self.device) # Placeholder eigenvalues
+                    v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
+            
+            # if is_target_kvec:
+            #     print(f"  Raw eigh w_sq_i[0]: {w_sq_i[0].item():.8e}")
+            #     print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
+            #     if v_i_no_grad.numel() > 0:
+            #         print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
+            #         print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
+            #         debug_data_arbq['v_00'] = v_i_no_grad[0,0].item()
+            #         debug_data_arbq['v_0N'] = v_i_no_grad[0,-1].item()
+            
+            # Use eigenvectors directly from eigh (ascending eigenvalue order)
+            eigenvectors_unique_detached_list.append(v_i_no_grad)
+            
+            # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
+            # Try using the eigenvalues directly from eigh but ensure grads flow from D_i
+            eigenvalues_tensor = w_sq_i.real # Eigenvalues from eigh should be real
+            if D_i.requires_grad and not eigenvalues_tensor.requires_grad:
+                eigenvalues_tensor = eigenvalues_tensor + 0.0 * D_i.real.sum() # Connect graph
+            
+            # if is_target_kvec:
+            #     print(f"  Eigenvalues from eigh (real) [0]: {eigenvalues_tensor[0].item():.8e}")
+            #     print(f"  Eigenvalues requires_grad: {eigenvalues_tensor.requires_grad}")
+            #     print(f"  eigenvalues_tensor shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
+            #     if eigenvalues_tensor.numel() > 0:
+            #         print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
+            #         print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
+            #         debug_data_arbq['eig_0'] = eigenvalues_tensor[0].item()
+            #         debug_data_arbq['eig_N'] = eigenvalues_tensor[-1].item()
+            
+            # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
+            eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
+            eigenvalues_processed = torch.where(
+                eigenvalues_tensor < eps,
+                torch.tensor(float('nan'), device=eigenvalues_tensor.device, dtype=self.real_dtype),
+                eigenvalues_tensor # Already real_dtype
+            )
+            
+            # if is_target_kvec:
+            #     print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+            #     if eigenvalues_processed.numel() > 0:
+            #         print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+            #         print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+            #         print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
+            
+            # Keep eigenvalues in ascending order (as eigh gives them)
+            eigenvalues_unique_list.append(eigenvalues_processed)
+            
+            # if is_target_kvec:
+            #     print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+            #     if eigenvalues_processed.numel() > 0:
+            #         print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+            #         print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+            #         debug_data_arbq['eig_p0'] = eigenvalues_processed[0].item()
+            #         debug_data_arbq['eig_pN'] = eigenvalues_processed[-1].item()
+            #     print(f"--- End DEBUG Phonon Loop (unique i={i}) ---")
+        
+        # Stack results for unique k-vectors
+        eigenvalues_unique = torch.stack(eigenvalues_unique_list)  # Differentiable eigenvalues
+        v_unique_detached = torch.stack(eigenvectors_unique_detached_list) # Non-differentiable eigenvectors
+        
+        logging.debug(f"Recomputed eigenvalues using eigh complete for unique k-vectors")
+        logging.debug(f"eigenvalues_unique requires_grad: {eigenvalues_unique.requires_grad}")
+        logging.debug(f"v_unique_detached requires_grad: {v_unique_detached.requires_grad}")
+        
+        # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
+        Linv_H_batch = Linv_H.unsqueeze(0).expand(n_unique_k, -1, -1)
         if self.kvec.shape[0] > max(indices_to_check): # Ensure indices are valid
              print("--- DEBUG: Unique K Mapping Check ---")
              for i in indices_to_check:
@@ -1313,48 +1535,48 @@ class OnePhonon:
         self.Winv.requires_grad_(eigenvalues_unique.requires_grad) # Simplified (same effect)
 
         # --- Add check after expansion ---
-        indices_to_check = [9, 61] # Check original q_idx 9 and 61
-        if self.Winv.shape[0] > max(indices_to_check):
-             print("--- DEBUG: Expansion Check ---")
-             for i in indices_to_check:
-                 unique_idx = inverse_indices[i].item()
-                 print(f"  q_idx {i} (unique_idx={unique_idx}):")
-                 # Compare first element of Winv
-                 print(f"    Winv[{i}][0]:         {self.Winv[i, 0].item()}")
-                 print(f"    Winv_unique[{unique_idx}][0]: {Winv_unique[unique_idx, 0].item()}")
-                 print(f"    Match?:              {torch.allclose(self.Winv[i, 0], Winv_unique[unique_idx, 0])}")
-             print("--- End Check ---")
+        # indices_to_check = [9, 61] # Check original q_idx 9 and 61
+        # if self.Winv.shape[0] > max(indices_to_check):
+        #      print("--- DEBUG: Expansion Check ---")
+        #      for i in indices_to_check:
+        #          unique_idx = inverse_indices[i].item()
+        #          print(f"  q_idx {i} (unique_idx={unique_idx}):")
+        #          # Compare first element of Winv
+        #          print(f"    Winv[{i}][0]:         {self.Winv[i, 0].item()}")
+        #          print(f"    Winv_unique[{unique_idx}][0]: {Winv_unique[unique_idx, 0].item()}")
+        #          print(f"    Match?:              {torch.allclose(self.Winv[i, 0], Winv_unique[unique_idx, 0])}")
+        #      print("--- End Check ---")
         # --- End check after expansion ---
         
         # --- Debug Print Trigger ---
-        if DEBUG_IDX_BZ < self.V.shape[0]:
-            print(f"\n--- DEBUG Final (idx={DEBUG_IDX_BZ}) ---")
-            print(f"  Linv_complex.H shape: {Linv_H_batch[0].shape}, dtype: {Linv_H_batch[0].dtype}")
-            if Linv_H_batch[0].numel() > 0:
-                print(f"  Linv_complex.H[0,0]: {Linv_H_batch[0, 0, 0].item()}")
-            if v_unique_detached[0].numel() > 0:
-                print(f"  v_unique_detached[0, 0, 0]: {v_unique_detached[0, 0, 0].item()}")
-            print(f"  self.V[{DEBUG_IDX_BZ}] (calculated) shape: {self.V[DEBUG_IDX_BZ].shape}, dtype: {self.V[DEBUG_IDX_BZ].dtype}")
-            if self.V[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
-                print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
-            print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
-            if self.Winv[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
-                print(f"  self.Winv[{DEBUG_IDX_BZ}, -1]: {self.Winv[DEBUG_IDX_BZ, -1].item()}")
+        # if DEBUG_IDX_BZ < self.V.shape[0]:
+        #     print(f"\n--- DEBUG Final (idx={DEBUG_IDX_BZ}) ---")
+        #     print(f"  Linv_complex.H shape: {Linv_H_batch[0].shape}, dtype: {Linv_H_batch[0].dtype}")
+        #     if Linv_H_batch[0].numel() > 0:
+        #         print(f"  Linv_complex.H[0,0]: {Linv_H_batch[0, 0, 0].item()}")
+        #     if v_unique_detached[0].numel() > 0:
+        #         print(f"  v_unique_detached[0, 0, 0]: {v_unique_detached[0, 0, 0].item()}")
+        #     print(f"  self.V[{DEBUG_IDX_BZ}] (calculated) shape: {self.V[DEBUG_IDX_BZ].shape}, dtype: {self.V[DEBUG_IDX_BZ].dtype}")
+        #     if self.V[DEBUG_IDX_BZ].numel() > 0:
+        #         print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
+        #         print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
+        #     print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
+        #     if self.Winv[DEBUG_IDX_BZ].numel() > 0:
+        #         print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
+        #         print(f"  self.Winv[{DEBUG_IDX_BZ}, -1]: {self.Winv[DEBUG_IDX_BZ, -1].item()}")
         # --- End Debug Print Trigger ---
         
         # Final check for the target k-vector
-        target_index_to_print = 1 # Corresponds to (0,0,1) in 2x2x2 BZ
+        # target_index_to_print = 1 # Corresponds to (0,0,1) in 2x2x2 BZ
         
-        if target_index_to_print < self.V.shape[0]:
-            print(f"\n--- FINAL CHECK (index {target_index_to_print}) ---")
-            print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
-            print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
+        # if target_index_to_print < self.V.shape[0]:
+        #     print(f"\n--- FINAL CHECK (index {target_index_to_print}) ---")
+        #     print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
+        #     print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
         
-        print(f"V requires_grad: {self.V.requires_grad}") # Should be False
-        print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
-        print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
+        # print(f"V requires_grad: {self.V.requires_grad}") # Should be False
+        # print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
+        # print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
         logging.debug(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
         logging.debug(f"V requires_grad: {self.V.requires_grad}, Winv requires_grad: {self.Winv.requires_grad}")
     
@@ -1749,24 +1971,24 @@ class OnePhonon:
                     actual_q_idx = actual_q_idx_tensor.item() # Get Python int index
 
                     # --- Logging for target point ---
-                    if actual_q_idx == target_q_idx:
-                        print(f"\n--- ARB MODE (target_q_idx={target_q_idx}, loop i={i}) ---")
-                        q_vec = self.q_grid[actual_q_idx]
-                        print(f"  q_vec: {q_vec.detach().cpu().numpy()} (dtype: {q_vec.dtype})")
-                        # Ensure ADP tensor has elements before indexing
-                        if ADP.numel() > 0:
-                            print(f"  ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype}, shape: {ADP.shape})")
-                        else:
-                            print(f"  ADP: (empty or None)")
-                        F_i = F[i] # Structure factor for this q_idx
-                        print(f"  F[{i}] shape: {F_i.shape}, dtype: {F_i.dtype}")
-                        if F_i.numel() > 0: print(f"  F[{i}, 0] (abs): {torch.abs(F_i[0]).item():.6e}")
-                        V_i = V_valid[i] # Phonon eigenvectors for this q_idx
-                        print(f"  V[{i}] shape: {V_i.shape}, dtype: {V_i.dtype}")
-                        if V_i.numel() > 0: print(f"  V[{i}, 0, 0] (abs): {torch.abs(V_i[0,0]).item():.6e}")
-                        Winv_i = Winv_valid[i] # Phonon eigenvalues for this q_idx
-                        print(f"  Winv[{i}] shape: {Winv_i.shape}, dtype: {Winv_i.dtype}")
-                        if Winv_i.numel() > 0: print(f"  Winv[{i}, 0] (real): {Winv_i[0].real.item():.6e}")
+                    # if actual_q_idx == target_q_idx:
+                    #     print(f"\n--- ARB MODE (target_q_idx={target_q_idx}, loop i={i}) ---")
+                    #     q_vec = self.q_grid[actual_q_idx]
+                    #     print(f"  q_vec: {q_vec.detach().cpu().numpy()} (dtype: {q_vec.dtype})")
+                    #     # Ensure ADP tensor has elements before indexing
+                    #     if ADP.numel() > 0:
+                    #         print(f"  ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype}, shape: {ADP.shape})")
+                    #     else:
+                    #         print(f"  ADP: (empty or None)")
+                    #     F_i = F[i] # Structure factor for this q_idx
+                    #     print(f"  F[{i}] shape: {F_i.shape}, dtype: {F_i.dtype}")
+                    #     if F_i.numel() > 0: print(f"  F[{i}, 0] (abs): {torch.abs(F_i[0]).item():.6e}")
+                    #     V_i = V_valid[i] # Phonon eigenvectors for this q_idx
+                    #     print(f"  V[{i}] shape: {V_i.shape}, dtype: {V_i.dtype}")
+                    #     if V_i.numel() > 0: print(f"  V[{i}, 0, 0] (abs): {torch.abs(V_i[0,0]).item():.6e}")
+                    #     Winv_i = Winv_valid[i] # Phonon eigenvalues for this q_idx
+                    #     print(f"  Winv[{i}] shape: {Winv_i.shape}, dtype: {Winv_i.dtype}")
+                    #     if Winv_i.numel() > 0: print(f"  Winv[{i}, 0] (real): {Winv_i[0].real.item():.6e}")
                     # --- End Logging ---
 
                     # Get eigenvectors and eigenvalues for this q-vector
@@ -1774,34 +1996,34 @@ class OnePhonon:
                     Winv_idx = Winv_valid[i].to(self.complex_dtype)
                     
                     # Debug print for target q-index
-                    current_q_idx = actual_q_idx # Use the correct index variable
-                    if current_q_idx == target_q_idx:
-                        print(f"\n--- ARBITRARY-Q MODE (q_idx={current_q_idx}, i={i}) ---")
-                        print(f"V_idx shape: {V_idx.shape}, dtype: {V_idx.dtype}")
-                        print(f"Winv_idx shape: {Winv_idx.shape}, dtype: {Winv_idx.dtype}")
-                        print(f"V_idx[0,0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
-                        print(f"Winv_idx[0] (real): {Winv_idx[0].real.item():.6e}")
+                    # current_q_idx = actual_q_idx # Use the correct index variable
+                    # if current_q_idx == target_q_idx:
+                    #     print(f"\n--- ARBITRARY-Q MODE (q_idx={current_q_idx}, i={i}) ---")
+                    #     print(f"V_idx shape: {V_idx.shape}, dtype: {V_idx.dtype}")
+                    #     print(f"Winv_idx shape: {Winv_idx.shape}, dtype: {Winv_idx.dtype}")
+                    #     print(f"V_idx[0,0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
+                    #     print(f"Winv_idx[0] (real): {Winv_idx[0].real.item():.6e}")
                         
-                        # Add detailed input prints for structure_factors
-                        for i_asu in range(self.n_asu):
-                            print(f"  ARB-Q MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
-                            q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
-                            print(f"    q_vector: {q_for_sf.detach().cpu().numpy()} (dtype: {q_for_sf.dtype})")
-                            print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].detach().cpu().numpy()} (dtype: {asu_data[i_asu]['xyz'].dtype})")
-                            print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_a'].dtype})")
-                            print(f"    ff_b[0,0]: {asu_data[i_asu]['ff_b'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_b'].dtype})")
-                            print(f"    ff_c[0]: {asu_data[i_asu]['ff_c'][0].item():.6e} (dtype: {asu_data[i_asu]['ff_c'].dtype})")
-                            # ADP might not require grad if use_data_adp=True, use .item() which works for both
-                            # Ensure ADP tensor has at least one element before indexing
-                            if ADP.numel() > 0:
-                                print(f"    ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype})")
-                            else:
-                                print(f"    ADP: (empty or None)")
-                            # Ensure project tensor exists and has elements before indexing
-                            if asu_data[i_asu]['project'] is not None and asu_data[i_asu]['project'].numel() > 0:
-                                print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e} (dtype: {asu_data[i_asu]['project'].dtype})")
-                            else:
-                                print(f"    project: (empty or None)")
+                    #     # Add detailed input prints for structure_factors
+                    #     for i_asu in range(self.n_asu):
+                    #         print(f"  ARB-Q MODE Input to SF for q_idx={target_q_idx}, ASU={i_asu}:")
+                    #         q_for_sf = self.q_grid[target_q_idx].to(self.real_dtype)
+                    #         print(f"    q_vector: {q_for_sf.detach().cpu().numpy()} (dtype: {q_for_sf.dtype})")
+                    #         print(f"    xyz[0]: {asu_data[i_asu]['xyz'][0].detach().cpu().numpy()} (dtype: {asu_data[i_asu]['xyz'].dtype})")
+                    #         print(f"    ff_a[0,0]: {asu_data[i_asu]['ff_a'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_a'].dtype})")
+                    #         print(f"    ff_b[0,0]: {asu_data[i_asu]['ff_b'][0,0].item():.6e} (dtype: {asu_data[i_asu]['ff_b'].dtype})")
+                    #         print(f"    ff_c[0]: {asu_data[i_asu]['ff_c'][0].item():.6e} (dtype: {asu_data[i_asu]['ff_c'].dtype})")
+                    #         # ADP might not require grad if use_data_adp=True, use .item() which works for both
+                    #         # Ensure ADP tensor has at least one element before indexing
+                    #         if ADP.numel() > 0:
+                    #             print(f"    ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype})")
+                    #         else:
+                    #             print(f"    ADP: (empty or None)")
+                    #         # Ensure project tensor exists and has elements before indexing
+                    #         if asu_data[i_asu]['project'] is not None and asu_data[i_asu]['project'].numel() > 0:
+                    #             print(f"    project[0,0]: {asu_data[i_asu]['project'][0,0].item():.6e} (dtype: {asu_data[i_asu]['project'].dtype})")
+                    #         else:
+                    #             print(f"    project: (empty or None)")
                     
                     # Always ensure F has the correct complex dtype before matmul with V
                     F_i = F[i].to(self.complex_dtype) # Ensure F is complex
@@ -1809,9 +2031,9 @@ class OnePhonon:
                     assert V_idx.dtype == self.complex_dtype, f"V_idx dtype is {V_idx.dtype}, expected {self.complex_dtype}"
                     
                     # Debug print for target q-index
-                    if current_q_idx == target_q_idx:
-                        print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
-                        print(f"F_i[0] (abs): {torch.abs(F_i[0]).item():.6e}")
+                    # if current_q_idx == target_q_idx:
+                    #     print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
+                    #     print(f"F_i[0] (abs): {torch.abs(F_i[0]).item():.6e}")
                 
                     # Compute F·V for all modes at once
                     FV = torch.matmul(F_i, V_idx)
@@ -1829,47 +2051,47 @@ class OnePhonon:
                     real_winv_float64 = real_winv.to(dtype=self.real_dtype)
                     
                     # Debug print for target q-index
-                    if current_q_idx == target_q_idx:
-                        print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
-                        print(f"FV[0] (abs): {torch.abs(FV[0]).item():.6e}")
-                        print(f"real_winv shape: {real_winv_float64.shape}, dtype: {real_winv_float64.dtype}")
-                        print(f"real_winv[0]: {real_winv_float64[0].item():.6e}")
-                        intensity_contributions = FV_abs_squared * real_winv_float64
-                        print(f"Intensity Contributions[0]: {intensity_contributions[0].item():.6e}")
-                        final_intensity = torch.sum(intensity_contributions)
-                        print(f"Final Intensity for q_idx={target_q_idx}: {final_intensity.item():.6e}")
+                    # if current_q_idx == target_q_idx:
+                    #     print(f"FV shape: {FV.shape}, dtype: {FV.dtype}")
+                    #     print(f"FV[0] (abs): {torch.abs(FV[0]).item():.6e}")
+                    #     print(f"real_winv shape: {real_winv_float64.shape}, dtype: {real_winv_float64.dtype}")
+                    #     print(f"real_winv[0]: {real_winv_float64[0].item():.6e}")
+                    #     intensity_contributions = FV_abs_squared * real_winv_float64
+                    #     print(f"Intensity Contributions[0]: {intensity_contributions[0].item():.6e}")
+                    #     final_intensity = torch.sum(intensity_contributions)
+                    #     print(f"Final Intensity for q_idx={target_q_idx}: {final_intensity.item():.6e}")
                     
                     # Weight by eigenvalues and sum - ensure real output
                     intensity_contribution = torch.sum(FV_abs_squared * real_winv_float64)
 
                     # --- Logging for target point ---
-                    if actual_q_idx == target_q_idx:
-                        print(f"  FV[{i}] shape: {FV.shape}, dtype: {FV.dtype}")
-                        if FV.numel() > 0: print(f"  FV[{i}, 0] (abs): {torch.abs(FV[0]).item():.6e}")
-                        print(f"  FV_abs_squared[{i}] shape: {FV_abs_squared.shape}, dtype: {FV_abs_squared.dtype}")
-                        if FV_abs_squared.numel() > 0: print(f"  FV_abs_squared[{i}, 0]: {FV_abs_squared[0].item():.6e}")
-                        print(f"  real_winv[{i}] shape: {real_winv_float64.shape}, dtype: {real_winv_float64.dtype}")
-                        if real_winv_float64.numel() > 0: print(f"  real_winv[{i}, 0]: {real_winv_float64[0].item():.6e}")
-                        print(f"  Intensity Contribution: {intensity_contribution.item():.6e}")
-                        print(f"  Storing at Id[{actual_q_idx}]")
+                    # if actual_q_idx == target_q_idx:
+                    #     print(f"  FV[{i}] shape: {FV.shape}, dtype: {FV.dtype}")
+                    #     if FV.numel() > 0: print(f"  FV[{i}, 0] (abs): {torch.abs(FV[0]).item():.6e}")
+                    #     print(f"  FV_abs_squared[{i}] shape: {FV_abs_squared.shape}, dtype: {FV_abs_squared.dtype}")
+                    #     if FV_abs_squared.numel() > 0: print(f"  FV_abs_squared[{i}, 0]: {FV_abs_squared[0].item():.6e}")
+                    #     print(f"  real_winv[{i}] shape: {real_winv_float64.shape}, dtype: {real_winv_float64.dtype}")
+                    #     if real_winv_float64.numel() > 0: print(f"  real_winv[{i}, 0]: {real_winv_float64[0].item():.6e}")
+                    #     print(f"  Intensity Contribution: {intensity_contribution.item():.6e}")
+                    #     print(f"  Storing at Id[{actual_q_idx}]")
                     # --- End Logging ---
 
                     intensity[i] = intensity_contribution
 
                     # --- Add conditional logging ---
-                    target_q_idx = 9 # Define the target index to log
-                    if actual_q_idx == target_q_idx:
-                        mode_str = "ARB" # Already inside arbitrary mode block
-                        print(f"\n--- {mode_str} MODE (Processing q_idx={actual_q_idx}, loop i={i}) ---")
-                        # Print F_i, V_i, Winv_i, FV, etc. using .item() and .abs() as needed
-                        # Note: V_i and Winv_i are V_idx and Winv_idx here
-                        print(f"  F[{i}, 0] (abs): {torch.abs(F_i[0]).item():.6e}")
-                        print(f"  V[{i}, 0, 0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
-                        print(f"  Winv[{i}, 0] (real): {Winv_idx[0].real.item():.6e}")
-                        print(f"  FV[{i}, 0] (abs): {torch.abs(FV[0]).item():.6e}")
-                        print(f"  FV_abs_squared[{i}, 0]: {FV_abs_squared[0].item():.6e}")
-                        print(f"  real_winv[{i}, 0]: {real_winv_float64[0].item():.6e}")
-                        print(f"  Intensity Contribution: {intensity_contribution.item():.6e}")
+                    # target_q_idx = 9 # Define the target index to log
+                    # if actual_q_idx == target_q_idx:
+                    #     mode_str = "ARB" # Already inside arbitrary mode block
+                    #     print(f"\n--- {mode_str} MODE (Processing q_idx={actual_q_idx}, loop i={i}) ---")
+                    #     # Print F_i, V_i, Winv_i, FV, etc. using .item() and .abs() as needed
+                    #     # Note: V_i and Winv_i are V_idx and Winv_idx here
+                    #     print(f"  F[{i}, 0] (abs): {torch.abs(F_i[0]).item():.6e}")
+                    #     print(f"  V[{i}, 0, 0] (abs): {torch.abs(V_idx[0,0]).item():.6e}")
+                    #     print(f"  Winv[{i}, 0] (real): {Winv_idx[0].real.item():.6e}")
+                    #     print(f"  FV[{i}, 0] (abs): {torch.abs(FV[0]).item():.6e}")
+                    #     print(f"  FV_abs_squared[{i}, 0]: {FV_abs_squared[0].item():.6e}")
+                    #     print(f"  real_winv[{i}, 0]: {real_winv_float64[0].item():.6e}")
+                    #     print(f"  Intensity Contribution: {intensity_contribution.item():.6e}")
                     # --- End conditional logging ---
 
             else:
@@ -1903,21 +2125,21 @@ class OnePhonon:
                     intensity[i] = FV_abs_squared * real_winv_float64
                     
                     # Add debug print for specific indices
-                    if i < 3:  # Print first few indices for debugging
-                        print(f"Arbitrary-q mode: idx={idx}, intensity[{i}]={intensity[i].item():.8e}")
+                    # if i < 3:  # Print first few indices for debugging
+                    #     print(f"Arbitrary-q mode: idx={idx}, intensity[{i}]={intensity[i].item():.8e}")
                     
                     # Add detailed debug for specific q-indices that match the grid mode debug indices
                     # Check if debug_q_indices exists in globals or locals before using it
-                    debug_q_indices = globals().get('debug_q_indices', locals().get('debug_q_indices', []))
-                    if idx in debug_q_indices:
-                        print(f"\n--- Detailed Debug for Arbitrary-q mode at idx={idx} ---")
-                        print(f"V_rank shape: {V_rank.shape}, dtype: {V_rank.dtype}")
-                        print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
-                        print(f"F_i[0] (abs): {torch.abs(F_i[0]).item():.8e}")
-                        print(f"FV (abs): {torch.abs(FV).item():.8e}")
-                        print(f"FV_abs_squared: {FV_abs_squared.item():.8e}")
-                        print(f"real_winv: {real_winv_float64.item():.8e}")
-                        print(f"Final intensity: {intensity[i].item():.8e}")
+                    # debug_q_indices = globals().get('debug_q_indices', locals().get('debug_q_indices', []))
+                    # if idx in debug_q_indices:
+                    #     print(f"\n--- Detailed Debug for Arbitrary-q mode at idx={idx} ---")
+                    #     print(f"V_rank shape: {V_rank.shape}, dtype: {V_rank.dtype}")
+                    #     print(f"F_i shape: {F_i.shape}, dtype: {F_i.dtype}")
+                    #     print(f"F_i[0] (abs): {torch.abs(F_i[0]).item():.8e}")
+                    #     print(f"FV (abs): {torch.abs(FV).item():.8e}")
+                    #     print(f"FV_abs_squared: {FV_abs_squared.item():.8e}")
+                    #     print(f"real_winv: {real_winv_float64.item():.8e}")
+                    #     print(f"Final intensity: {intensity[i].item():.8e}")
             
             # Build full result array
             Id = torch.full((n_points,), float('nan'), dtype=self.real_dtype, device=self.device)
@@ -1983,8 +2205,8 @@ class OnePhonon:
 
                         # --- Logging for target BZ index ---
                         is_target_bz = (idx == target_idx_bz)
-                        if is_target_bz:
-                            print(f"\n--- GRID MODE (target_idx_bz={target_idx_bz}, dh={dh}, dk={dk}, dl={dl}) ---")
+                        # if is_target_bz:
+                        #     print(f"\n--- GRID MODE (target_idx_bz={target_idx_bz}, dh={dh}, dk={dk}, dl={dl}) ---")
                         # --- End Logging ---
 
                         # Get phonon modes for this k-vector
@@ -1992,35 +2214,35 @@ class OnePhonon:
                         Winv_k = self.Winv[idx].to(self.complex_dtype)  # shape [n_dof]
 
                         # --- Logging for target BZ index ---
-                        if is_target_bz:
-                             print(f"  V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
-                             if V_k.numel() > 0: print(f"  V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
-                             print(f"  Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
-                             if Winv_k.numel() > 0: print(f"  Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
+                        # if is_target_bz:
+                        #      print(f"  V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
+                        #      if V_k.numel() > 0: print(f"  V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
+                        #      print(f"  Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
+                        #      if Winv_k.numel() > 0: print(f"  Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
                         # --- End Logging ---
                         
                         # Debug print for specific BZ point
-                        if dh == 0 and dk == 1 and dl == 0:
-                            print(f"\n--- PyTorch Debug for BZ point (0,1,0) ---")
-                            print(f"BZ flat index: {idx}")
-                            print(f"V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
-                            print(f"Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
-                            print(f"V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.8e}")
-                            print(f"Winv_k[0]: {Winv_k[0].item():.8e}")
+                        # if dh == 0 and dk == 1 and dl == 0:
+                        #     print(f"\n--- PyTorch Debug for BZ point (0,1,0) ---")
+                        #     print(f"BZ flat index: {idx}")
+                        #     print(f"V_k shape: {V_k.shape}, dtype: {V_k.dtype}")
+                        #     print(f"Winv_k shape: {Winv_k.shape}, dtype: {Winv_k.dtype}")
+                        #     print(f"V_k[0,0] (abs): {torch.abs(V_k[0,0]).item():.8e}")
+                        #     print(f"Winv_k[0]: {Winv_k[0].item():.8e}")
                             
-                            # Additional debug info for comparison with arbitrary-q mode
-                            print(f"kvec for BZ point (0,1,0): {self.kvec[idx].detach().cpu().numpy()}")
+                        #     # Additional debug info for comparison with arbitrary-q mode
+                        #     print(f"kvec for BZ point (0,1,0): {self.kvec[idx].detach().cpu().numpy()}")
                         
                         # Get q-indices for this k-vector point
                         q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
                         
                         # Debug print for specific BZ point
-                        if dh == 0 and dk == 1 and dl == 0:
-                            print(f"q_indices shape: {q_indices.shape}")
-                            if q_indices.numel() > 0:
-                                print(f"First few q_indices: {q_indices[:5].cpu().numpy()}")
-                                # Store these indices for comparison with arbitrary-q mode
-                                debug_q_indices = q_indices[:5].cpu().numpy()
+                        # if dh == 0 and dk == 1 and dl == 0:
+                        #     print(f"q_indices shape: {q_indices.shape}")
+                        #     if q_indices.numel() > 0:
+                        #         print(f"First few q_indices: {q_indices[:5].cpu().numpy()}")
+                        #         # Store these indices for comparison with arbitrary-q mode
+                        #         debug_q_indices = q_indices[:5].cpu().numpy()
                         
                         # Skip if no q-indices found
                         if q_indices.numel() == 0:
@@ -2037,9 +2259,9 @@ class OnePhonon:
                         # Find if our target_q_idx is within the valid_indices for this BZ point
                         target_q_in_this_bz = (target_q_idx in valid_indices)
                         target_pos_in_valid = -1
-                        if is_target_bz and target_q_in_this_bz:
-                            target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0].item()
-                            print(f"  Target q_idx {target_q_idx} found at position {target_pos_in_valid} in valid_indices for this BZ point.")
+                        # if is_target_bz and target_q_in_this_bz:
+                        #     target_pos_in_valid = torch.where(valid_indices == target_q_idx)[0].item()
+                        #     print(f"  Target q_idx {target_q_idx} found at position {target_pos_in_valid} in valid_indices for this BZ point.")
 
                         # Compute structure factors for all ASUs in parallel
                         # Initialize F with the CORRECT high-precision complex dtype
@@ -2082,18 +2304,18 @@ class OnePhonon:
                         F = F.reshape((valid_indices.numel(), self.n_asu * self.n_dof_per_asu))
 
                         # --- Logging for target point ---
-                        if is_target_bz and target_q_in_this_bz:
-                            print(f"  Processing q_idx={target_q_idx} (at pos={target_pos_in_valid})")
-                            q_vec = self.q_grid[target_q_idx]
-                            print(f"  q_vec: {q_vec.detach().cpu().numpy()} (dtype: {q_vec.dtype})")
-                            # Ensure ADP tensor has elements before indexing
-                            if ADP.numel() > 0:
-                                print(f"  ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype}, shape: {ADP.shape})")
-                            else:
-                                print(f"  ADP: (empty or None)")
-                            F_target = F[target_pos_in_valid] # Structure factor for the target q_idx
-                            print(f"  F[{target_pos_in_valid}] shape: {F_target.shape}, dtype: {F_target.dtype}")
-                            if F_target.numel() > 0: print(f"  F[{target_pos_in_valid}, 0] (abs): {torch.abs(F_target[0]).item():.6e}")
+                        # if is_target_bz and target_q_in_this_bz:
+                        #     print(f"  Processing q_idx={target_q_idx} (at pos={target_pos_in_valid})")
+                        #     q_vec = self.q_grid[target_q_idx]
+                        #     print(f"  q_vec: {q_vec.detach().cpu().numpy()} (dtype: {q_vec.dtype})")
+                        #     # Ensure ADP tensor has elements before indexing
+                        #     if ADP.numel() > 0:
+                        #         print(f"  ADP[0]: {ADP[0].item():.6e} (dtype: {ADP.dtype}, shape: {ADP.shape})")
+                        #     else:
+                        #         print(f"  ADP: (empty or None)")
+                        #     F_target = F[target_pos_in_valid] # Structure factor for the target q_idx
+                        #     print(f"  F[{target_pos_in_valid}] shape: {F_target.shape}, dtype: {F_target.dtype}")
+                        #     if F_target.numel() > 0: print(f"  F[{target_pos_in_valid}, 0] (abs): {torch.abs(F_target[0]).item():.6e}")
                         # --- End Logging ---
                         
                         # Apply disorder model depending on rank parameter
@@ -2106,18 +2328,18 @@ class OnePhonon:
                             intensity_contribution = torch.sum(FV_abs_squared * real_winv, dim=1)
 
                             # --- Logging for target point ---
-                            if is_target_bz and target_q_in_this_bz:
-                                FV_target = FV[target_pos_in_valid]
-                                FV_abs_sq_target = FV_abs_squared[target_pos_in_valid]
-                                intensity_cont_target = intensity_contribution[target_pos_in_valid]
-                                print(f"  FV[{target_pos_in_valid}] shape: {FV_target.shape}, dtype: {FV_target.dtype}")
-                                if FV_target.numel() > 0: print(f"  FV[{target_pos_in_valid}, 0] (abs): {torch.abs(FV_target[0]).item():.6e}")
-                                print(f"  FV_abs_squared[{target_pos_in_valid}] shape: {FV_abs_sq_target.shape}, dtype: {FV_abs_sq_target.dtype}")
-                                if FV_abs_sq_target.numel() > 0: print(f"  FV_abs_squared[{target_pos_in_valid}, 0]: {FV_abs_sq_target[0].item():.6e}")
-                                print(f"  real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}") # Note: real_winv is shared for the BZ point
-                                if real_winv.numel() > 0: print(f"  real_winv[0]: {real_winv[0].item():.6e}")
-                                print(f"  Intensity Contribution: {intensity_cont_target.item():.6e}")
-                                print(f"  Accumulating at Id[{target_q_idx}]")
+                            # if is_target_bz and target_q_in_this_bz:
+                            #     FV_target = FV[target_pos_in_valid]
+                            #     FV_abs_sq_target = FV_abs_squared[target_pos_in_valid]
+                            #     intensity_cont_target = intensity_contribution[target_pos_in_valid]
+                            #     print(f"  FV[{target_pos_in_valid}] shape: {FV_target.shape}, dtype: {FV_target.dtype}")
+                            #     if FV_target.numel() > 0: print(f"  FV[{target_pos_in_valid}, 0] (abs): {torch.abs(FV_target[0]).item():.6e}")
+                            #     print(f"  FV_abs_squared[{target_pos_in_valid}] shape: {FV_abs_sq_target.shape}, dtype: {FV_abs_sq_target.dtype}")
+                            #     if FV_abs_sq_target.numel() > 0: print(f"  FV_abs_squared[{target_pos_in_valid}, 0]: {FV_abs_sq_target[0].item():.6e}")
+                            #     print(f"  real_winv shape: {real_winv.shape}, dtype: {real_winv.dtype}") # Note: real_winv is shared for the BZ point
+                            #     if real_winv.numel() > 0: print(f"  real_winv[0]: {real_winv[0].item():.6e}")
+                            #     print(f"  Intensity Contribution: {intensity_cont_target.item():.6e}")
+                            #     print(f"  Accumulating at Id[{target_q_idx}]")
                             # --- End Logging ---
                         else:
                             # Get specific mode
@@ -2144,30 +2366,30 @@ class OnePhonon:
                         Id.index_add_(0, valid_indices, intensity_contribution)
 
                         # --- Add conditional logging for Grid Mode ---
-                        target_q_idx = 9 # Define the target index to log
-                        target_indices_in_batch = torch.where(valid_indices == target_q_idx)[0]
-
-                        if target_indices_in_batch.numel() > 0:
-                            target_loop_idx = target_indices_in_batch[0].item() # Index within the current batch
-                            mode_str = "GRID"
-                            print(f"\n--- {mode_str} MODE (Processing q_idx={target_q_idx}, BZ idx={idx}, loop i={target_loop_idx}) ---")
-                            # Print F_i, V_k, Winv_k, FV, etc. using .item() and .abs() as needed
-                            # Note: V_k and Winv_k are for the BZ point, F and FV are for the specific q_idx
-                            F_target = F[target_loop_idx]
-                            FV_target = FV[target_loop_idx]
-                            FV_abs_sq_target = FV_abs_squared[target_loop_idx]
-                            intensity_cont_target = intensity_contribution[target_loop_idx]
-
-                            print(f"  F[{target_loop_idx}, 0] (abs): {torch.abs(F_target[0]).item():.6e}")
-                            # V_k and Winv_k are shared for the BZ point
-                            print(f"  V_k[0, 0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
-                            print(f"  Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
-                            # FV depends on the specific q_idx within the BZ group
-                            print(f"  FV[{target_loop_idx}, 0] (abs): {torch.abs(FV_target[0]).item():.6e}")
-                            print(f"  FV_abs_squared[{target_loop_idx}, 0]: {FV_abs_sq_target[0].item():.6e}")
-                            # real_winv is shared for the BZ point
-                            print(f"  real_winv[0]: {real_winv[0].item():.6e}")
-                            print(f"  Intensity Contribution: {intensity_cont_target.item():.6e}")
+                        # target_q_idx = 9 # Define the target index to log
+                        # target_indices_in_batch = torch.where(valid_indices == target_q_idx)[0]
+                        #
+                        # if target_indices_in_batch.numel() > 0:
+                        #     target_loop_idx = target_indices_in_batch[0].item() # Index within the current batch
+                        #     mode_str = "GRID"
+                        #     print(f"\n--- {mode_str} MODE (Processing q_idx={target_q_idx}, BZ idx={idx}, loop i={target_loop_idx}) ---")
+                        #     # Print F_i, V_k, Winv_k, FV, etc. using .item() and .abs() as needed
+                        #     # Note: V_k and Winv_k are for the BZ point, F and FV are for the specific q_idx
+                        #     F_target = F[target_loop_idx]
+                        #     FV_target = FV[target_loop_idx]
+                        #     FV_abs_sq_target = FV_abs_squared[target_loop_idx]
+                        #     intensity_cont_target = intensity_contribution[target_loop_idx]
+                        #
+                        #     print(f"  F[{target_loop_idx}, 0] (abs): {torch.abs(F_target[0]).item():.6e}")
+                        #     # V_k and Winv_k are shared for the BZ point
+                        #     print(f"  V_k[0, 0] (abs): {torch.abs(V_k[0,0]).item():.6e}")
+                        #     print(f"  Winv_k[0] (real): {Winv_k[0].real.item():.6e}")
+                        #     # FV depends on the specific q_idx within the BZ group
+                        #     print(f"  FV[{target_loop_idx}, 0] (abs): {torch.abs(FV_target[0]).item():.6e}")
+                        #     print(f"  FV_abs_squared[{target_loop_idx}, 0]: {FV_abs_sq_target[0].item():.6e}")
+                        #     # real_winv is shared for the BZ point
+                        #     print(f"  real_winv[0]: {real_winv[0].item():.6e}")
+                        #     print(f"  Intensity Contribution: {intensity_cont_target.item():.6e}")
                         # --- End conditional logging ---
 
             # Apply resolution mask
