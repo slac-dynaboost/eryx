@@ -1328,12 +1328,12 @@ class OnePhonon:
             if self.V[DEBUG_IDX_BZ].numel() > 0:
                 print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
                 print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
-            print(f"  winv_all[{DEBUG_IDX_BZ}] (calculated) shape: {winv_all[DEBUG_IDX_BZ].shape}, dtype: {winv_all[DEBUG_IDX_BZ].dtype}")
-            if winv_all[DEBUG_IDX_BZ].numel() > 0:
-                print(f"  winv_all[{DEBUG_IDX_BZ}, 0]: {winv_all[DEBUG_IDX_BZ, 0].item()}")
-                print(f"  winv_all[{DEBUG_IDX_BZ}, -1]: {winv_all[DEBUG_IDX_BZ, -1].item()}")
-                nan_count_final = torch.isnan(winv_all[DEBUG_IDX_BZ]).sum().item()
-                print(f"  NaN count in winv_all[{DEBUG_IDX_BZ}]: {nan_count_final}")
+            print(f"  winv_all_real[{DEBUG_IDX_BZ}] (calculated) shape: {winv_all_real[DEBUG_IDX_BZ].shape}, dtype: {winv_all_real[DEBUG_IDX_BZ].dtype}")
+            if winv_all_real[DEBUG_IDX_BZ].numel() > 0:
+                print(f"  winv_all_real[{DEBUG_IDX_BZ}, 0]: {winv_all_real[DEBUG_IDX_BZ, 0].item()}")
+                print(f"  winv_all_real[{DEBUG_IDX_BZ}, -1]: {winv_all_real[DEBUG_IDX_BZ, -1].item()}")
+                nan_count_final = torch.isnan(winv_all_real[DEBUG_IDX_BZ]).sum().item()
+                print(f"  NaN count in winv_all_real[{DEBUG_IDX_BZ}]: {nan_count_final}")
             print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
             if self.Winv[DEBUG_IDX_BZ].numel() > 0:
                 print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
