@@ -675,15 +675,15 @@ class TestArbitraryQVectors(TestBase):
         indices_tensor = torch.tensor([0, 2], device=self.device)
         result = model._at_kvec_from_miller_points(indices_tensor)
         self.assertTrue(torch.all(result == indices_tensor))
-        
         # Test with Miller indices tuple
         # Create a q-vector that should be close to one in our list
-        A_inv_tensor = torch.tensor(model.model.A_inv, dtype=torch.float32, device=self.device)
-        hkl = torch.tensor([1.0, 2.0, 3.0], device=self.device)
-        target_q = 2 * torch.pi * torch.matmul(A_inv_tensor.T, hkl)
-        
+        A_inv_tensor = torch.tensor(model.model.A_inv, dtype=torch.float64, device=self.device) # Use float64
+        hkl = torch.tensor([1.0, 2.0, 3.0], device=self.device, dtype=torch.float64) # Use float64
+        two_pi = torch.tensor(2.0 * torch.pi, dtype=torch.float64, device=self.device) # Use float64
+        target_q = two_pi * torch.matmul(A_inv_tensor.T, hkl.T).T # Ensure float64 calculation
+
         # Find the closest q-vector in our list
-        distances = torch.norm(q_vectors - target_q, dim=1)
+        distances = torch.linalg.norm(q_vectors - target_q, dim=1) # Use linalg.norm
         expected_idx = torch.argmin(distances).item()
         
         # Test the method with the same hkl
