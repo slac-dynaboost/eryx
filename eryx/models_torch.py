@@ -21,6 +21,7 @@ from eryx.pdb_torch import GaussianNetworkModel as GaussianNetworkModelTorch
 from eryx.autotest.debug import debug
 from eryx.adapters import PDBToTensor, TensorToNumpy
 
+class OnePhonon:
     """
     PyTorch implementation of the OnePhonon model for diffuse scattering calculations.
     
@@ -76,16 +77,6 @@ from eryx.adapters import PDBToTensor, TensorToNumpy
     
     # Class-level default, will be set properly in __init__
     use_arbitrary_q: bool = False
-    """
-    PyTorch implementation of the OnePhonon model for diffuse scattering calculations.
-    
-    This class implements a lattice of interacting rigid bodies in the one-phonon
-    approximation (a.k.a small-coupling regime) using PyTorch tensors and operations
-    to enable gradient flow.
-    
-    References:
-        - Original NumPy implementation in eryx/models.py:OnePhonon
-    """
     
     #@debug
     def __init__(self, pdb_path: str, 
