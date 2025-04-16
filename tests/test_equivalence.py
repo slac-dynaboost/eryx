@@ -56,6 +56,7 @@ class TestModeEquivalence(unittest.TestCase):
             **self.common_params
         )
         print("Running apply_disorder (grid)...")
+        intensity_grid = model_grid.apply_disorder(use_data_adp=use_data_adp)
         print(f"Grid intensity shape: {intensity_grid.shape}")
 
         # --- 2. Simulate Arbitrary Mode on the SAME model ---
