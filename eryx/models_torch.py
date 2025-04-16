@@ -560,6 +560,7 @@ class OnePhonon:
             current_idx += block_size
         
         # Reshape to 4D tensor
+        M_allatoms = M_block_diag.reshape(self.n_asu, self.n_dof_per_asu_actual,
                                         self.n_asu, self.n_dof_per_asu_actual)
         
         # Set requires_grad
