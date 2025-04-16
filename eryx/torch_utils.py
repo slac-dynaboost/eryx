@@ -410,6 +410,16 @@ class BrillouinZoneUtils:
         # Ensure high precision
         real_dtype = torch.float64
         
+        # --- Debug Prints Start ---
+        print(f"\nDEBUG map_q_to_k_bz:")
+        # Print input q, handling batch vs single vector
+        if q_vector.dim() > 1:
+            print(f"  Input q (batch shape {q_vector.shape}):\n{q_vector.cpu().numpy()}")
+        else:
+            print(f"  Input q: {q_vector.cpu().numpy()}")
+        print(f"  Input A_inv:\n{A_inv_tensor.cpu().numpy()}")
+        # --- Debug Prints End ---
+        
         # Handle both single vectors and batches
         is_batch = q_vector.dim() > 1
         if not is_batch:
@@ -421,25 +431,42 @@ class BrillouinZoneUtils:
         # 1. Calculate direct k = q / (2*pi)
         two_pi = torch.tensor(2.0 * torch.pi, dtype=real_dtype, device=q_vector.device)
         k_direct = q_vector / two_pi
+        # --- Debug Prints Start ---
+        print(f"  k_direct (q/2pi): {k_direct.cpu().numpy()}")
+        # --- Debug Prints End ---
 
         # 2. Calculate direct fractional coordinates hkl = k @ A_inv^(-T) = k @ A
         # We need A = (A_inv)^-1
         try:
             # Use pseudo-inverse for potentially non-invertible A_inv
             A_tensor = torch.linalg.pinv(A_inv_tensor)
-        except torch._C._LinAlgError:
-            print("Warning: A_inv matrix inversion failed during BZ mapping. Using pseudo-inverse.")
-            A_tensor = torch.linalg.pinv(A_inv_tensor)
+            # --- Debug Prints Start ---
+            print(f"  A (pinv(A_inv)):\n{A_tensor.cpu().numpy()}")
+            # --- Debug Prints End ---
+        except Exception as e:
+            # --- Debug Prints Start ---
+            print(f"  ERROR calculating A: {e}")
+            # --- Debug Prints End ---
+            raise
 
         # Ensure correct dimensions for matmul
         hkl_direct = torch.matmul(k_direct, A_tensor)
+        # --- Debug Prints Start ---
+        print(f"  hkl_direct (k @ A): {hkl_direct.cpu().numpy()}")
+        # --- Debug Prints End ---
 
         # 3. Map fractional coordinates to [-0.5, 0.5)
         # More robust mapping: (x + 0.5) % 1.0 - 0.5
         hkl_bz = torch.remainder(hkl_direct + 0.5, 1.0) - 0.5
+        # --- Debug Prints Start ---
+        print(f"  hkl_bz (mapped): {hkl_bz.cpu().numpy()}")
+        # --- Debug Prints End ---
 
         # 4. Calculate k_bz = hkl_bz @ A_inv^T
         k_bz = torch.matmul(hkl_bz, A_inv_tensor.T)
+        # --- Debug Prints Start ---
+        print(f"  Output k_bz (hkl_bz @ A_inv.T): {k_bz.cpu().numpy()}")
+        # --- Debug Prints End ---
 
         # Return k_bz with high precision, removing batch dimension if input was a single vector
         if not is_batch:
