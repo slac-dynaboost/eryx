@@ -103,6 +103,22 @@ class TestModeEquivalence(unittest.TestCase):
              adp_q = model_q.ADP.detach() if model_q.ADP.requires_grad else model_q.ADP
              self.assertTrue(torch.allclose(adp_grid, adp_q, atol=1e-8, rtol=1e-5), "Computed ADPs do not match")
 
+        # Verify Amat matrices match
+        self.assertTrue(torch.allclose(model_grid.Amat, model_q.Amat, atol=1e-12, rtol=1e-9), "Amat matrices do not match")
+
+        # Verify key AtomicModel attributes match (assuming model has xyz, ff_a etc.)
+        # Check only the first ASU/conformation for simplicity
+        if hasattr(model_grid.model, 'xyz') and hasattr(model_q.model, 'xyz'):
+             xyz_grid = model_grid.model.xyz[0].detach() if model_grid.model.xyz.requires_grad else model_grid.model.xyz[0]
+             xyz_q = model_q.model.xyz[0].detach() if model_q.model.xyz.requires_grad else model_q.model.xyz[0]
+             self.assertTrue(torch.allclose(xyz_grid, xyz_q, atol=1e-12), "model.xyz[0] does not match")
+
+        if hasattr(model_grid.model, 'ff_a') and hasattr(model_q.model, 'ff_a'):
+             ff_a_grid = model_grid.model.ff_a[0].detach() if model_grid.model.ff_a.requires_grad else model_grid.model.ff_a[0]
+             ff_a_q = model_q.model.ff_a[0].detach() if model_q.model.ff_a.requires_grad else model_q.model.ff_a[0]
+             self.assertTrue(torch.allclose(ff_a_grid, ff_a_q, atol=1e-12), "model.ff_a[0] does not match")
+        # Add similar checks for ff_b, ff_c if necessary
+
         # Verify V/Winv match point-by-point after expansion (Optional but informative)
         # Can be slow, maybe check only a few points like target_q_idx
         if target_q_idx != -1:
