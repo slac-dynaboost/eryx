@@ -113,18 +113,27 @@ class TestModeEquivalence(unittest.TestCase):
         # Verify Amat matrices match
         self.assertTrue(torch.allclose(model_grid.Amat, model_q.Amat, atol=1e-12, rtol=1e-9), "Amat matrices do not match")
 
-        # Verify key AtomicModel attributes match (assuming model has xyz, ff_a etc.)
-        # Check only the first ASU/conformation for simplicity
-        if hasattr(model_grid.model, 'xyz') and hasattr(model_q.model, 'xyz'):
-             xyz_grid = model_grid.model.xyz[0].detach() if model_grid.model.xyz.requires_grad else model_grid.model.xyz[0]
-             xyz_q = model_q.model.xyz[0].detach() if model_q.model.xyz.requires_grad else model_q.model.xyz[0]
-             self.assertTrue(torch.allclose(xyz_grid, xyz_q, atol=1e-12), "model.xyz[0] does not match")
+        # Verify key AtomicModel attributes match using the original NumPy models
+        # Ensure both models have the original_model attribute
+        self.assertTrue(hasattr(model_grid, 'original_model') and model_grid.original_model is not None)
+        self.assertTrue(hasattr(model_q, 'original_model') and model_q.original_model is not None)
 
-        if hasattr(model_grid.model, 'ff_a') and hasattr(model_q.model, 'ff_a'):
-             ff_a_grid = model_grid.model.ff_a[0].detach() if model_grid.model.ff_a.requires_grad else model_grid.model.ff_a[0]
-             ff_a_q = model_q.model.ff_a[0].detach() if model_q.model.ff_a.requires_grad else model_q.model.ff_a[0]
-             self.assertTrue(torch.allclose(ff_a_grid, ff_a_q, atol=1e-12), "model.ff_a[0] does not match")
-        # Add similar checks for ff_b, ff_c if necessary
+        np_model_grid = model_grid.original_model
+        np_model_q = model_q.original_model
+
+        # Compare NumPy arrays directly
+        if hasattr(np_model_grid, 'xyz') and hasattr(np_model_q, 'xyz'):
+             # Compare all conformations/ASUs if they exist, or just the first
+             self.assertTrue(np.allclose(np_model_grid.xyz, np_model_q.xyz, atol=1e-12), "original_model.xyz does not match")
+
+        if hasattr(np_model_grid, 'ff_a') and hasattr(np_model_q, 'ff_a'):
+             self.assertTrue(np.allclose(np_model_grid.ff_a, np_model_q.ff_a, atol=1e-12), "original_model.ff_a does not match")
+
+        if hasattr(np_model_grid, 'ff_b') and hasattr(np_model_q, 'ff_b'):
+             self.assertTrue(np.allclose(np_model_grid.ff_b, np_model_q.ff_b, atol=1e-12), "original_model.ff_b does not match")
+
+        if hasattr(np_model_grid, 'ff_c') and hasattr(np_model_q, 'ff_c'):
+             self.assertTrue(np.allclose(np_model_grid.ff_c, np_model_q.ff_c, atol=1e-12), "original_model.ff_c does not match")
 
         # Verify V/Winv match point-by-point after expansion (Optional but informative)
         # Can be slow, maybe check only a few points like target_q_idx
