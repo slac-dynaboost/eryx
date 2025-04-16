@@ -916,7 +916,149 @@ class TestArbitraryQVectors(TestBase):
         # Now that compute_gnm_phonons is verified numerically (for corresponding points),
         # this test should pass if the indexing within apply_disorder is correct.
         self.run_method_equivalence_test('apply_disorder')
-
+        
+    def test_apply_disorder_gradient_gamma(self):
+        """
+        Test that gradients with respect to gamma parameters are correctly computed.
+        
+        This test uses PyTorch's gradcheck utility to verify that the gradients computed
+        via automatic differentiation match those computed via finite differences.
+        """
+        import torch.autograd
+        
+        # Use high precision for gradient checking
+        dtype = torch.float64
+        
+        # Create leaf tensors for gamma parameters with gradients
+        gamma_intra_t = torch.tensor(1.1, dtype=dtype, device=self.device, requires_grad=True)
+        gamma_inter_t = torch.tensor(0.9, dtype=dtype, device=self.device, requires_grad=True)
+        
+        # Create a small set of q-vectors for faster testing
+        q_vecs_small = torch.tensor([
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6]
+        ], dtype=dtype, device=self.device)
+        
+        # Capture necessary parameters from the test class
+        pdb_path = self.pdb_path
+        hsampling = self.hsampling
+        ksampling = self.ksampling
+        lsampling = self.lsampling
+        device = self.device
+        common_params = self.common_params
+        q_vectors_fixed = q_vecs_small
+        
+        # Define wrapper function for gradcheck
+        def gamma_wrapper_func(g_intra, g_inter):
+            # Create a new model instance for each gradient evaluation
+            from eryx.models_torch import OnePhonon as OnePhononTorch
+            model_inst = OnePhononTorch(
+                pdb_path=pdb_path,
+                q_vectors=q_vectors_fixed,
+                hsampling=hsampling,
+                ksampling=ksampling,
+                lsampling=lsampling,
+                gamma_intra=g_intra,
+                gamma_inter=g_inter,
+                device=device,
+                **common_params
+            )
+            
+            # Call apply_disorder
+            intensity = model_inst.apply_disorder(use_data_adp=True)
+            
+            # Return a scalar output (sum of valid intensity values)
+            valid_intensity = intensity[~torch.isnan(intensity)]
+            scalar_out = torch.sum(valid_intensity).to(dtype=dtype)
+            return scalar_out
+        
+        # Run gradcheck
+        inputs_for_gradcheck = (gamma_intra_t, gamma_inter_t)
+        print("\nRunning gradcheck for gamma parameters...")
+        test_passed = torch.autograd.gradcheck(
+            gamma_wrapper_func,
+            inputs_for_gradcheck,
+            eps=1e-6,
+            atol=1e-4,
+            rtol=1e-3,
+            nondet_tol=1e-6,
+            check_complex=True,
+            raise_exception=False  # Don't raise exception to see numerical differences
+        )
+        
+        self.assertTrue(test_passed, "Gradient check failed for apply_disorder w.r.t gamma parameters")
+        print("Gradient check PASSED for gamma parameters.")
+    
+    def test_apply_disorder_gradient_q(self):
+        """
+        Test that gradients with respect to q_vectors are correctly computed.
+        
+        This test uses PyTorch's gradcheck utility to verify that the gradients computed
+        via automatic differentiation match those computed via finite differences.
+        """
+        import torch.autograd
+        
+        # Use high precision for gradient checking
+        dtype = torch.float64
+        
+        # Create fixed gamma parameters
+        gamma_intra_fixed = torch.tensor(1.0, dtype=dtype, device=self.device)
+        gamma_inter_fixed = torch.tensor(1.0, dtype=dtype, device=self.device)
+        
+        # Create a small set of q-vectors with gradients
+        q_vecs_small = torch.tensor([
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6]
+        ], dtype=dtype, device=self.device, requires_grad=True)
+        
+        # Capture necessary parameters from the test class
+        pdb_path = self.pdb_path
+        hsampling = self.hsampling
+        ksampling = self.ksampling
+        lsampling = self.lsampling
+        device = self.device
+        common_params = self.common_params
+        
+        # Define wrapper function for gradcheck
+        def q_wrapper_func(q_vecs_in):
+            # Create a new model instance for each gradient evaluation
+            from eryx.models_torch import OnePhonon as OnePhononTorch
+            model_inst = OnePhononTorch(
+                pdb_path=pdb_path,
+                q_vectors=q_vecs_in,
+                hsampling=hsampling,
+                ksampling=ksampling,
+                lsampling=lsampling,
+                gamma_intra=gamma_intra_fixed,
+                gamma_inter=gamma_inter_fixed,
+                device=device,
+                **common_params
+            )
+            
+            # Call apply_disorder
+            intensity = model_inst.apply_disorder(use_data_adp=True)
+            
+            # Return a scalar output (sum of valid intensity values)
+            valid_intensity = intensity[~torch.isnan(intensity)]
+            scalar_out = torch.sum(valid_intensity).to(dtype=dtype)
+            return scalar_out
+        
+        # Run gradcheck
+        inputs_for_gradcheck = (q_vecs_small,)
+        print("\nRunning gradcheck for q_vectors...")
+        test_passed = torch.autograd.gradcheck(
+            q_wrapper_func,
+            inputs_for_gradcheck,
+            eps=1e-6,
+            atol=1e-4,
+            rtol=1e-3,
+            nondet_tol=1e-6,
+            check_complex=True,
+            raise_exception=False  # Don't raise exception to see numerical differences
+        )
+        
+        self.assertTrue(test_passed, "Gradient check failed for apply_disorder w.r.t q_vectors")
+        print("Gradient check PASSED for q_vectors.")
 
     # ... (other existing tests like test_Amat_equivalence, test_Linv_equivalence etc.) ...
 
