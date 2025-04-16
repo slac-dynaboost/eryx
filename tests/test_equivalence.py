@@ -51,9 +51,6 @@ class TestModeEquivalence(unittest.TestCase):
             ksampling=self.ksampling,
             lsampling=self.lsampling,
             device=self.device,
-            ksampling=self.ksampling,
-            lsampling=self.lsampling,
-            device=self.device,
             **self.common_params
         )
         print(f"Grid model V shape: {model_grid.V.shape}, Winv shape: {model_grid.Winv.shape}")
