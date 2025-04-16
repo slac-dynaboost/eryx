@@ -54,19 +54,19 @@ class TestModeEquivalence(unittest.TestCase):
             **self.common_params
         )
         print(f"Grid model V shape: {model_grid.V.shape}, Winv shape: {model_grid.Winv.shape}")
-        print(f"Grid model ADP[0]: {model_grid.ADP[0].item():.6e}" if hasattr(model_grid,'ADP') and model_grid.ADP is not None and model_grid.ADP.numel() > 0 else "No ADP or ADP empty")
+        print(f"Grid model ADP[0]: {model_grid.ADP[0].detach().item():.6e}" if hasattr(model_grid,'ADP') and model_grid.ADP is not None and model_grid.ADP.numel() > 0 else "No ADP or ADP empty")
         # Find target_q_idx for BZ point (0,0,1) in 2x2x2 grid
         target_dh, target_dk, target_dl = 0, 0, 1
         target_bz_idx = model_grid._3d_to_flat_indices_bz(torch.tensor([target_dh]), torch.tensor([target_dk]), torch.tensor([target_dl])).item()
         q_indices_for_target_bz = model_grid._at_kvec_from_miller_points((target_dh, target_dk, target_dl))
         target_q_idx = q_indices_for_target_bz[0].item() if q_indices_for_target_bz is not None and q_indices_for_target_bz.numel() > 0 else -1
-        print(f"Grid model q_grid[{target_q_idx}]: {model_grid.q_grid[target_q_idx].cpu().numpy() if target_q_idx != -1 else 'N/A'}")
-        print(f"Grid model V[{target_bz_idx},0,0] abs: {torch.abs(model_grid.V[target_bz_idx,0,0]).item():.6e}") # Check BZ idx 1 (target_bz_idx)
+        print(f"Grid model q_grid[{target_q_idx}]: {model_grid.q_grid[target_q_idx].detach().cpu().numpy() if target_q_idx != -1 else 'N/A'}")
+        print(f"Grid model V[{target_bz_idx},0,0] abs: {torch.abs(model_grid.V[target_bz_idx,0,0]).detach().item():.6e}") # Check BZ idx 1 (target_bz_idx)
         print("Running apply_disorder (grid)...")
         intensity_grid = model_grid.apply_disorder(use_data_adp=use_data_adp)
         q_vectors_from_grid = model_grid.q_grid.clone().detach() # Extract q-vectors
         print(f"Grid intensity shape: {intensity_grid.shape}")
-        print(f"Grid intensity[{target_q_idx}]: {intensity_grid[target_q_idx].item():.6e}" if target_q_idx != -1 else 'N/A')
+        print(f"Grid intensity[{target_q_idx}]: {intensity_grid[target_q_idx].detach().item():.6e}" if target_q_idx != -1 else 'N/A')
 
         # --- 2. Arbitrary-Q Mode Run ---
         print("\nInitializing arbitrary-q model...")
@@ -83,9 +83,9 @@ class TestModeEquivalence(unittest.TestCase):
         )
         # Check consistency after init
         print(f"Arb model V shape: {model_q.V.shape}, Winv shape: {model_q.Winv.shape}")
-        print(f"Arb model ADP[0]: {model_q.ADP[0].item():.6e}" if hasattr(model_q,'ADP') and model_q.ADP is not None and model_q.ADP.numel() > 0 else "No ADP or ADP empty")
-        print(f"Arb model q_grid[{target_q_idx}]: {model_q.q_grid[target_q_idx].cpu().numpy() if target_q_idx != -1 else 'N/A'}")
-        print(f"Arb model V[{target_q_idx},0,0] abs: {torch.abs(model_q.V[target_q_idx,0,0]).item():.6e}") # Check q_idx 9 (target_q_idx)
+        print(f"Arb model ADP[0]: {model_q.ADP[0].detach().item():.6e}" if hasattr(model_q,'ADP') and model_q.ADP is not None and model_q.ADP.numel() > 0 else "No ADP or ADP empty")
+        print(f"Arb model q_grid[{target_q_idx}]: {model_q.q_grid[target_q_idx].detach().cpu().numpy() if target_q_idx != -1 else 'N/A'}")
+        print(f"Arb model V[{target_q_idx},0,0] abs: {torch.abs(model_q.V[target_q_idx,0,0]).detach().item():.6e}") # Check q_idx 9 (target_q_idx)
         # Verify q_grids match
         self.assertTrue(torch.allclose(model_grid.q_grid, model_q.q_grid, atol=1e-9), "q_grids do not match")
         # Verify ADPs match (if computed)
@@ -99,7 +99,7 @@ class TestModeEquivalence(unittest.TestCase):
         print("Running apply_disorder (arbitrary-q)...")
         intensity_q = model_q.apply_disorder(use_data_adp=use_data_adp)
         print(f"Arbitrary-q intensity shape: {intensity_q.shape}")
-        print(f"Arbitrary-q intensity[{target_q_idx}]: {intensity_q[target_q_idx].item():.6e}" if target_q_idx != -1 else 'N/A')
+        print(f"Arbitrary-q intensity[{target_q_idx}]: {intensity_q[target_q_idx].detach().item():.6e}" if target_q_idx != -1 else 'N/A')
 
         # --- 3. Comparison ---
         print("\nComparing results...")
