@@ -1108,6 +1108,7 @@ class OnePhonon:
             is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
             
             D_i = Dmat_unique[i]
+            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
             
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
@@ -1256,6 +1257,7 @@ class OnePhonon:
             is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
             
             D_i = Dmat_unique[i]
+            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
             
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
