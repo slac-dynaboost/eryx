@@ -203,9 +203,9 @@ class OnePhonon:
         
         # Use PDBToTensor adapter to extract element weights
         from eryx.adapters import PDBToTensor
-        pdb_adapter = PDBToTensor(device=self.device, dtype=self.real_dtype) # Pass dtype
-        element_weights = pdb_adapter.extract_element_weights(self.model)
-        self.model.element_weights = element_weights # This should already be the correct dtype from adapter
+        pdb_adapter = PDBToTensor(device=self.device) # Removed dtype argument
+        element_weights = pdb_adapter.extract_element_weights(self.model).to(dtype=self.real_dtype) # Ensure dtype after extraction
+        self.model.element_weights = element_weights
         logging.debug(f"[_setup] Extracted {len(element_weights)} element weights.")
 
         # Note: NumPy generate_grid is used below, ensure its output is converted correctly
@@ -275,8 +275,8 @@ class OnePhonon:
         self.id_cell_ref = self.crystal.hkl_to_id([0, 0, 0]) # This returns int, no dtype issue
         self.n_cell = self.crystal.n_cell # This is int, no dtype issue
 
-        # Setup PDBToTensor adapter for tensor conversions (ensure it uses correct dtypes)
-        pdb_adapter = PDBToTensor(device=self.device, dtype=self.real_dtype) # Pass dtype
+        # Setup PDBToTensor adapter for tensor conversions
+        pdb_adapter = PDBToTensor(device=self.device) # Removed dtype argument
         self.crystal = pdb_adapter.convert_crystal(self.crystal) # Adapter should handle internal dtypes
 
         # Set key dimensions.

@@ -441,13 +441,17 @@ class TestArbitraryQVectors(TestBase):
                 device=self.device
             )
         
-        # Test with valid q-vectors
+        # Test with valid q-vectors (must also provide sampling for model='gnm')
         model = OnePhonon(
             self.pdb_path,
-            q_vectors=torch.tensor([[0.1, 0.2, 0.3]], device=self.device),
-            device=self.device
+            q_vectors=torch.tensor([[0.1, 0.2, 0.3]], device=self.device, dtype=torch.float64), # Use float64
+            hsampling=self.hsampling, # Provide dummy sampling params
+            ksampling=self.ksampling,
+            lsampling=self.lsampling,
+            device=self.device,
+            **self.common_params # Ensure model='gnm' is used
         )
-        
+
         # Verify model attributes
         self.assertTrue(model.use_arbitrary_q)
         self.assertEqual(model.q_grid.shape, (1, 3))
