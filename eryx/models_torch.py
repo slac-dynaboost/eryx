@@ -493,10 +493,6 @@ class OnePhonon:
             Mmat = self._project_M(M_allatoms)
             Mmat = Mmat.reshape((self.n_asu * self.n_dof_per_asu, self.n_asu * self.n_dof_per_asu))
             
-            # Debug print for reshaped Mmat
-            # print(f"\nPyTorch reshaped Mmat shape: {Mmat.shape}")
-            # print(f"PyTorch reshaped Mmat[0,0]: {Mmat[0,0].item()}")
-            
             # Robust regularization - single value that works
             eps = 1e-6
             eye = torch.eye(Mmat.shape[0], device=self.device, dtype=Mmat.dtype)
@@ -507,7 +503,6 @@ class OnePhonon:
                 # Try standard Cholesky decomposition first
                 L = torch.linalg.cholesky(Mmat_reg)
                 self.Linv = torch.linalg.inv(L)
-                # print(f"PyTorch Cholesky L[0,0]: {L[0,0].item()}")
             except RuntimeError as e:
                 # Print diagnostic info
                 logging.warning(f"Cholesky decomposition failed: {e}")
@@ -520,19 +515,12 @@ class OnePhonon:
                     L = torch.linalg.cholesky(Mmat_reg)
                     self.Linv = torch.linalg.inv(L)
                     logging.warning("Succeeded with stronger regularization")
-                    # print(f"PyTorch Cholesky L[0,0] (stronger reg): {L[0,0].item()}")
                 except RuntimeError:
                     # Final fallback to SVD approach
                     logging.warning("Falling back to SVD decomposition")
                     U, S, V = torch.linalg.svd(Mmat_reg, full_matrices=False)
                     S = torch.clamp(S, min=1e-8)
                     self.Linv = U @ torch.diag(1.0 / torch.sqrt(S)) @ V
-                    # print(f"PyTorch SVD U[0,0]: {U[0,0].item()}, S[0]: {S[0].item()}")
-            
-            # Debug print for Linv
-            # print(f"PyTorch Linv shape: {self.Linv.shape}")
-            # print(f"PyTorch Linv dtype: {self.Linv.dtype}")
-            # print(f"PyTorch Linv[0,0]: {self.Linv[0,0].item()}")
             
             # Ensure Linv is float64 (real_dtype)
             self.Linv = self.Linv.to(dtype=self.real_dtype)
@@ -552,27 +540,16 @@ class OnePhonon:
         # Use high precision
         dtype = self.real_dtype
         
-        # Debug print for NumPy comparison
-        # print("\n--- _build_M_allatoms Debug ---")
-        
-        # Try to directly access the same weights as NumPy implementation
-        weights = []
         if hasattr(self.model, 'elements'):
-            # print("Accessing weights directly from model.elements (NumPy approach)")
             try:
                 # This matches the NumPy implementation exactly
                 weights = [element.weight for structure in self.model.elements for element in structure]
-                # print(f"Direct weights extraction: count={len(weights)}")
-                # print(f"First few weights: {weights[:5]}")
-                # print(f"Weight stats: min={min(weights)}, max={max(weights)}, mean={sum(weights)/len(weights)}")
             except Exception as e:
                 logging.error(f"Error in direct weight extraction: {e}")
         
         # Create mass array from weights
         if weights:
             mass_array = torch.tensor(weights, dtype=dtype, device=self.device)
-            # print(f"mass_array from weights: shape={mass_array.shape}, dtype={mass_array.dtype}")
-            # print(f"mass_array stats: min={mass_array.min().item()}, max={mass_array.max().item()}, mean={mass_array.mean().item()}")
         else:
             # Fallback to ones
             logging.warning("Fallback: Using ones for mass_array in _build_M_allatoms")
@@ -581,20 +558,12 @@ class OnePhonon:
         # Create block diagonal matrix
         eye3 = torch.eye(3, device=self.device, dtype=dtype)
         
-        # Debug print for block construction approach
-        # print("\nCreating block diagonal matrix...")
-        
         # Create mass_list exactly like NumPy implementation
         mass_list = []
         for i in range(self.n_asu * self.n_atoms_per_asu):
             # Create 3x3 block for each atom (mass * identity)
             block = mass_array[i] * eye3
             mass_list.append(block)
-        
-        # Print first few blocks for debugging
-        # if mass_list:
-        #     print(f"First block shape: {mass_list[0].shape}")
-        #     print(f"First block:\n{mass_list[0].detach().cpu().numpy()}")
         
         # Create block diagonal matrix
         total_dim = self.n_asu * self.n_atoms_per_asu * 3
@@ -607,20 +576,8 @@ class OnePhonon:
             M_block_diag[current_idx:current_idx+block_size, current_idx:current_idx+block_size] = block
             current_idx += block_size
         
-        # Debug print for block diagonal matrix
-        # print(f"M_block_diag shape: {M_block_diag.shape}")
-        # print(f"M_block_diag diagonal elements (first few): {torch.diagonal(M_block_diag)[:15].detach().cpu().numpy()}")
-        
         # Reshape to 4D tensor
-        M_allatoms = M_block_diag.reshape(self.n_asu, self.n_dof_per_asu_actual,
                                         self.n_asu, self.n_dof_per_asu_actual)
-        
-        # Debug prints for M_allatoms
-        # print(f"\nPyTorch M_allatoms shape: {M_allatoms.shape}")
-        # if M_allatoms.shape[0] > 0 and M_allatoms.shape[2] > 0:
-        #     print(f"PyTorch M_allatoms diag[0:5]: {torch.diagonal(M_allatoms[0,:,0,:]).cpu().numpy()[0:5]}")
-        # if M_allatoms.shape[0] > 1 and M_allatoms.shape[2] > 1:
-        #     print(f"PyTorch M_allatoms[0,0,1,0]: {M_allatoms[0,0,1,0].item()}")
         
         # Set requires_grad
         M_allatoms.requires_grad_(True)
@@ -660,13 +617,6 @@ class OnePhonon:
                     Amat[i_asu].T,
                     torch.matmul(M_allatoms[i_asu, :, j_asu, :], Amat[j_asu])
                 )
-        
-        # Debug prints for Mmat
-        # print(f"\nPyTorch Mmat shape: {Mmat.shape}")
-        # if Mmat.shape[0] > 0 and Mmat.shape[2] > 0:
-        #     print(f"PyTorch Mmat[0,0,0,0]: {Mmat[0,0,0,0].item()}")
-        #     if Mmat.shape[1] > 1 and Mmat.shape[3] > 1:
-        #         print(f"PyTorch Mmat[0,1,0,1]: {Mmat[0,1,0,1].item()}")
         
         return Mmat
     
@@ -1053,9 +1003,6 @@ class OnePhonon:
         
         DEBUG_IDX_BZ = 1 # Corresponds to BZ index (0,0,1) in 2x2x2 grid
         DEBUG_IDX_FULL = 9 # Corresponding full grid index (based on previous mapping)
-        # debug_data_grid = {}
-        # debug_data_arbq = {}
-        # print(f"\n[compute_gnm_phonons] DEBUG_IDX_BZ={DEBUG_IDX_BZ}, DEBUG_IDX_FULL={DEBUG_IDX_FULL}")
         # --- End Modifications ---
 
         # Compute the Hessian matrix first (works for both modes)
@@ -1068,7 +1015,6 @@ class OnePhonon:
         unique_k_bz, inverse_indices = torch.unique(rounded_kvec, dim=0, return_inverse=True)
         n_unique_k = unique_k_bz.shape[0]
         logging.debug(f"[compute_gnm_phonons] Found {n_unique_k} unique k_BZ vectors to process.")
-        # print(f"DEBUG: compute_gnm_phonons: Found {n_unique_k} unique k_BZ vectors.") # Add print
 
         # --- Add detailed check for specific indices ---
         # indices_to_check = [9, 61] # Check original q_idx 9 and 61
@@ -1139,23 +1085,10 @@ class OnePhonon:
         
         # For all modes, compute K matrices only for unique k-vectors
         Kmat_unique = gnm_torch.compute_K(hessian, unique_k_bz)
-        # print(f"Kmat_unique requires_grad: {Kmat_unique.requires_grad}")
-        # print(f"Kmat_unique.grad_fn: {Kmat_unique.grad_fn}")
         
         # Reshape K matrices to 2D form for each unique k-vector
         dof_total = self.n_asu * self.n_dof_per_asu
         Kmat_unique_2d = Kmat_unique.reshape(n_unique_k, dof_total, dof_total)
-        
-        # --- Debug Print Start ---
-        # print_idx = 1  # Choose a non-zero index for detailed prints
-        # if n_unique_k > print_idx:
-        #     print(f"\n--- PyTorch Debug Index {print_idx} (Unique K) ---")
-        #     # Debug print for unique k-vectors
-        #     if Kmat_unique.dim() >= 3 and Kmat_unique.shape[1] > 0 and Kmat_unique.shape[2] > 0 and Kmat_unique.shape[3] > 0 and Kmat_unique.shape[4] > 0:
-        #         print(f"PyTorch Kmat_unique[{print_idx},0,0,0,0]: {Kmat_unique[print_idx,0,0,0,0].item():.8e}")
-        #     else:
-        #         print(f"PyTorch Kmat_unique shape: {Kmat_unique.shape}")
-        # --- Debug Print End -----
         
         # Compute dynamical matrices (D = L^(-1) K L^(-H))
         logging.debug(f"Compute_K complete, Kmat_unique_2d shape = {Kmat_unique_2d.shape}")
@@ -1169,17 +1102,6 @@ class OnePhonon:
         temp = torch.bmm(Kmat_unique_2d, Linv_H_batch)
         # Then multiply Linv_batch with the result
         Dmat_unique = torch.bmm(Linv_batch, temp)
-        
-        # --- Debug Print Start ---
-        # if n_unique_k > print_idx:
-        #     # Print first element of the matrix at index print_idx for unique k-vectors
-        #     if Dmat_unique.dim() >= 3:
-        #         print(f"PyTorch Dmat_unique[{print_idx},0,0]: {Dmat_unique[print_idx,0,0].item() if Dmat_unique[print_idx,0,0].numel() == 1 else Dmat_unique[print_idx,0,0][0,0].item():.8e}")
-        #     else:
-        #         print(f"PyTorch Dmat_unique shape: {Dmat_unique.shape}")
-        #     print(f"Dmat_unique computation complete, shape = {Dmat_unique.shape}")
-        #     print(f"Dmat_unique requires_grad: {Dmat_unique.requires_grad}")
-        # --- Debug Print End -----
         
         # Initialize v_all *outside* the try block
         v_all = None
@@ -1201,20 +1123,7 @@ class OnePhonon:
             # Check if this is our target k-vector
             is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
             
-            # if is_target_kvec:
-            #     print(f"\n--- DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (unique index {i}) ---")
-            #     print(f"  Input unique kvec: {current_kvec.detach().cpu().numpy()}")
-            #     print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
-            
             D_i = Dmat_unique[i]
-            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
-            
-            # if is_target_kvec:
-            #     print(f"\n--- DEBUG Phonon Loop (unique i={i}) ---")
-            #     print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
-            #     if D_i_hermitian.numel() > 0:
-            #         print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
-            #         debug_data_arbq['D_00'] = D_i_hermitian[0,0].item()
             
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
@@ -1227,15 +1136,6 @@ class OnePhonon:
                     w_sq_i = torch.ones(n_dof, dtype=self.real_dtype, device=self.device) # Placeholder eigenvalues
                     v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
             
-            # if is_target_kvec:
-            #     print(f"  Raw eigh w_sq_i[0]: {w_sq_i[0].item():.8e}")
-            #     print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
-            #     if v_i_no_grad.numel() > 0:
-            #         print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
-            #         print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
-            #         debug_data_arbq['v_00'] = v_i_no_grad[0,0].item()
-            #         debug_data_arbq['v_0N'] = v_i_no_grad[0,-1].item()
-            
             # Use eigenvectors directly from eigh (ascending eigenvalue order)
             eigenvectors_unique_detached_list.append(v_i_no_grad)
             
@@ -1245,16 +1145,6 @@ class OnePhonon:
             if D_i.requires_grad and not eigenvalues_tensor.requires_grad:
                 eigenvalues_tensor = eigenvalues_tensor + 0.0 * D_i.real.sum() # Connect graph
             
-            # if is_target_kvec:
-            #     print(f"  Eigenvalues from eigh (real) [0]: {eigenvalues_tensor[0].item():.8e}")
-            #     print(f"  Eigenvalues requires_grad: {eigenvalues_tensor.requires_grad}")
-            #     print(f"  eigenvalues_tensor shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
-            #     if eigenvalues_tensor.numel() > 0:
-            #         print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
-            #         print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
-            #         debug_data_arbq['eig_0'] = eigenvalues_tensor[0].item()
-            #         debug_data_arbq['eig_N'] = eigenvalues_tensor[-1].item()
-            
             # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
             eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
             eigenvalues_processed = torch.where(
@@ -1263,25 +1153,7 @@ class OnePhonon:
                 eigenvalues_tensor # Already real_dtype
             )
             
-            # if is_target_kvec:
-            #     print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
-            #     if eigenvalues_processed.numel() > 0:
-            #         print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
-            #         print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-            #         print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
             
-            # Keep eigenvalues in ascending order (as eigh gives them)
-            eigenvalues_unique_list.append(eigenvalues_processed)
-            
-            # if is_target_kvec:
-            #     print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
-            #     if eigenvalues_processed.numel() > 0:
-            #         print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
-            #         print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-            #         debug_data_arbq['eig_p0'] = eigenvalues_processed[0].item()
-            #         debug_data_arbq['eig_pN'] = eigenvalues_processed[-1].item()
-            #     print(f"--- End DEBUG Phonon Loop (unique i={i}) ---")
-        
         # Stack results for unique k-vectors
         eigenvalues_unique = torch.stack(eigenvalues_unique_list)  # Differentiable eigenvalues
         v_unique_detached = torch.stack(eigenvectors_unique_detached_list) # Non-differentiable eigenvectors
@@ -1309,12 +1181,12 @@ class OnePhonon:
 
         total_points = self.kvec.shape[0]
         if getattr(self, 'use_arbitrary_q', False):
-            print(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} arbitrary q-vectors")
+            logging.debug(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} arbitrary q-vectors")
         else:
             h_dim_bz = int(self.hsampling[2])
             k_dim_bz = int(self.ksampling[2])
             l_dim_bz = int(self.lsampling[2])
-            print(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} grid points ({h_dim_bz}x{k_dim_bz}x{l_dim_bz})")
+            logging.debug(f"Computing phonons for {n_unique_k} unique BZ k-vectors from {total_points} grid points ({h_dim_bz}x{k_dim_bz}x{l_dim_bz})")
         
         logging.debug(f"[compute_gnm_phonons] Found {n_unique_k} unique k_BZ vectors to process.")
         
@@ -1340,7 +1212,7 @@ class OnePhonon:
         if hasattr(self, 'crystal'):
             gnm_torch.crystal = self.crystal
         else:
-            print("Warning: No crystal object found in OnePhonon model")
+            logging.warning("No crystal object found in OnePhonon model")
         
         # Set gamma for the GNM
         if hasattr(self, 'gamma_tensor'):
@@ -1359,26 +1231,15 @@ class OnePhonon:
         
         # For all modes, compute K matrices only for unique k-vectors
         Kmat_unique = gnm_torch.compute_K(hessian, unique_k_bz)
-        print(f"Kmat_unique requires_grad: {Kmat_unique.requires_grad}")
-        print(f"Kmat_unique.grad_fn: {Kmat_unique.grad_fn}")
+        logging.debug(f"Kmat_unique requires_grad: {Kmat_unique.requires_grad}")
+        logging.debug(f"Kmat_unique.grad_fn: {Kmat_unique.grad_fn}")
         
         # Reshape K matrices to 2D form for each unique k-vector
         dof_total = self.n_asu * self.n_dof_per_asu
         Kmat_unique_2d = Kmat_unique.reshape(n_unique_k, dof_total, dof_total)
         
-        # --- Debug Print Start ---
-        print_idx = 1  # Choose a non-zero index for detailed prints
-        if n_unique_k > print_idx:
-            print(f"\n--- PyTorch Debug Index {print_idx} (Unique K) ---")
-            # Debug print for unique k-vectors
-            if Kmat_unique.dim() >= 3 and Kmat_unique.shape[1] > 0 and Kmat_unique.shape[2] > 0 and Kmat_unique.shape[3] > 0 and Kmat_unique.shape[4] > 0:
-                print(f"PyTorch Kmat_unique[{print_idx},0,0,0,0]: {Kmat_unique[print_idx,0,0,0,0].item():.8e}")
-            else:
-                print(f"PyTorch Kmat_unique shape: {Kmat_unique.shape}")
-        # --- Debug Print End -----
-        
         # Compute dynamical matrices (D = L^(-1) K L^(-H))
-        print(f"Compute_K complete, Kmat_unique_2d shape = {Kmat_unique_2d.shape}")
+        logging.debug(f"Compute_K complete, Kmat_unique_2d shape = {Kmat_unique_2d.shape}")
         
         # Use torch.bmm for batched matrix multiplication
         Linv_batch = Linv_complex.unsqueeze(0).expand(n_unique_k, -1, -1)
@@ -1390,22 +1251,11 @@ class OnePhonon:
         # Then multiply Linv_batch with the result
         Dmat_unique = torch.bmm(Linv_batch, temp)
         
-        # --- Debug Print Start ---
-        if n_unique_k > print_idx:
-            # Print first element of the matrix at index print_idx for unique k-vectors
-            if Dmat_unique.dim() >= 3:
-                print(f"PyTorch Dmat_unique[{print_idx},0,0]: {Dmat_unique[print_idx,0,0].item() if Dmat_unique[print_idx,0,0].numel() == 1 else Dmat_unique[print_idx,0,0][0,0].item():.8e}")
-            else:
-                print(f"PyTorch Dmat_unique shape: {Dmat_unique.shape}")
-            print(f"Dmat_unique computation complete, shape = {Dmat_unique.shape}")
-            print(f"Dmat_unique requires_grad: {Dmat_unique.requires_grad}")
-        # --- Debug Print End -----
-        
         # Initialize v_all *outside* the try block
         v_all = None
         
         # Process unique k-vectors one by one for debugging clarity
-        print(f"[DEBUG compute_gnm_phonons] Processing {n_unique_k} unique k-vectors")
+        logging.debug(f"[DEBUG compute_gnm_phonons] Processing {n_unique_k} unique k-vectors")
         
         # Pre-calculate Linv_complex.H once
         Linv_complex = self.Linv.to(dtype=self.complex_dtype)
@@ -1421,20 +1271,7 @@ class OnePhonon:
             # Check if this is our target k-vector
             is_target_kvec = torch.allclose(current_kvec, kvec_target_tensor, atol=debug_kvec_atol)
             
-            if is_target_kvec:
-                print(f"\n--- DEBUG k-vec ~ {kvec_target_tensor.detach().cpu().numpy()} (unique index {i}) ---")
-                print(f"  Input unique kvec: {current_kvec.detach().cpu().numpy()}")
-                print(f"  Input Linv[0,0]: {Linv_complex[0,0].item():.8e}")
-            
             D_i = Dmat_unique[i]
-            D_i_hermitian = 0.5 * (D_i + D_i.H) # Ensure Hermiticity
-            
-            if is_target_kvec:
-                print(f"\n--- DEBUG Phonon Loop (unique i={i}) ---")
-                print(f"  D_i_hermitian shape: {D_i_hermitian.shape}, dtype: {D_i_hermitian.dtype}")
-                if D_i_hermitian.numel() > 0:
-                    print(f"  D_i_hermitian[0,0]: {D_i_hermitian[0,0].item()}")
-                    # debug_data_arbq['D_00'] = D_i_hermitian[0,0].item()
             
             # 1. Get eigenvectors WITHOUT gradient tracking using eigh
             with torch.no_grad():
@@ -1442,19 +1279,9 @@ class OnePhonon:
                     # Get both eigenvalues and eigenvectors
                     w_sq_i, v_i_no_grad = torch.linalg.eigh(D_i_hermitian)
                 except torch._C._LinAlgError as e:
-                    print(f"Warning: eigh failed for unique matrix {i} in no_grad context. Using identity. Error: {e}")
+                    logging.warning(f"eigh failed for unique matrix {i} in no_grad context. Using identity. Error: {e}")
                     n_dof = D_i_hermitian.shape[0]
                     w_sq_i = torch.ones(n_dof, dtype=self.real_dtype, device=self.device) # Placeholder eigenvalues
-                    v_i_no_grad = torch.eye(n_dof, dtype=self.complex_dtype, device=self.device) # Fallback
-            
-            if is_target_kvec:
-                print(f"  Raw eigh w_sq_i[0]: {w_sq_i[0].item():.8e}")
-                print(f"  v_i_no_grad (from eigh) shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
-                if v_i_no_grad.numel() > 0:
-                    print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
-                    print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
-                    # debug_data_arbq['v_00'] = v_i_no_grad[0,0].item()
-                    # debug_data_arbq['v_0N'] = v_i_no_grad[0,-1].item()
             
             # Use eigenvectors directly from eigh (ascending eigenvalue order)
             eigenvectors_unique_detached_list.append(v_i_no_grad)
@@ -1465,16 +1292,6 @@ class OnePhonon:
             if D_i.requires_grad and not eigenvalues_tensor.requires_grad:
                 eigenvalues_tensor = eigenvalues_tensor + 0.0 * D_i.real.sum() # Connect graph
             
-            if is_target_kvec:
-                print(f"  Eigenvalues from eigh (real) [0]: {eigenvalues_tensor[0].item():.8e}")
-                print(f"  Eigenvalues requires_grad: {eigenvalues_tensor.requires_grad}")
-                print(f"  eigenvalues_tensor shape: {eigenvalues_tensor.shape}, dtype: {eigenvalues_tensor.dtype}")
-                if eigenvalues_tensor.numel() > 0:
-                    print(f"  eigenvalues_tensor[0]: {eigenvalues_tensor[0].item()}")
-                    print(f"  eigenvalues_tensor[-1]: {eigenvalues_tensor[-1].item()}")
-                    # debug_data_arbq['eig_0'] = eigenvalues_tensor[0].item()
-                    # debug_data_arbq['eig_N'] = eigenvalues_tensor[-1].item()
-            
             # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
             eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
             eigenvalues_processed = torch.where(
@@ -1483,32 +1300,14 @@ class OnePhonon:
                 eigenvalues_tensor # Already real_dtype
             )
             
-            if is_target_kvec:
-                print(f"  eigenvalues_processed (thresholded) shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
-                if eigenvalues_processed.numel() > 0:
-                    print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
-                    print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-                    print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
             
-            # Keep eigenvalues in ascending order (as eigh gives them)
-            eigenvalues_unique_list.append(eigenvalues_processed)
-            
-            if is_target_kvec:
-                print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
-                if eigenvalues_processed.numel() > 0:
-                    print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
-                    print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
-                    # debug_data_arbq['eig_p0'] = eigenvalues_processed[0].item()
-                    # debug_data_arbq['eig_pN'] = eigenvalues_processed[-1].item()
-                print(f"--- End DEBUG Phonon Loop (unique i={i}) ---")
-        
         # Stack results for unique k-vectors
         eigenvalues_unique = torch.stack(eigenvalues_unique_list)  # Differentiable eigenvalues
         v_unique_detached = torch.stack(eigenvectors_unique_detached_list) # Non-differentiable eigenvectors
         
-        print(f"Recomputed eigenvalues using eigh complete for unique k-vectors")
-        print(f"eigenvalues_unique requires_grad: {eigenvalues_unique.requires_grad}")
-        print(f"v_unique_detached requires_grad: {v_unique_detached.requires_grad}")
+        logging.debug(f"Recomputed eigenvalues using eigh complete for unique k-vectors")
+        logging.debug(f"eigenvalues_unique requires_grad: {eigenvalues_unique.requires_grad}")
+        logging.debug(f"v_unique_detached requires_grad: {v_unique_detached.requires_grad}")
         
         # Transform eigenvectors V = L^(-H) v (using detached eigenvectors)
         Linv_H_batch = Linv_H.unsqueeze(0).expand(n_unique_k, -1, -1)
@@ -1532,7 +1331,6 @@ class OnePhonon:
 
         # Ensure requires_grad is set correctly
         self.V.requires_grad_(False)
-        # self.Winv.requires_grad_(eigenvalues_unique.requires_grad) # Original line
         self.Winv.requires_grad_(eigenvalues_unique.requires_grad) # Simplified (same effect)
 
         # --- Add check after expansion ---
@@ -1549,35 +1347,10 @@ class OnePhonon:
         #      print("--- End Check ---")
         # --- End check after expansion ---
         
-        # --- Debug Print Trigger ---
-        # if DEBUG_IDX_BZ < self.V.shape[0]:
-        #     print(f"\n--- DEBUG Final (idx={DEBUG_IDX_BZ}) ---")
-        #     print(f"  Linv_complex.H shape: {Linv_H_batch[0].shape}, dtype: {Linv_H_batch[0].dtype}")
-        #     if Linv_H_batch[0].numel() > 0:
-        #         print(f"  Linv_complex.H[0,0]: {Linv_H_batch[0, 0, 0].item()}")
-        #     if v_unique_detached[0].numel() > 0:
-        #         print(f"  v_unique_detached[0, 0, 0]: {v_unique_detached[0, 0, 0].item()}")
-        #     print(f"  self.V[{DEBUG_IDX_BZ}] (calculated) shape: {self.V[DEBUG_IDX_BZ].shape}, dtype: {self.V[DEBUG_IDX_BZ].dtype}")
-        #     if self.V[DEBUG_IDX_BZ].numel() > 0:
-        #         print(f"  self.V[{DEBUG_IDX_BZ}, 0, 0]: {self.V[DEBUG_IDX_BZ, 0, 0].item()}")
-        #         print(f"  self.V[{DEBUG_IDX_BZ}, 0, -1]: {self.V[DEBUG_IDX_BZ, 0, -1].item()}")
-        #     print(f"  self.Winv[{DEBUG_IDX_BZ}] (final) shape: {self.Winv[DEBUG_IDX_BZ].shape}, dtype: {self.Winv[DEBUG_IDX_BZ].dtype}")
-        #     if self.Winv[DEBUG_IDX_BZ].numel() > 0:
-        #         print(f"  self.Winv[{DEBUG_IDX_BZ}, 0]: {self.Winv[DEBUG_IDX_BZ, 0].item()}")
-        #         print(f"  self.Winv[{DEBUG_IDX_BZ}, -1]: {self.Winv[DEBUG_IDX_BZ, -1].item()}")
-        # --- End Debug Print Trigger ---
-        
         # Final check for the target k-vector
         # target_index_to_print = 1 # Corresponds to (0,0,1) in 2x2x2 BZ
         
-        # if target_index_to_print < self.V.shape[0]:
-        #     print(f"\n--- FINAL CHECK (index {target_index_to_print}) ---")
-        #     print(f"  Final self.V[{target_index_to_print}, 0, 0] (abs): {torch.abs(self.V[target_index_to_print, 0, 0]).item():.8e}")
-        #     print(f"  Final self.Winv[{target_index_to_print}, 0]: {self.Winv[target_index_to_print, 0].item():.8e}")
         
-        # print(f"V requires_grad: {self.V.requires_grad}") # Should be False
-        # print(f"Winv requires_grad: {self.Winv.requires_grad}") # Should be True if inputs required grad
-        # print(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
         logging.debug(f"Phonon computation complete: V.shape={self.V.shape}, Winv.shape={self.Winv.shape}")
         logging.debug(f"V requires_grad: {self.V.requires_grad}, Winv requires_grad: {self.Winv.requires_grad}")
     
