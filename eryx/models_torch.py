@@ -1211,17 +1211,16 @@ class OnePhonon:
                     debug_data_grid['v_00'] = v_i_no_grad[0,0].item()
                     debug_data_grid['v_0N'] = v_i_no_grad[0,-1].item()
             
-            # Flip eigenvectors to match descending eigenvalue order later
-            v_flipped_no_grad = torch.flip(v_i_no_grad, dims=[-1])
-            eigenvectors_detached_list.append(v_flipped_no_grad)
+            # Use eigenvectors directly from eigh (ascending eigenvalue order)
+            eigenvectors_detached_list.append(v_i_no_grad)
             
             if is_target_idx or is_target_kvec:
-                print(f"  v_flipped_no_grad shape: {v_flipped_no_grad.shape}, dtype: {v_flipped_no_grad.dtype}")
-                if v_flipped_no_grad.numel() > 0:
-                    print(f"  v_flipped_no_grad[0,0]: {v_flipped_no_grad[0,0].item()}")
-                    print(f"  v_flipped_no_grad[0,-1]: {v_flipped_no_grad[0,-1].item()}")
-                    debug_data_grid['vf_00'] = v_flipped_no_grad[0,0].item()
-                    debug_data_grid['vf_0N'] = v_flipped_no_grad[0,-1].item()
+                print(f"  v_i_no_grad shape: {v_i_no_grad.shape}, dtype: {v_i_no_grad.dtype}")
+                if v_i_no_grad.numel() > 0:
+                    print(f"  v_i_no_grad[0,0]: {v_i_no_grad[0,0].item()}")
+                    print(f"  v_i_no_grad[0,-1]: {v_i_no_grad[0,-1].item()}")
+                    debug_data_grid['v_00'] = v_i_no_grad[0,0].item()
+                    debug_data_grid['v_0N'] = v_i_no_grad[0,-1].item()
             
             # 2. Recompute eigenvalues DIFFERENTIABLY using v.H @ D @ v
             # Try using the eigenvalues directly from eigh but ensure grads flow from D_i
@@ -1239,7 +1238,7 @@ class OnePhonon:
                     debug_data_grid['eig_0'] = eigenvalues_tensor[0].item()
                     debug_data_grid['eig_N'] = eigenvalues_tensor[-1].item()
             
-            # 3. Process eigenvalues (thresholding, flipping)
+            # 3. Process eigenvalues (thresholding only, keep ascending order from eigh)
             eps = torch.tensor(1e-6, dtype=self.real_dtype, device=self.device) # Use tensor for eps
             eigenvalues_processed = torch.where(
                 eigenvalues_tensor < eps,
@@ -1254,17 +1253,16 @@ class OnePhonon:
                     print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
                     print(f"  NaN count in eigenvalues_processed: {torch.isnan(eigenvalues_processed).sum().item()}")
             
-            # Flip eigenvalues to match descending order (as SVD would give)
-            eigenvalues_processed_flipped = torch.flip(eigenvalues_processed, dims=[-1])
-            eigenvalues_all_list.append(eigenvalues_processed_flipped)
+            # Keep eigenvalues in ascending order (as eigh gives them)
+            eigenvalues_all_list.append(eigenvalues_processed)
             
             if is_target_idx or is_target_kvec:
-                print(f"  eigenvalues_processed_flipped shape: {eigenvalues_processed_flipped.shape}, dtype: {eigenvalues_processed_flipped.dtype}")
-                if eigenvalues_processed_flipped.numel() > 0:
-                    print(f"  eigenvalues_processed_flipped[0]: {eigenvalues_processed_flipped[0].item()}")
-                    print(f"  eigenvalues_processed_flipped[-1]: {eigenvalues_processed_flipped[-1].item()}")
-                    debug_data_grid['eig_pf0'] = eigenvalues_processed_flipped[0].item()
-                    debug_data_grid['eig_pfN'] = eigenvalues_processed_flipped[-1].item()
+                print(f"  eigenvalues_processed shape: {eigenvalues_processed.shape}, dtype: {eigenvalues_processed.dtype}")
+                if eigenvalues_processed.numel() > 0:
+                    print(f"  eigenvalues_processed[0]: {eigenvalues_processed[0].item()}")
+                    print(f"  eigenvalues_processed[-1]: {eigenvalues_processed[-1].item()}")
+                    debug_data_grid['eig_p0'] = eigenvalues_processed[0].item()
+                    debug_data_grid['eig_pN'] = eigenvalues_processed[-1].item()
                 print(f"--- End DEBUG Phonon Loop ({mode_string} Mode i={i}) ---")
 
 

@@ -117,53 +117,10 @@ class TestPhononAndCovarianceEquivalence(unittest.TestCase):
         torch_V_np = torch_model.V.detach().cpu().numpy()
         torch_Winv_np = torch_model.Winv.detach().cpu().numpy()
         
-        # --- Add comparison for raw eigenvectors (v_all) ---
-        print("\nComparing raw eigenvectors (v_all) from eigh...")
-
-        # Need to get v_all from np_model (requires modification or re-computation)
-        # Recompute Dmat for NumPy for a specific index (e.g., idx=1)
-        np_hessian = np_model.compute_hessian()
-        np_kvec_idx1 = np_model.kvec.reshape(total_k_points, 3)[1] # Get kvec for idx=1
-        np_Kmat_idx1 = np_model.gnm.compute_K(np_hessian, kvec=np_kvec_idx1)
-        np_Kmat_2d_idx1 = np_Kmat_idx1.reshape(dof_total, dof_total)
-        np_Dmat_idx1 = np.matmul(np_model.Linv, np.matmul(np_Kmat_2d_idx1, np_model.Linv.T))
-        # Make Dmat Hermitian to match PyTorch behavior
-        np_Dmat_hermitian_idx1 = 0.5 * (np_Dmat_idx1 + np_Dmat_idx1.T.conj())
-        _, np_v_all_idx1 = np.linalg.eigh(np_Dmat_hermitian_idx1) # Get NumPy raw eigenvectors
-
-        # Get PyTorch raw eigenvectors
-        # Recompute Dmat for PyTorch for index 1
-        torch_hessian = torch_model.compute_hessian()
-        torch_kvec_idx1 = torch_model.kvec[1]
-        # Need access to compute_K and Linv from torch_model
-        from eryx.pdb_torch import GaussianNetworkModel as GNMTorch
-        gnm_torch = GNMTorch()
-        gnm_torch.n_asu = torch_model.n_asu
-        gnm_torch.n_atoms_per_asu = torch_model.n_atoms_per_asu
-        gnm_torch.n_cell = torch_model.n_cell
-        gnm_torch.id_cell_ref = torch_model.id_cell_ref
-        gnm_torch.device = torch_model.device
-        gnm_torch.real_dtype = torch_model.real_dtype
-        gnm_torch.complex_dtype = torch_model.complex_dtype
-        gnm_torch.crystal = torch_model.crystal
-        
-        torch_Kmat_idx1 = gnm_torch.compute_K(torch_hessian, torch_kvec_idx1.unsqueeze(0))[0]
-        torch_Kmat_2d_idx1 = torch_Kmat_idx1.reshape(dof_total, dof_total)
-        torch_Linv_complex = torch_model.Linv.to(torch_model.complex_dtype)
-        torch_Dmat_idx1 = torch.matmul(torch_Linv_complex, torch.matmul(torch_Kmat_2d_idx1, torch_Linv_complex.T))
-        torch_Dmat_hermitian_idx1 = 0.5 * (torch_Dmat_idx1 + torch_Dmat_idx1.transpose(-2, -1).conj())
-        _, torch_v_all_idx1 = torch.linalg.eigh(torch_Dmat_hermitian_idx1) # Get PyTorch raw eigenvectors
-
-        torch_v_all_idx1_np = torch_v_all_idx1.detach().cpu().numpy()
-
-        # Compare absolute values
-        v_all_match = np.allclose(np.abs(np_v_all_idx1), np.abs(torch_v_all_idx1_np),
-                                rtol=self.rtol, atol=self.atol)
-        print(f"Raw eigenvectors (v_all) absolute values match for index 1: {v_all_match}")
-        if not v_all_match:
-            max_v_all_diff = np.max(np.abs(np.abs(np_v_all_idx1) - np.abs(torch_v_all_idx1_np)))
-            print(f"Max abs diff in raw eigenvectors (v_all): {max_v_all_diff}")
-        # --- End of added comparison ---
+        # Note: We don't compare raw eigenvectors directly because eigh eigenvectors
+        # can differ by sign/phase factors even when physically equivalent.
+        # Instead, we compare projection matrices P = V @ V.H which are invariant
+        # to these sign/phase differences.
 
         # Compare projection matrices P = V @ V^H
         print("\nComparing projection matrices P = V @ V^H...")
