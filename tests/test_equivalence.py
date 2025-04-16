@@ -159,20 +159,14 @@ class TestModeEquivalence(unittest.TestCase):
         #                 orig_idx = problematic_original_indices[i]
         #                 valid_idx = problematic_indices_valid[i] # Index within the _valid arrays
         #                 g_val = grid_valid[valid_idx]
-        #                 q_val = q_valid[valid_idx]
-        #                 a_diff = abs_diff_valid[valid_idx]
-        #                 r_diff = rel_diff_valid[valid_idx]
-        #                 print(f"{orig_idx:<7d} {g_val:<14.6e} {q_val:<14.6e} {a_diff:<14.6e} {r_diff:<14.6e}")
-        #
-        #     # Raise the original assertion failure
-        #     self.assertTrue(are_close, f"Intensity results differ between modes (use_data_adp={use_data_adp})")
-        # else:
-        #     print(f"\nEquivalence test PASSED (use_data_adp={use_data_adp})")
+            # Raise the original assertion failure
+            self.assertTrue(are_close, f"Intensity results differ between modes (use_data_adp={use_data_adp})")
+        else:
+            print(f"\nEquivalence test PASSED (use_data_adp={use_data_adp})")
 
-        # Add detailed comparison block here if needed...
-
-        self.assertTrue(are_close, f"Intensity results differ between Grid run and Simulated Arbitrary run on the SAME object (use_data_adp={use_data_adp}) with rtol={self.rtol}, atol={self.atol}")
-        print(f"\nEquivalence test PASSED (Grid vs Simulated Arbitrary) with rtol={self.rtol}, atol={self.atol}")
+        # Final assertion
+        self.assertTrue(are_close, f"Intensity results differ between Grid and Arbitrary-Q modes (use_data_adp={use_data_adp}) with rtol={self.rtol}, atol={self.atol}")
+        print(f"\nEquivalence test PASSED (Grid vs Arbitrary-Q) with rtol={self.rtol}, atol={self.atol}")
 
 
     def test_equivalence_with_data_adp(self):
