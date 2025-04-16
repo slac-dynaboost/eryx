@@ -86,15 +86,28 @@ class TestModeEquivalence(unittest.TestCase):
         print(f"Arb model ADP[0]: {model_q.ADP[0].detach().item():.6e}" if hasattr(model_q,'ADP') and model_q.ADP is not None and model_q.ADP.numel() > 0 else "No ADP or ADP empty")
         print(f"Arb model q_grid[{target_q_idx}]: {model_q.q_grid[target_q_idx].detach().cpu().numpy() if target_q_idx != -1 else 'N/A'}")
         print(f"Arb model V[{target_q_idx},0,0] abs: {torch.abs(model_q.V[target_q_idx,0,0]).detach().item():.6e}") # Check q_idx 9 (target_q_idx)
-        # Verify q_grids match
-        self.assertTrue(torch.allclose(model_grid.q_grid, model_q.q_grid, atol=1e-9), "q_grids do not match")
-        # Verify ADPs match (if computed)
+
+        # Verify q_grids match (already exists, ensure tolerance is tight)
+        self.assertTrue(torch.allclose(model_grid.q_grid, model_q.q_grid, atol=1e-12, rtol=1e-9), "q_grids do not match")
+
+        # Verify hkl_grids match (Crucial!)
+        self.assertTrue(torch.allclose(model_grid.hkl_grid, model_q.hkl_grid, atol=1e-12, rtol=1e-9), "hkl_grids do not match")
+
+        # Verify resolution masks match (Crucial!)
+        self.assertTrue(torch.equal(model_grid.res_mask, model_q.res_mask), "Resolution masks (res_mask) do not match")
+
+        # Verify ADPs match (if computed) (already exists)
         if not use_data_adp and hasattr(model_grid, 'ADP') and hasattr(model_q, 'ADP'):
-             self.assertTrue(torch.allclose(model_grid.ADP, model_q.ADP, atol=1e-9), "Computed ADPs do not match")
-        # Verify V/Winv for corresponding points (e.g., grid BZ idx 1 vs arb q_idx 9)
+             # Use detach() for comparison if ADP requires grad
+             adp_grid = model_grid.ADP.detach() if model_grid.ADP.requires_grad else model_grid.ADP
+             adp_q = model_q.ADP.detach() if model_q.ADP.requires_grad else model_q.ADP
+             self.assertTrue(torch.allclose(adp_grid, adp_q, atol=1e-8, rtol=1e-5), "Computed ADPs do not match")
+
+        # Verify V/Winv match point-by-point after expansion (Optional but informative)
+        # Can be slow, maybe check only a few points like target_q_idx
         if target_q_idx != -1:
-            print(f"Grid V[{target_bz_idx}] vs Arb V[{target_q_idx}] close? {torch.allclose(model_grid.V[target_bz_idx], model_q.V[target_q_idx], atol=1e-9)}")
-            print(f"Grid Winv[{target_bz_idx}] vs Arb Winv[{target_q_idx}] close? {torch.allclose(model_grid.Winv[target_bz_idx], model_q.Winv[target_q_idx], atol=1e-9)}")
+             self.assertTrue(torch.allclose(model_grid.V[target_bz_idx], model_q.V[target_q_idx], atol=1e-9), f"V mismatch for q_idx {target_q_idx}")
+             self.assertTrue(torch.allclose(model_grid.Winv[target_bz_idx], model_q.Winv[target_q_idx], atol=1e-9), f"Winv mismatch for q_idx {target_q_idx}")
 
         print("Running apply_disorder (arbitrary-q)...")
         intensity_q = model_q.apply_disorder(use_data_adp=use_data_adp)
