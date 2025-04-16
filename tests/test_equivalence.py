@@ -96,6 +96,13 @@ class TestModeEquivalence(unittest.TestCase):
         # Verify resolution masks match (Crucial!)
         self.assertTrue(torch.equal(model_grid.res_mask, model_q.res_mask), "Resolution masks (res_mask) do not match")
 
+        # Inside _run_and_compare, after res_mask check:
+        valid_indices_grid = torch.where(model_grid.res_mask)[0]
+        valid_indices_q = torch.where(model_q.res_mask)[0]
+        print(f"DEBUG Grid valid_indices[:10]: {valid_indices_grid[:10].cpu().numpy()}")
+        print(f"DEBUG Arb valid_indices[:10]: {valid_indices_q[:10].cpu().numpy()}")
+        self.assertTrue(torch.equal(valid_indices_grid, valid_indices_q), "Valid indices derived from res_mask do not match")
+
         # Verify ADPs match (if computed) (already exists)
         if not use_data_adp and hasattr(model_grid, 'ADP') and hasattr(model_q, 'ADP'):
              # Use detach() for comparison if ADP requires grad

@@ -1647,11 +1647,6 @@ class OnePhonon:
         n_points = self.q_grid.shape[0]
         valid_indices = torch.where(self.res_mask)[0]
 
-        # Inside apply_disorder, after valid_indices = ...
-        mode_str = "ARB" if getattr(self, 'use_arbitrary_q', False) else "GRID"
-        print(f"DEBUG {mode_str}: valid_indices[:10] = {valid_indices[:10].cpu().numpy()}")
-        print(f"DEBUG {mode_str}: valid_indices shape = {valid_indices.shape}")
-
         if getattr(self, 'use_arbitrary_q', False):
             logging.debug(f"[apply_disorder] ARBITRARY-Q MODE (using direct indexing)")
         else:
