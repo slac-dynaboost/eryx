@@ -400,9 +400,22 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
          logging.error("Cannot proceed to plotting, significance_map_2d is None.")
          return
 
+    # 11. Reshape other data for plotting
+    try:
+        I0_map_2d = I0_np.reshape(reshape_dims)
+        I1_map_2d = I1_np.reshape(reshape_dims)
+        dI_map_2d = dI_np.reshape(reshape_dims)
+        logging.info(f"Reshaped I0, I1, dI maps to {I0_map_2d.shape}")
+    except Exception as e:
+        logging.error(f"Failed to reshape I0, I1, or dI maps: {e}", exc_info=True)
+        return
 
-    # 11. Plot the 2D map
-    plt.figure(figsize=(8, 7))
+    # 12. Plot the 2D maps (2x2 grid)
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12)) # Create 2x2 grid
+    fig.suptitle(f'Sensitivity Analysis Maps ({slice_dim}={slice_val} plane)', fontsize=16)
+
+    # --- Plot 1: Significance Map (Top-Left) ---
+    ax = axes[0, 0]
     plot_data = significance_map_2d # Plot the new regularized ratio
 
     # Add logging before copy
