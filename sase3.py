@@ -30,8 +30,8 @@ SIM_PARAMS = {
     'res_limit': 0.0,
     # Sampling params *MUST* be provided for GNM ADP calc
     'hsampling': [-4, 4, 3],
-    'ksampling': [-4, 4, 3],
-    'lsampling': [-4, 4, 3],
+    'ksampling': [-17, 17, 3],
+    'lsampling': [-29, 29, 3],
 }
 GAMMA_INTRA = 1.5
 GAMMA_INTER = 0.7
@@ -45,11 +45,11 @@ NUM_VIS_POINTS = 5
 
 # -- 2D Visualization Parameters --
 VISUALIZE_2D = True # Set to True to enable 2D plot generation
-SLICE_DIM = 'l'     # Dimension to slice (h, k, or l)
-SLICE_VAL = 0.5     # <<-- CHANGE THIS: Choose a non-zero value (e.g., 0.5, 1.0)
-H_RANGE_2D = [-2, 2] # Range for h in 2D plot
-K_RANGE_2D = [-2, 2] # Range for k in 2D plot
-L_RANGE_2D = [-2, 2] # Range for l in 2D plot
+SLICE_DIM = 'h'     # Dimension to slice (h, k, or l)
+SLICE_VAL = 1.0     # <<-- CHANGE THIS: Choose a non-zero value (e.g., 0.5, 1.0)
+H_RANGE_2D = [-4, 4, 3] # Range for h in 2D plot
+K_RANGE_2D = [-17, 17, 3] # Range for k in 2D plot
+L_RANGE_2D = [-29, 29, 3] # Range for l in 2D plot
 SAMPLING_RATE_2D = 5.0 # Sampling rate (points per Miller index) for 2D plot
 
 # -- Computation Settings --
