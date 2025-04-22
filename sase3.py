@@ -50,7 +50,7 @@ SLICE_VAL = 0.5     # <<-- CHANGE THIS: Choose a non-zero value (e.g., 0.5, 1.0)
 H_RANGE_2D = [-2, 2] # Range for h in 2D plot
 K_RANGE_2D = [-2, 2] # Range for k in 2D plot
 L_RANGE_2D = [-2, 2] # Range for l in 2D plot
-SAMPLING_RATE_2D = 1.0 # Sampling rate (points per Miller index) for 2D plot
+SAMPLING_RATE_2D = 5.0 # Sampling rate (points per Miller index) for 2D plot
 
 # -- Computation Settings --
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
