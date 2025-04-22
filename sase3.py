@@ -150,15 +150,15 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     if slice_dim.lower() == 'h':
         h_sampling_2d = (slice_val, slice_val, 1) # Single point, rate doesn't matter
         plane_axes = ('k', 'l')
-        logging.info(f"Generating 2D sensitivity map for h={slice_val} plane...")
+        logging.info(f"Generating 2D regularized significance map for h={slice_val} plane...")
     elif slice_dim.lower() == 'k':
         k_sampling_2d = (slice_val, slice_val, 1)
         plane_axes = ('h', 'l')
-        logging.info(f"Generating 2D sensitivity map for k={slice_val} plane...")
+        logging.info(f"Generating 2D regularized significance map for k={slice_val} plane...")
     else: # Default to l=0
         l_sampling_2d = (slice_val, slice_val, 1)
         plane_axes = ('h', 'k')
-        logging.info(f"Generating 2D sensitivity map for l={slice_val} plane...")
+        logging.info(f"Generating 2D regularized significance map for l={slice_val} plane...")
 
     # 2. Generate base q-vectors for the slice
     try:
