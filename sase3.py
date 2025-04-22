@@ -311,6 +311,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # --- End Calculation ---
 
     # 9. Reshape significance map
+    significance_map_2d = None # Initialize before try block
     try:
         # Ensure map_shape_2d corresponds to the actual slice dimensions
         if slice_dim.lower() == 'h': # k-l plane
