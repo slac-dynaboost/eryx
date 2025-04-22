@@ -337,29 +337,26 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         logging.error(f"Failed to reshape derivative map: {e}. Flat size: {dlnIdq_map_flat.size}, Target shape: {reshape_dims}")
         return
 
-    # 8. Plot the 2D map
+    # 10. Plot the 2D map
     plt.figure(figsize=(8, 7))
-    plot_data = dlnIdq_map_2d # Plot the raw derivative, including NaNs
-    cmap = plt.get_cmap('coolwarm') # Use a diverging colormap
-    # cmap.set_bad(color='grey', alpha=0.5) # Set color for NaN values (optional)
-    plot_label = 'd(ln I)/d|q| (Å)'
+    plot_data = significance_map_2d # Plot the significance ratio
+    cmap = plt.get_cmap('viridis') # Or 'plasma', 'magma'
+    # cmap.set_bad(color='grey', alpha=0.5) # Optional: color for NaNs
+    plot_label = 'Significance Ratio: (ΔI/I)_jitter / (ΔI/I)_noise'
 
-    # Determine robust color limits, ignoring NaNs
-    valid_data = plot_data[~np.isnan(plot_data)]
+    # Determine robust color limits, ignoring NaNs and Infs
+    valid_data = plot_data[np.isfinite(plot_data)]
     if valid_data.size > 0:
-         if cmap == 'coolwarm':
-             vmax = np.percentile(np.abs(valid_data), 98) # Symmetrical range based on 98th percentile of absolute value
-             vmin = -vmax
-         else:
-             vmin = np.percentile(valid_data, 2)
-             vmax = np.percentile(valid_data, 98)
-         # Handle cases where vmin/vmax are too close or zero
-         if np.isclose(vmin, vmax):
-             vmin = valid_data.min() - 1e-9
-             vmax = valid_data.max() + 1e-9
-         if np.isclose(vmin, vmax): # If still close (e.g., all zeros)
-              vmin -= 0.1
-              vmax += 0.1
+        # Focus on the range around 1.0 (where jitter effect equals noise)
+        # Use percentiles, but maybe cap vmax to emphasize lower values
+        vmin = np.percentile(valid_data, 1)  # Show values near zero
+        vmax = np.percentile(valid_data, 99) # Cap at 99th percentile
+        # Ensure vmin is at least 0
+        vmin = max(0, vmin)
+        # Maybe set a fixed reasonable upper limit? e.g., 10
+        # vmax = min(vmax, 10)
+        if np.isclose(vmin, vmax): vmin -= 0.1; vmax += 0.1
+        if vmin < 0: vmin = 0 # Ensure vmin is not negative
         # Focus on the range around 1.0 (where jitter effect equals noise)
         # Use percentiles, but maybe cap vmax to emphasize lower values
         vmin = np.percentile(valid_data, 1)  # Show values near zero
