@@ -345,34 +345,33 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # cmap.set_bad(color='grey', alpha=0.5) # Optional: color for NaNs
     plot_label = 'Significance Ratio: (ΔI/I)_jitter / (ΔI/I)_noise'
 
-    # Determine robust color limits, ignoring NaNs and Infs
-    valid_data = plot_data[np.isfinite(plot_data)]
+    # --- MODIFIED VMIN/VMAX CALCULATION ---
+    # Create a working copy to avoid modifying the original data
+    plot_data_for_limits = plot_data.copy()
+
+    # Replace infinite values with NaN for percentile calculation
+    plot_data_for_limits[np.isinf(plot_data_for_limits)] = np.nan
+
+    # Determine robust color limits, ignoring NaNs
+    valid_data = plot_data_for_limits[~np.isnan(plot_data_for_limits)] # Use the version with inf replaced by nan
+
     if valid_data.size > 0:
-        # Focus on the range around 1.0 (where jitter effect equals noise)
-        # Use percentiles, but maybe cap vmax to emphasize lower values
-        vmin = np.percentile(valid_data, 1)  # Show values near zero
+        # Use percentiles, cap vmax to emphasize lower values, ensure vmin >= 0
+        vmin = max(0, np.percentile(valid_data, 1))  # Ensure vmin is at least 0
         vmax = np.percentile(valid_data, 99) # Cap at 99th percentile
-        # Ensure vmin is at least 0
-        vmin = max(0, vmin)
-        # Maybe set a fixed reasonable upper limit? e.g., 10
-        # vmax = min(vmax, 10)
-        if np.isclose(vmin, vmax): vmin -= 0.1; vmax += 0.1
-        if vmin < 0: vmin = 0 # Ensure vmin is not negative
-        # Focus on the range around 1.0 (where jitter effect equals noise)
-        # Use percentiles, but maybe cap vmax to emphasize lower values
-        vmin = np.percentile(valid_data, 1)  # Show values near zero
-        vmax = np.percentile(valid_data, 99) # Cap at 99th percentile
-        # Ensure vmin is at least 0
-        vmin = max(0, vmin)
-        # Maybe set a fixed reasonable upper limit? e.g., 10
-        # vmax = min(vmax, 10)
-        if np.isclose(vmin, vmax): vmin -= 0.1; vmax += 0.1
-        if vmin < 0: vmin = 0 # Ensure vmin is not negative
+
+        # Optional: Further cap vmax if values can get very large
+        # vmax = min(vmax, 10) # Example: Cap at 10
+
+        if np.isclose(vmin, vmax): vmin = max(0, vmin - 0.1); vmax += 0.1 # Adjust if range is too small
+        if vmin >= vmax: vmax = vmin + 0.1 # Ensure vmax > vmin
     else:
         vmin, vmax = 0, 1 # Default range if no valid data
+    # --- END MODIFIED VMIN/VMAX CALCULATION ---
 
     logging.info(f"Plotting Significance Ratio map with vmin={vmin:.2f}, vmax={vmax:.2f}")
 
+    # Plot using the ORIGINAL plot_data (which might still contain inf)
     im = plt.imshow(plot_data.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax,
                     extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
                            [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
