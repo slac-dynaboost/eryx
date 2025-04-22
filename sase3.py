@@ -134,13 +134,14 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
                              sampling_rate: float,
                              # --- New Parameters ---
                              rel_energy_jitter: float,
-                             noise_level_frac: float):
-    """Calculates and visualizes the 2D significance map:
-       (Fractional Intensity Change due to Jitter) / (Fractional Noise Level)"""
-    logging.info("\n--- Starting 2D Significance Visualization ---") # Changed title
-    start_time_2d = time.time()
+                             # --- Need Mean Photons ---
+                             mean_photons_per_pixel: float):
+   """Calculates and visualizes the 2D regularized significance map:
+      |ΔI_jitter / σ_I_reg| where σ_I_reg ≈ sqrt(I0 + I_1photon)"""
+   logging.info("\n--- Starting 2D Regularized Significance Visualization ---") # Changed title
+   start_time_2d = time.time()
 
-    # 1. Define the 2D grid sampling parameters (Keep as is)
+   # 1. Define the 2D grid sampling parameters (Keep as is)
     h_sampling_2d = (h_range[0], h_range[1], sampling_rate)
     k_sampling_2d = (k_range[0], k_range[1], sampling_rate)
     l_sampling_2d = (l_range[0], l_range[1], sampling_rate)
@@ -251,11 +252,11 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # Check dq magnitude as well
     dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
     logging.info(f"Step Size Stats (dq): Min={np.nanmin(dq_mag_slice_np):.3e}, Max={np.nanmax(dq_mag_slice_np):.3e}, Mean={np.nanmean(dq_mag_slice_np):.3e}")
-    # --- End Debugging ---
+   # --- End Debugging ---
 
-    # --- Start NaN Handling in Post-Processing ---
-    # 6. Calculate derivative map, handling NaNs explicitly
-    I0_np = I_slice.cpu().numpy()
+   # --- Calculate Regularized Significance Ratio ---
+   # 6. Calculate d(ln I)/d|q| map, handling NaNs
+   I0_np = I_slice.cpu().numpy()
     I1_np = I_perturbed_slice.cpu().numpy()
     dI_np = I1_np - I0_np
 
@@ -280,37 +281,64 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # Log stats for the calculated derivative (ignoring NaNs)
     if num_nan_derivative < num_total_pixels:
          logging.info(f"Derivative Map Stats (dlnI/d|q|, excluding NaNs): Min={np.nanmin(dlnIdq_map_flat):.3e}, Max={np.nanmax(dlnIdq_map_flat):.3e}, Mean={np.nanmean(dlnIdq_map_flat):.3e}")
-    else:
-         logging.info("Derivative Map Stats (dlnI/d|q|): All NaN")
+   else:
+        logging.info("Derivative Map Stats (dlnI/d|q|): All NaN")
 
-    # 7. Calculate Fractional Change Map
-    # frac_change = abs(d(ln I)/d|q|) * rel_energy_jitter * |q|
-    q_norm_slice_np = q_norm_slice.squeeze().cpu().numpy() # Need |q| for frac_change
-    frac_change_map_flat = np.full_like(dlnIdq_map_flat, np.nan)
-    valid_derivative_mask = ~np.isnan(dlnIdq_map_flat)
-    frac_change_map_flat[valid_derivative_mask] = (
-        np.abs(dlnIdq_map_flat[valid_derivative_mask]) *
-        rel_energy_jitter *
-        q_norm_slice_np[valid_derivative_mask] # Use |q| for each pixel
-    )
+   # 7. Calculate Absolute Jitter Intensity Change Map (ΔI_jitter)
+   delta_I_jitter_flat = np.full_like(dlnIdq_map_flat, np.nan)
+   valid_derivative_mask = ~np.isnan(dlnIdq_map_flat)
+   # Need valid I0 as well for the multiplication
+   valid_for_delta_I = valid_I0_mask & valid_derivative_mask
+   if np.any(valid_for_delta_I):
+       q_norm_slice_np = q_norm_slice.squeeze().cpu().numpy() # Need |q| for frac_change
+       q_norm_valid = q_norm_slice_np[valid_for_delta_I]
+       # delta_I = dI/d|q| * delta_|q| = (I * dlnI/d|q|) * (rel_jitter * |q|)
+       # delta_I = I0 * dlnI/d|q| * rel_jitter * |q|
+       delta_I_jitter_flat[valid_for_delta_I] = (
+           I0_np[valid_for_delta_I] *                  # Intensity I0
+           dlnIdq_map_flat[valid_for_delta_I] *        # d(ln I)/d|q|
+           rel_energy_jitter *                         # Δω/ω
+           q_norm_valid                                # |q|
+       )
+       # We take the absolute value later when dividing
 
-    # 8. Calculate Significance Ratio Map
-    significance_map_flat = np.full_like(frac_change_map_flat, np.nan)
-    if noise_level_frac > 1e-12: # Avoid division by zero if noise is effectively zero
-        valid_frac_change_mask = ~np.isnan(frac_change_map_flat)
-        significance_map_flat[valid_frac_change_mask] = (
-            frac_change_map_flat[valid_frac_change_mask] / noise_level_frac
-        )
-    else:
-        # If noise is zero, ratio is infinite where frac_change > 0
-        positive_frac_change_mask = (~np.isnan(frac_change_map_flat)) & (frac_change_map_flat > 1e-12)
-        significance_map_flat[positive_frac_change_mask] = np.inf
+   # 8. Calculate Regularized Noise Standard Deviation (σ_I_reg)
+   I_mean = np.nanmean(I0_np)
+   if np.isnan(I_mean) or mean_photons_per_pixel <= 0:
+       I_1photon = 0.0
+       logging.warning("Could not estimate I_1photon, setting regularization term to 0.")
+   else:
+       I_1photon = I_mean / mean_photons_per_pixel
+       logging.info(f"Estimated I_1photon ≈ {I_1photon:.3e} (using I_mean={I_mean:.3e}, N_mean={mean_photons_per_pixel:.1e})")
 
-    num_nan_significance = np.sum(np.isnan(significance_map_flat))
-    logging.info(f"Calculated significance ratio map. {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
-    # --- End Calculation ---
+   # Ensure I0 is non-negative before adding I_1photon and taking sqrt
+   I0_non_negative = np.maximum(I0_np, 0)
+   sigma_I_reg_flat = np.sqrt(I0_non_negative + I_1photon)
+   # Avoid division by zero if sigma_I_reg is somehow zero
+   sigma_I_reg_safe = np.where(np.abs(sigma_I_reg_flat) < 1e-15, 1e-15, sigma_I_reg_flat)
 
-    # 9. Reshape significance map
+   # 9. Calculate Regularized Significance Ratio Map (|ΔI_jitter / σ_I_reg|)
+   significance_map_flat = np.full_like(delta_I_jitter_flat, np.nan)
+   # Calculate where both delta_I and sigma_I are valid
+   valid_calculation_mask = ~np.isnan(delta_I_jitter_flat) & ~np.isnan(sigma_I_reg_safe) & (np.abs(sigma_I_reg_safe) > 1e-15)
+
+   if np.any(valid_calculation_mask):
+       significance_map_flat[valid_calculation_mask] = (
+           np.abs(delta_I_jitter_flat[valid_calculation_mask]) / # Absolute change
+           sigma_I_reg_safe[valid_calculation_mask]              # Regularized noise std dev
+       )
+
+   num_nan_significance = np.sum(np.isnan(significance_map_flat))
+   logging.info(f"Calculated regularized significance ratio map (|ΔI_jitter / σ_I_reg|). {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
+
+   # Log stats for the new ratio (ignoring NaNs)
+   if num_nan_significance < significance_map_flat.size:
+        logging.info(f"Reg. Significance Ratio Stats (excluding NaNs): Min={np.nanmin(significance_map_flat):.3e}, Max={np.nanmax(significance_map_flat):.3e}, Mean={np.nanmean(significance_map_flat):.3e}")
+   else:
+        logging.info("Reg. Significance Ratio Stats: All NaN")
+   # --- End Calculation ---
+
+   # 10. Reshape significance map (Keep robust version)
     significance_map_2d = None # Initialize explicitly
     try:
         # Determine target shape based on slice dimension
@@ -354,9 +382,10 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
          logging.error("Cannot proceed to plotting, significance_map_2d is None.")
          return
 
-    # 10. Plot the 2D map
-    plt.figure(figsize=(8, 7))
-    plot_data = significance_map_2d # Plot the significance ratio
+
+   # 11. Plot the 2D map
+   plt.figure(figsize=(8, 7))
+   plot_data = significance_map_2d # Plot the new regularized ratio
 
     # Add logging before copy
     logging.debug(f"Type of plot_data before copy: {type(plot_data)}")
@@ -364,12 +393,11 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
          logging.error("plot_data is None right before calling .copy() - check assignment logic.")
          return # Prevent error
 
-    cmap = plt.get_cmap('viridis') # Or 'plasma', 'magma'
-    # cmap.set_bad(color='grey', alpha=0.5) # Optional: color for NaNs
-    plot_label = 'Significance Ratio: (ΔI/I)_jitter / (ΔI/I)_noise'
+   cmap = plt.get_cmap('viridis')
+   # cmap.set_bad(color='grey', alpha=0.5)
+   plot_label = '|ΔI_jitter / σ_I_reg|' # UPDATED LABEL (σ_I_reg ≈ sqrt(I0 + I_1photon))
 
-    # --- MODIFIED VMIN/VMAX CALCULATION ---
-    # Create a working copy to avoid modifying the original data
+   # Determine robust color limits, ignoring NaNs and Infs
     plot_data_for_limits = plot_data.copy() # Error occurred here
 
     # Replace infinite values with NaN for percentile calculation
@@ -390,22 +418,47 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         if vmin >= vmax: vmax = vmin + 0.1 # Ensure vmax > vmin
     else:
         vmin, vmax = 0, 1 # Default range if no valid data
-    # --- END MODIFIED VMIN/VMAX CALCULATION ---
+   # --- END MODIFIED VMIN/VMAX CALCULATION ---
 
-    logging.info(f"Plotting Significance Ratio map with vmin={vmin:.2f}, vmax={vmax:.2f}")
+   logging.info(f"Plotting Regularized Significance map with vmin={vmin:.3f}, vmax={vmax:.3f}")
 
-    # Plot using the ORIGINAL plot_data (which might still contain inf)
-    im = plt.imshow(plot_data.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax,
+   im = plt.imshow(plot_data.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax,
                     extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
                            [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
-                           [h_range[0], h_range[1], l_range[0], l_range[1]])
-    plt.colorbar(im, label=plot_label)
-    plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
-    plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Significance Ratio in {slice_dim}={slice_val} plane (Jitter Effect / Noise Level)')
-    # Add contour line where ratio = 1?
-    # if valid_data.size > 0:
-    #     try:
+                          [h_range[0], h_range[1], l_range[0], l_range[1]])
+   plt.colorbar(im, label=plot_label)
+   plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
+   plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
+   plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane') # UPDATED TITLE
+
+   # Add contour line where ratio = 1?
+   if valid_data.size > 0 and vmin < 1.0 < vmax:
+       try:
+           # Define X, Y based on slice
+           if slice_dim.lower() == 'l':
+                x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
+                y_coords = np.linspace(k_range[0], k_range[1], reshape_dims[1])
+           elif slice_dim.lower() == 'h':
+                x_coords = np.linspace(k_range[0], k_range[1], reshape_dims[0])
+                y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
+           else: # k slice
+                x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
+                y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
+           X, Y = np.meshgrid(x_coords, y_coords)
+           plt.contour(X, Y, plot_data.T, levels=[1.0], colors='red', linestyles='dashed')
+           logging.info("Added contour line at Significance Ratio = 1.0")
+       except Exception as contour_e:
+           logging.warning(f"Could not draw contour line at 1.0: {contour_e}")
+
+
+   plt.grid(True, alpha=0.2)
+   plt.tight_layout()
+   plt.savefig(f"sase_reg_significance_map_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
+   logging.info(f"Saved 2D regularized significance map plot to sase_reg_significance_map_{slice_dim}{slice_val}.png")
+   # plt.show()
+
+   elapsed_time_2d = time.time() - start_time_2d
+   logging.info(f"2D Regularized Significance Visualization finished in {elapsed_time_2d:.2f} seconds.")
     #         X, Y = np.meshgrid(np.linspace(h_range[0], h_range[1], reshape_dims[0]),
     #                            np.linspace(k_range[0], k_range[1], reshape_dims[1])) # Adjust axes based on slice
     #         plt.contour(X, Y, plot_data.T, levels=[1.0], colors='red', linestyles='dashed')
@@ -544,13 +597,12 @@ def run_back_of_envelope_refactored():
                 h_range=H_RANGE_2D,
                 k_range=K_RANGE_2D,
                 l_range=L_RANGE_2D,
-                sampling_rate=SAMPLING_RATE_2D,
-                # --- Pass new args ---
-                rel_energy_jitter=REL_ENERGY_JITTER,
-                noise_level_frac=noise_level_frac
-            )
-        except Exception as e:
-            logging.error(f"Failed during 2D sensitivity visualization: {e}", exc_info=True)
+               sampling_rate=SAMPLING_RATE_2D,
+               rel_energy_jitter=REL_ENERGY_JITTER,
+               mean_photons_per_pixel=MEAN_PHOTONS_PER_PIXEL # Pass N_mean
+           )
+       except Exception as e:
+           logging.error(f"Failed during 2D sensitivity visualization: {e}", exc_info=True)
 
     total_time = time.time() - start_time
     logging.info(f"\nCalculation finished in {total_time:.2f} seconds.")
