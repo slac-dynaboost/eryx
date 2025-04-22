@@ -249,26 +249,36 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     logging.info(f"Step Size Stats (dq): Min={np.nanmin(dq_mag_slice_np):.3e}, Max={np.nanmax(dq_mag_slice_np):.3e}, Mean={np.nanmean(dq_mag_slice_np):.3e}")
     # --- End Debugging ---
 
-    I0 = I_slice
-    I1 = I_perturbed_slice
-    dI = I1 - I0
-    # Use previously calculated dq_mag_slice, ensure non-zero denominator
+    # --- Start NaN Handling in Post-Processing ---
+    # 6. Calculate derivative map, handling NaNs explicitly
+    I0_np = I_slice.cpu().numpy()
+    I1_np = I_perturbed_slice.cpu().numpy()
+    dI_np = I1_np - I0_np
+
     dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
     dq_mag_slice_safe = np.where(np.abs(dq_mag_slice_np) < 1e-12, 1e-12, dq_mag_slice_np)
 
-    dIdq_slice = dI.cpu().numpy() / dq_mag_slice_safe
+    dIdq_slice = dI_np / dq_mag_slice_safe
 
-    # Calculate log derivative, handle I0 near zero
-    I0_np = I0.cpu().numpy()
-    I0_safe = np.where(np.abs(I0_np) < 1e-15, 1e-15, I0_np)
-    dlnIdq_map_flat = (1.0 / I0_safe) * dIdq_slice
+    # Create a mask for valid I0 values (finite and positive)
+    valid_I0_mask = np.isfinite(I0_np) & (I0_np > 1e-15)
 
-    # Handle NaNs from simulation or calculation
-    nan_mask = np.isnan(I0_np) | np.isnan(I1.cpu().numpy()) | np.isnan(dlnIdq_map_flat)
-    dlnIdq_map_flat[nan_mask] = np.nan # Propagate NaNs
+    # Initialize the derivative map with NaNs
+    dlnIdq_map_flat = np.full_like(I0_np, np.nan)
 
-    # Check the final derivative map stats before plotting
-    logging.info(f"Derivative Map Stats (dlnI/d|q|): Min={np.nanmin(dlnIdq_map_flat):.3e}, Max={np.nanmax(dlnIdq_map_flat):.3e}, Mean={np.nanmean(dlnIdq_map_flat):.3e}, NaN count={np.sum(np.isnan(dlnIdq_map_flat))}")
+    # Calculate the derivative ONLY where I0 is valid
+    dlnIdq_map_flat[valid_I0_mask] = (1.0 / I0_np[valid_I0_mask]) * dIdq_slice[valid_I0_mask]
+
+    num_nan_derivative = np.sum(np.isnan(dlnIdq_map_flat))
+    num_total_pixels = dlnIdq_map_flat.size
+    logging.info(f"Calculated derivative map. {num_nan_derivative}/{num_total_pixels} pixels are NaN (due to issues in I0 or calculation).")
+
+    # Log stats for the calculated derivative (ignoring NaNs)
+    if num_nan_derivative < num_total_pixels:
+         logging.info(f"Derivative Map Stats (dlnI/d|q|, excluding NaNs): Min={np.nanmin(dlnIdq_map_flat):.3e}, Max={np.nanmax(dlnIdq_map_flat):.3e}, Mean={np.nanmean(dlnIdq_map_flat):.3e}")
+    else:
+         logging.info("Derivative Map Stats (dlnI/d|q|): All NaN")
+    # --- End NaN Handling ---
 
     # 7. Reshape derivative map
     try:
@@ -299,12 +309,9 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
 
     # 8. Plot the 2D map
     plt.figure(figsize=(8, 7))
-    # Use absolute value for easier visualization, or use a diverging colormap like 'coolwarm'
-    # plot_data = np.abs(dlnIdq_map_2d)
-    # cmap = 'viridis'
-    # plot_label = '|d(ln I)/d|q|| (Å)'
-    plot_data = dlnIdq_map_2d
-    cmap = 'coolwarm' # Shows positive/negative deviations
+    plot_data = dlnIdq_map_2d # Plot the raw derivative, including NaNs
+    cmap = plt.get_cmap('coolwarm') # Use a diverging colormap
+    # cmap.set_bad(color='grey', alpha=0.5) # Set color for NaN values (optional)
     plot_label = 'd(ln I)/d|q| (Å)'
 
     # Determine robust color limits, ignoring NaNs
