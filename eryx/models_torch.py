@@ -1288,6 +1288,8 @@ class OnePhonon:
                 eigenvalues_tensor # Already real_dtype
             )
             
+            # Append the processed eigenvalues to the list
+            eigenvalues_unique_list.append(eigenvalues_processed)
             
         # Stack results for unique k-vectors
         eigenvalues_unique = torch.stack(eigenvalues_unique_list)  # Differentiable eigenvalues
