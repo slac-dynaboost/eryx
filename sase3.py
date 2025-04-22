@@ -431,24 +431,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
     plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane') # UPDATED TITLE
 
-    # Add contour line where ratio = 1?
-    if valid_data.size > 0 and vmin < 1.0 < vmax:
-        try:
-            # Define X, Y based on slice
-            if slice_dim.lower() == 'l':
-                x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
-                y_coords = np.linspace(k_range[0], k_range[1], reshape_dims[1])
-            elif slice_dim.lower() == 'h':
-                x_coords = np.linspace(k_range[0], k_range[1], reshape_dims[0])
-                y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
-            else: # k slice
-                x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
-                y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
-            X, Y = np.meshgrid(x_coords, y_coords)
-            plt.contour(X, Y, plot_data.T, levels=[1.0], colors='red', linestyles='dashed')
-            logging.info("Added contour line at Significance Ratio = 1.0")
-        except Exception as contour_e:
-            logging.warning(f"Could not draw contour line at 1.0: {contour_e}")
+    # Removed contour lines for cleaner visualization
 
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
