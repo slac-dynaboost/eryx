@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 # Set a non-interactive backend if running on a server without display
 # import matplotlib
 # matplotlib.use('Agg')
+from scipy.interpolate import griddata
 
 # --- Configuration ---
 logging.basicConfig(
@@ -124,7 +125,64 @@ def plot_intensity_slice(q_mags_np: np.ndarray, intensities_np: np.ndarray,
     plt.savefig("sase_intensity_slice_comparison.png", dpi=150)
     logging.info("Saved 1D intensity slice comparison plot to sase_intensity_slice_comparison.png")
     # plt.show()
-
+ 
+# --- Helper Function for NaN Interpolation ---
+def interpolate_nans_2d(coords_2d: np.ndarray, values: np.ndarray, method='nearest') -> np.ndarray:
+    """
+    Interpolates NaN values in a 2D data slice using scipy.interpolate.griddata.
+ 
+    Args:
+        coords_2d: NumPy array of shape (N, 2) containing the 2D coordinates (e.g., [k, l] or [h, l]).
+        values: NumPy array of shape (N,) containing the data values, possibly with NaNs.
+        method: Interpolation method ('nearest', 'linear', 'cubic'). Defaults to 'nearest'.
+ 
+    Returns:
+        NumPy array of shape (N,) with NaN values interpolated.
+    """
+    nan_mask = np.isnan(values)
+    num_nans = np.sum(nan_mask)
+ 
+    if num_nans == 0:
+        logging.debug("No NaNs found, skipping interpolation.")
+        return values
+    if num_nans == values.size:
+        logging.warning("All values are NaN, cannot interpolate.")
+        return values # Return original NaNs
+ 
+    valid_mask = ~nan_mask
+    valid_coords = coords_2d[valid_mask]
+    valid_values = values[valid_mask]
+    nan_coords = coords_2d[nan_mask]
+ 
+    if valid_coords.shape[0] < 1:
+         logging.warning("No valid points found to interpolate from.")
+         return values # Cannot interpolate
+ 
+    logging.info(f"Interpolating {num_nans} NaN values using '{method}' method...")
+    try:
+        interpolated_values = griddata(valid_coords, valid_values, nan_coords, method=method)
+ 
+        # Check if interpolation itself produced NaNs (e.g., with 'linear' outside convex hull)
+        interp_nan_mask = np.isnan(interpolated_values)
+        num_interp_nans = np.sum(interp_nan_mask)
+        if num_interp_nans > 0:
+            logging.warning(f"Interpolation resulted in {num_interp_nans} NaNs. Trying 'nearest' for those.")
+            if method != 'nearest': # Avoid infinite recursion
+                nearest_values = griddata(valid_coords, valid_values, nan_coords[interp_nan_mask], method='nearest')
+                interpolated_values[interp_nan_mask] = nearest_values
+            else:
+                logging.error("Nearest neighbor interpolation also resulted in NaNs. Cannot fill remaining NaNs.")
+                # Keep the NaNs from interpolation in this case
+ 
+        # Fill NaNs in the original array
+        values_filled = values.copy()
+        values_filled[nan_mask] = interpolated_values
+        return values_filled
+ 
+    except Exception as e:
+        logging.error(f"Error during griddata interpolation: {e}", exc_info=True)
+        return values # Return original array on error
+ 
 # --- Function for 2D Sensitivity Visualization ---
 def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
                              gamma_intra: float, gamma_inter: float,
@@ -177,12 +235,13 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         )
         A_inv_tensor = torch.tensor(temp_model.model.A_inv, dtype=DTYPE_REAL, device=device)
         del temp_model # Free memory
-
-        # Use generate_grid from map_utils_torch
-        q_grid_slice, map_shape_2d = generate_grid(
-            A_inv_tensor, h_sampling_2d, k_sampling_2d, l_sampling_2d, return_hkl=False
+ 
+        # Use generate_grid from map_utils_torch, get HKL for interpolation coords
+        q_grid_slice, hkl_grid_slice, map_shape_2d = generate_grid(
+            A_inv_tensor, h_sampling_2d, k_sampling_2d, l_sampling_2d, return_hkl=True # Set return_hkl=True
         )
         q_grid_slice = q_grid_slice.to(dtype=DTYPE_REAL)
+        hkl_grid_slice = hkl_grid_slice.to(dtype=DTYPE_REAL) # Also ensure HKL is correct dtype
         num_pixels = q_grid_slice.shape[0]
         logging.info(f"Generated base grid for 2D slice: {num_pixels} points, map shape: {map_shape_2d}")
 
@@ -246,46 +305,57 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
 
     logging.info(f"Intensity Stats (I0 - Base): Min={np.nanmin(I_slice_np):.3e}, Max={np.nanmax(I_slice_np):.3e}, Mean={np.nanmean(I_slice_np):.3e}, NaN count={np.sum(np.isnan(I_slice_np))}")
     logging.info(f"Intensity Stats (I1 - Perturbed): Min={np.nanmin(I_perturbed_slice_np):.3e}, Max={np.nanmax(I_perturbed_slice_np):.3e}, Mean={np.nanmean(I_perturbed_slice_np):.3e}, NaN count={np.sum(np.isnan(I_perturbed_slice_np))}")
-
-    # --- NaN Handling before Finite Difference ---
-    nan_mask_I0 = np.isnan(I_slice_np)
-    nan_mask_I1 = np.isnan(I_perturbed_slice_np)
-    combined_nan_mask = nan_mask_I0 | nan_mask_I1
-    num_combined_nans = np.sum(combined_nan_mask)
-    if num_combined_nans > 0:
-        logging.warning(f"Found {num_combined_nans} pixels where either I0 or I1 is NaN. Masking these before calculating dI.")
-        # Set both I0 and I1 to NaN where the combined mask is True
-        I_slice_np[combined_nan_mask] = np.nan
-        I_perturbed_slice_np[combined_nan_mask] = np.nan
-    # --- End NaN Handling ---
-
-    dI_np = I_perturbed_slice_np - I_slice_np
-    logging.info(f"Difference Stats (dI = I1-I0): Min={np.nanmin(dI_np):.3e}, Max={np.nanmax(dI_np):.3e}, Mean={np.nanmean(dI_np):.3e}, AbsMean={np.nanmean(np.abs(dI_np)):.3e}, NaN count={np.sum(np.isnan(dI_np))}/{dI_np.size}")
+ 
+    # --- NaN Interpolation before Finite Difference ---
+    hkl_np = hkl_grid_slice.cpu().numpy()
+    # Select coordinate columns based on slice dimension
+    if slice_dim.lower() == 'h':
+        coords_2d = hkl_np[:, 1:] # Use k, l
+    elif slice_dim.lower() == 'k':
+        coords_2d = hkl_np[:, [0, 2]] # Use h, l
+    else: # 'l' slice
+        coords_2d = hkl_np[:, :2] # Use h, k
+ 
+    logging.info("Attempting NaN interpolation for I0...")
+    I_slice_np_interp = interpolate_nans_2d(coords_2d, I_slice_np, method='nearest')
+    logging.info("Attempting NaN interpolation for I1...")
+    I_perturbed_slice_np_interp = interpolate_nans_2d(coords_2d, I_perturbed_slice_np, method='nearest')
+    # --- End NaN Interpolation ---
+ 
+    # Calculate finite difference using interpolated arrays
+    dI_np = I_perturbed_slice_np_interp - I_slice_np_interp
+    # Use original I0 for derivative calculation later, but interpolated I0/I1 for dI
+    I0_np = I_slice_np_interp # Update I0_np to be the interpolated version for consistency in I_avg calc etc.
+    I1_np = I_perturbed_slice_np_interp # Update I1_np as well
+ 
+    logging.info(f"Difference Stats (dI = I1_interp - I0_interp): Min={np.nanmin(dI_np):.3e}, Max={np.nanmax(dI_np):.3e}, Mean={np.nanmean(dI_np):.3e}, AbsMean={np.nanmean(np.abs(dI_np)):.3e}, NaN count={np.sum(np.isnan(dI_np))}/{dI_np.size}")
 
     # Check dq magnitude as well
     dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
     logging.info(f"Step Size Stats (dq): Min={np.nanmin(dq_mag_slice_np):.3e}, Max={np.nanmax(dq_mag_slice_np):.3e}, Mean={np.nanmean(dq_mag_slice_np):.3e}")
    # --- End Debugging ---
-
-   # --- Calculate Regularized Significance Ratio ---
+ 
+    # --- Calculate Regularized Significance Ratio ---
     # 6. Calculate d(ln I)/d|q| map, handling NaNs
-    I0_np = I_slice.cpu().numpy()
-    I1_np = I_perturbed_slice.cpu().numpy()
-    dI_np = I1_np - I0_np
-
+    # Use the *original* I0 before interpolation for the derivative calculation
+    # but use the interpolated dI_np calculated previously.
+    I0_np_original = I_slice.cpu().numpy() # Get original I0 again
+    # I1_np and dI_np are already the interpolated versions from the previous block
+ 
     dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
     dq_mag_slice_safe = np.where(np.abs(dq_mag_slice_np) < 1e-12, 1e-12, dq_mag_slice_np)
 
-    dIdq_slice = dI_np / dq_mag_slice_safe
-
-    # Create a mask for valid I0 values (finite and positive)
-    valid_I0_mask = np.isfinite(I0_np) & (I0_np > 1e-15)
-
+    # dI_np is already I1_interp - I0_interp
+    dIdq_slice = dI_np / dq_mag_slice_safe # Use interpolated difference
+ 
+    # Create a mask for valid ORIGINAL I0 values (finite and positive)
+    valid_I0_mask_original = np.isfinite(I0_np_original) & (I0_np_original > 1e-15)
+ 
     # Initialize the derivative map with NaNs
-    dlnIdq_map_flat = np.full_like(I0_np, np.nan)
-
-    # Calculate the derivative ONLY where I0 is valid
-    dlnIdq_map_flat[valid_I0_mask] = (1.0 / I0_np[valid_I0_mask]) * dIdq_slice[valid_I0_mask]
+    dlnIdq_map_flat = np.full_like(I0_np_original, np.nan)
+ 
+    # Calculate the derivative ONLY where ORIGINAL I0 is valid, using interpolated dIdq
+    dlnIdq_map_flat[valid_I0_mask_original] = (1.0 / I0_np_original[valid_I0_mask_original]) * dIdq_slice[valid_I0_mask_original]
 
     num_nan_derivative = np.sum(np.isnan(dlnIdq_map_flat))
     num_total_pixels = dlnIdq_map_flat.size
@@ -300,16 +370,16 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # 7. Calculate Absolute Jitter Intensity Change Map (ΔI_jitter)
     delta_I_jitter_flat = np.full_like(dlnIdq_map_flat, np.nan)
     valid_derivative_mask = ~np.isnan(dlnIdq_map_flat)
-    # Need valid I0 as well for the multiplication
-    valid_for_delta_I = valid_I0_mask & valid_derivative_mask
+    # Need valid ORIGINAL I0 as well for the multiplication
+    valid_for_delta_I = valid_I0_mask_original & valid_derivative_mask
     if np.any(valid_for_delta_I):
         q_norm_slice_np = q_norm_slice.squeeze().cpu().numpy() # Need |q| for frac_change
         q_norm_valid = q_norm_slice_np[valid_for_delta_I]
         # delta_I = dI/d|q| * delta_|q| = (I * dlnI/d|q|) * (rel_jitter * |q|)
-        # delta_I = I0 * dlnI/d|q| * rel_jitter * |q|
+        # delta_I = I0_original * dlnI/d|q| * rel_jitter * |q|
         delta_I_jitter_flat[valid_for_delta_I] = (
-            I0_np[valid_for_delta_I] *                  # Intensity I0
-            dlnIdq_map_flat[valid_for_delta_I] *        # d(ln I)/d|q|
+            I0_np_original[valid_for_delta_I] *         # Use ORIGINAL Intensity I0
+            dlnIdq_map_flat[valid_for_delta_I] *        # d(ln I)/d|q| (based on original I0 and interpolated dI)
             rel_energy_jitter *                         # Δω/ω
             q_norm_valid                                # |q|
         )
