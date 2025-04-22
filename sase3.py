@@ -311,43 +311,66 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # --- End Calculation ---
 
     # 9. Reshape significance map
-    significance_map_2d = None # Initialize before try block
+    significance_map_2d = None # Initialize explicitly
     try:
-        # Ensure map_shape_2d corresponds to the actual slice dimensions
-        if slice_dim.lower() == 'h': # k-l plane
+        # Determine target shape based on slice dimension
+        if slice_dim.lower() == 'h':
             reshape_dims = (map_shape_2d[1], map_shape_2d[2])
-        elif slice_dim.lower() == 'k': # h-l plane
+        elif slice_dim.lower() == 'k':
             reshape_dims = (map_shape_2d[0], map_shape_2d[2])
-        else: # h-k plane
+        else: # 'l' or default
             reshape_dims = (map_shape_2d[0], map_shape_2d[1])
 
-        # Check if the number of elements matches before reshaping
-        if dlnIdq_map_flat.size == np.prod(reshape_dims):
-             dlnIdq_map_2d = dlnIdq_map_flat.reshape(reshape_dims)
-        else:
-             logging.error(f"Cannot reshape flat derivative map (size {dlnIdq_map_flat.size}) to {reshape_dims}. Mismatch likely due to generate_grid behavior.")
-             # Attempt to reshape based on the first two dimensions if l=0 slice
-             if slice_dim.lower() == 'l' and dlnIdq_map_flat.size == map_shape_2d[0] * map_shape_2d[1]:
-                 dlnIdq_map_2d = dlnIdq_map_flat.reshape((map_shape_2d[0], map_shape_2d[1]))
-                 logging.warning("Reshaped using first two dimensions as fallback.")
-             else:
-                 logging.error("Fallback reshape failed. Cannot display 2D map.")
-                 return
+        expected_size = np.prod(reshape_dims)
+        actual_size = significance_map_flat.size
 
-    except ValueError as e:
-        logging.error(f"Failed to reshape derivative map: {e}. Flat size: {dlnIdq_map_flat.size}, Target shape: {reshape_dims}")
-        return
+        logging.info(f"Attempting reshape: Flat size={actual_size}, Target shape={reshape_dims}, Expected size={expected_size}")
+
+        if actual_size == expected_size:
+            # Perform reshape and assign
+            temp_reshaped = significance_map_flat.reshape(reshape_dims)
+            significance_map_2d = temp_reshaped # Explicit assignment after reshape
+            logging.info(f"Successfully reshaped significance map to {significance_map_2d.shape}")
+        else:
+            # Log mismatch and raise error immediately
+            logging.error(f"Reshape size mismatch ({actual_size} vs {expected_size}). Cannot proceed.")
+            raise ValueError(f"Reshape size mismatch: flat size {actual_size} != target size {expected_size}")
+
+        # --- Add Check ---
+        if significance_map_2d is None:
+             logging.error("significance_map_2d is None after reshape attempt, even though no error was raised.")
+             raise ValueError("Internal error: significance_map_2d is None.")
+        # --- End Check ---
+
+    except Exception as e: # Catch any exception during reshape more broadly
+        logging.error(f"Failed during reshape significance map block: {e}", exc_info=True)
+        # Optionally: Save the flat map for debugging
+        # np.save("debug_significance_map_flat.npy", significance_map_flat)
+        # logging.info("Saved flat map to debug_significance_map_flat.npy")
+        return # Exit function if reshape fails
+
+    # Ensure significance_map_2d is assigned before proceeding
+    if significance_map_2d is None:
+         logging.error("Cannot proceed to plotting, significance_map_2d is None.")
+         return
 
     # 10. Plot the 2D map
     plt.figure(figsize=(8, 7))
     plot_data = significance_map_2d # Plot the significance ratio
+
+    # Add logging before copy
+    logging.debug(f"Type of plot_data before copy: {type(plot_data)}")
+    if plot_data is None:
+         logging.error("plot_data is None right before calling .copy() - check assignment logic.")
+         return # Prevent error
+
     cmap = plt.get_cmap('viridis') # Or 'plasma', 'magma'
     # cmap.set_bad(color='grey', alpha=0.5) # Optional: color for NaNs
     plot_label = 'Significance Ratio: (ΔI/I)_jitter / (ΔI/I)_noise'
 
     # --- MODIFIED VMIN/VMAX CALCULATION ---
     # Create a working copy to avoid modifying the original data
-    plot_data_for_limits = plot_data.copy()
+    plot_data_for_limits = plot_data.copy() # Error occurred here
 
     # Replace infinite values with NaN for percentile calculation
     plot_data_for_limits[np.isinf(plot_data_for_limits)] = np.nan
