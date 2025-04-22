@@ -37,7 +37,7 @@ GAMMA_INTER = 0.7
 TARGET_RESOLUTION_A = 2.0 # Target resolution to probe (Angstrom)
 DQ_FRAC = 0.001           # Fractional step size for finite difference (0.1%)
 REL_ENERGY_JITTER = 0.001 # Assumed relative energy jitter Δω/ω (e.g., 0.1%)
-MEAN_PHOTONS_PER_PIXEL = 100 # !!! ADJUST: Estimated mean photons per pixel for noise level !!!
+MEAN_PHOTONS_PER_PIXEL = 1e8 # !!! ADJUST: Estimated mean photons per pixel for noise level !!!
 
 # -- Computation Settings --
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
