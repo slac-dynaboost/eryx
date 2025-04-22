@@ -389,13 +389,13 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     dIdq_slice = dI_np / dq_mag_slice_safe # Use interpolated difference
  
     # Create a mask for valid ORIGINAL I0 values (finite and positive)
-    valid_I0_mask_original = np.isfinite(I0_np_original) & (I0_np_original > 1e-15)
- 
+    valid_I0_mask_original = np.isfinite(I_slice_np_original) & (I_slice_np_original > 1e-15)
+
     # Initialize the derivative map with NaNs
-    dlnIdq_map_flat = np.full_like(I0_np_original, np.nan)
- 
+    dlnIdq_map_flat = np.full_like(I_slice_np_original, np.nan)
+
     # Calculate the derivative ONLY where ORIGINAL I0 is valid, using interpolated dIdq
-    dlnIdq_map_flat[valid_I0_mask_original] = (1.0 / I0_np_original[valid_I0_mask_original]) * dIdq_slice[valid_I0_mask_original]
+    dlnIdq_map_flat[valid_I0_mask_original] = (1.0 / I_slice_np_original[valid_I0_mask_original]) * dIdq_slice[valid_I0_mask_original]
 
     num_nan_derivative = np.sum(np.isnan(dlnIdq_map_flat))
     num_total_pixels = dlnIdq_map_flat.size
@@ -418,7 +418,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         # delta_I = dI/d|q| * delta_|q| = (I * dlnI/d|q|) * (rel_jitter * |q|)
         # delta_I = I0_original * dlnI/d|q| * rel_jitter * |q|
         delta_I_jitter_flat[valid_for_delta_I] = (
-            I0_np_original[valid_for_delta_I] *         # Use ORIGINAL Intensity I0
+            I_slice_np_original[valid_for_delta_I] *    # Use ORIGINAL Intensity I0
             dlnIdq_map_flat[valid_for_delta_I] *        # d(ln I)/d|q| (based on original I0 and interpolated dI)
             rel_energy_jitter *                         # Δω/ω
             q_norm_valid                                # |q|
