@@ -438,44 +438,88 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         vmin, vmax = 0, 1 # Default range if no valid data
     # --- END MODIFIED VMIN/VMAX CALCULATION ---
 
-    logging.info(f"Plotting Regularized Significance map with vmin={vmin:.3f}, vmax={vmax:.3f}")
+    logging.info(f"Plotting Significance map with vmin={vmin:.3f}, vmax={vmax:.3f}")
+    im = ax.imshow(plot_data.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax,
+                   extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
+                          [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
+                          [h_range[0], h_range[1], l_range[0], l_range[1]])
+    fig.colorbar(im, ax=ax, label=plot_label)
+    ax.set_xlabel(f'{plane_axes[0]} index / Å⁻¹')
+    ax.set_ylabel(f'{plane_axes[1]} index / Å⁻¹')
+    ax.set_title(f'Reg. Significance (|ΔI_j| / σ_reg)')
+    ax.grid(True, alpha=0.2)
 
-    im = plt.imshow(plot_data.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax,
-                    extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
-                           [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
-                           [h_range[0], h_range[1], l_range[0], l_range[1]])
-    plt.colorbar(im, label=plot_label)
-    plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
-    plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Reg. Significance (|ΔI_j| / σ_reg based on I_avg) in {slice_dim}={slice_val} plane') # Updated title
+    # --- Plot 2: Intensity I0 (Top-Right) ---
+    ax = axes[0, 1]
+    plot_data_i0 = I0_map_2d
+    valid_i0 = plot_data_i0[~np.isnan(plot_data_i0) & ~np.isinf(plot_data_i0)]
+    if valid_i0.size > 0:
+        vmin_i0 = max(0, np.percentile(valid_i0, 1))
+        vmax_i0 = np.percentile(valid_i0, 99)
+        if np.isclose(vmin_i0, vmax_i0): vmin_i0 = max(0, vmin_i0 - 0.1); vmax_i0 += 0.1
+        if vmin_i0 >= vmax_i0: vmax_i0 = vmin_i0 + 0.1
+    else: vmin_i0, vmax_i0 = 0, 1
+    logging.info(f"Plotting I0 map with vmin={vmin_i0:.3e}, vmax={vmax_i0:.3e}")
+    im = ax.imshow(plot_data_i0.T, origin='lower', cmap='viridis', vmin=vmin_i0, vmax=vmax_i0,
+                   extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
+                          [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
+                          [h_range[0], h_range[1], l_range[0], l_range[1]])
+    fig.colorbar(im, ax=ax, label='Intensity')
+    ax.set_xlabel(f'{plane_axes[0]} index / Å⁻¹')
+    ax.set_ylabel(f'{plane_axes[1]} index / Å⁻¹')
+    ax.set_title('Intensity I(q0)')
+    ax.grid(True, alpha=0.2)
 
-    # Add contour line where ratio = 1?
-    if valid_data.size > 0 and vmin < 1.0 < vmax:
-        try:
-            # Define X, Y based on slice
-            if slice_dim.lower() == 'l':
-                 x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
-                 y_coords = np.linspace(k_range[0], k_range[1], reshape_dims[1])
-            elif slice_dim.lower() == 'h':
-                 x_coords = np.linspace(k_range[0], k_range[1], reshape_dims[0])
-                 y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
-            else: # k slice
-                 x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
-                 y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
-            X, Y = np.meshgrid(x_coords, y_coords)
-            plt.contour(X, Y, plot_data.T, levels=[1.0], colors='red', linestyles='dashed')
-            logging.info("Added contour line at Significance Ratio = 1.0")
-        except Exception as contour_e:
-            logging.warning(f"Could not draw contour line at 1.0: {contour_e}")
+    # --- Plot 3: Intensity I1 (Bottom-Left) ---
+    ax = axes[1, 0]
+    plot_data_i1 = I1_map_2d
+    valid_i1 = plot_data_i1[~np.isnan(plot_data_i1) & ~np.isinf(plot_data_i1)]
+    if valid_i1.size > 0:
+        vmin_i1 = max(0, np.percentile(valid_i1, 1))
+        vmax_i1 = np.percentile(valid_i1, 99)
+        if np.isclose(vmin_i1, vmax_i1): vmin_i1 = max(0, vmin_i1 - 0.1); vmax_i1 += 0.1
+        if vmin_i1 >= vmax_i1: vmax_i1 = vmin_i1 + 0.1
+    else: vmin_i1, vmax_i1 = 0, 1
+    logging.info(f"Plotting I1 map with vmin={vmin_i1:.3e}, vmax={vmax_i1:.3e}")
+    im = ax.imshow(plot_data_i1.T, origin='lower', cmap='viridis', vmin=vmin_i1, vmax=vmax_i1,
+                   extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
+                          [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
+                          [h_range[0], h_range[1], l_range[0], l_range[1]])
+    fig.colorbar(im, ax=ax, label='Intensity')
+    ax.set_xlabel(f'{plane_axes[0]} index / Å⁻¹')
+    ax.set_ylabel(f'{plane_axes[1]} index / Å⁻¹')
+    ax.set_title('Intensity I(q1)')
+    ax.grid(True, alpha=0.2)
 
-    plt.grid(True, alpha=0.2)
-    plt.tight_layout()
-    plt.savefig(f"sase_reg_significance_map_{slice_dim}{slice_val}_Iavg.png", dpi=150) # Changed filename
-    logging.info(f"Saved 2D regularized significance map plot to sase_reg_significance_map_{slice_dim}{slice_val}_Iavg.png")
+    # --- Plot 4: Intensity Difference dI (Bottom-Right) ---
+    ax = axes[1, 1]
+    plot_data_di = dI_map_2d
+    valid_di = plot_data_di[~np.isnan(plot_data_di) & ~np.isinf(plot_data_di)]
+    if valid_di.size > 0:
+        # Use diverging colormap centered at 0
+        abs_max = np.percentile(np.abs(valid_di), 99) # Robust max absolute value
+        vmin_di, vmax_di = -abs_max, abs_max
+        if np.isclose(vmin_di, vmax_di): vmin_di -= 0.1; vmax_di += 0.1
+    else: vmin_di, vmax_di = -1, 1
+    logging.info(f"Plotting dI map with vmin={vmin_di:.3e}, vmax={vmax_di:.3e}")
+    im = ax.imshow(plot_data_di.T, origin='lower', cmap='coolwarm', vmin=vmin_di, vmax=vmax_di,
+                   extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
+                          [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
+                          [h_range[0], h_range[1], l_range[0], l_range[1]])
+    fig.colorbar(im, ax=ax, label='Intensity Difference (I1 - I0)')
+    ax.set_xlabel(f'{plane_axes[0]} index / Å⁻¹')
+    ax.set_ylabel(f'{plane_axes[1]} index / Å⁻¹')
+    ax.set_title('Intensity Difference dI = I1 - I0')
+    ax.grid(True, alpha=0.2)
+
+    # --- Final Adjustments and Save ---
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
+    plt.savefig(f"sase_sensitivity_maps_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
+    logging.info(f"Saved 2D sensitivity maps plot to sase_sensitivity_maps_{slice_dim}{slice_val}.png")
     # plt.show()
 
     elapsed_time_2d = time.time() - start_time_2d
-    logging.info(f"2D Regularized Significance Visualization finished in {elapsed_time_2d:.2f} seconds.")
+    logging.info(f"2D Sensitivity Visualization finished in {elapsed_time_2d:.2f} seconds.")
 
 
 # --- Main Calculation ---
