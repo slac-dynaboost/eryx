@@ -303,44 +303,40 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         )
         # We take the absolute value later when dividing
 
-    # 8. Calculate Poisson Noise Standard Deviation (σ_I_poisson)
+    # 8. Calculate Regularized Noise Standard Deviation (σ_I_reg)
     I_mean = np.nanmean(I0_np)
     if np.isnan(I_mean) or mean_photons_per_pixel <= 0:
         I_1photon = 0.0
-        logging.warning("Could not estimate I_1photon (intensity per photon). Noise calculation might be inaccurate.")
+        logging.warning("Could not estimate I_1photon, setting regularization term to 0.")
     else:
-        # Estimate intensity per photon (C in the formula sigma = sqrt(C*I))
         I_1photon = I_mean / mean_photons_per_pixel
-        logging.info(f"Estimated Intensity per Photon (I_1photon) ≈ {I_1photon:.3e} (using I_mean={I_mean:.3e}, N_mean={mean_photons_per_pixel:.1e})")
+        logging.info(f"Estimated I_1photon ≈ {I_1photon:.3e} (using I_mean={I_mean:.3e}, N_mean={mean_photons_per_pixel:.1e})")
         logging.info(f"This means each pixel has approximately {mean_photons_per_pixel:.1f} photons on average")
 
-    # Ensure I0 is non-negative before calculating variance
+    # Ensure I0 is non-negative before adding I_1photon and taking sqrt
     I0_non_negative = np.maximum(I0_np, 0)
-    # Calculate per-pixel noise level based on Poisson statistics: Var(I) = I * I_1photon
-    # Add small epsilon to prevent sqrt(0)
-    variance_I_poisson_flat = np.maximum(I0_non_negative * I_1photon, 1e-20)
-    sigma_I_poisson_flat = np.sqrt(variance_I_poisson_flat)
+    # Calculate per-pixel noise level using regularization: sqrt(I0 + I_1photon)
+    sigma_I_reg_flat = np.sqrt(I0_non_negative + I_1photon)
+    logging.info(f"Regularized Noise Std Dev (σ_I_reg) Stats: Min={np.nanmin(sigma_I_reg_flat):.3e}, Max={np.nanmax(sigma_I_reg_flat):.3e}, Mean={np.nanmean(sigma_I_reg_flat):.3e}")
+    # Avoid division by zero if sigma_I_reg is somehow zero or NaN
+    sigma_I_reg_safe = np.where(np.abs(sigma_I_reg_flat) < 1e-15, 1e-15, sigma_I_reg_flat)
+    sigma_I_reg_safe = np.where(np.isnan(sigma_I_reg_safe), 1e-15, sigma_I_reg_safe) # Handle potential NaNs
 
-    logging.info(f"Poisson Noise Std Dev (σ_I_poisson) Stats: Min={np.nanmin(sigma_I_poisson_flat):.3e}, Max={np.nanmax(sigma_I_poisson_flat):.3e}, Mean={np.nanmean(sigma_I_poisson_flat):.3e}")
-    # Avoid division by zero if sigma_I_poisson is somehow zero or NaN
-    sigma_I_poisson_safe = np.where(np.abs(sigma_I_poisson_flat) < 1e-15, 1e-15, sigma_I_poisson_flat)
-    sigma_I_poisson_safe = np.where(np.isnan(sigma_I_poisson_safe), 1e-15, sigma_I_poisson_safe) # Handle potential NaNs
-
-    # 9. Calculate Poisson Significance Ratio Map (|ΔI_jitter / σ_I_poisson|)
+    # 9. Calculate Regularized Significance Ratio Map (|ΔI_jitter / σ_I_reg|)
     significance_map_flat = np.full_like(delta_I_jitter_flat, np.nan)
     # Calculate where both delta_I and sigma_I are valid
-    valid_calculation_mask = ~np.isnan(delta_I_jitter_flat) & ~np.isnan(sigma_I_poisson_safe) & (np.abs(sigma_I_poisson_safe) > 1e-15)
+    valid_calculation_mask = ~np.isnan(delta_I_jitter_flat) & ~np.isnan(sigma_I_reg_safe) & (np.abs(sigma_I_reg_safe) > 1e-15)
 
     # Log the numerator and denominator statistics
     if np.any(valid_calculation_mask):
         abs_delta_I = np.abs(delta_I_jitter_flat[valid_calculation_mask])
-        sigma_values = sigma_I_poisson_safe[valid_calculation_mask]
+        sigma_values = sigma_I_reg_safe[valid_calculation_mask]
         logging.info(f"Numerator |ΔI_jitter| stats: Min={np.min(abs_delta_I):.3e}, Max={np.max(abs_delta_I):.3e}, Mean={np.mean(abs_delta_I):.3e}")
-        logging.info(f"Denominator σ_I_poisson stats: Min={np.min(sigma_values):.3e}, Max={np.max(sigma_values):.3e}, Mean={np.mean(sigma_values):.3e}")
+        logging.info(f"Denominator σ_I_reg stats: Min={np.min(sigma_values):.3e}, Max={np.max(sigma_values):.3e}, Mean={np.mean(sigma_values):.3e}")
 
         significance_map_flat[valid_calculation_mask] = (
             abs_delta_I / # Absolute change
-            sigma_values  # Poisson noise std dev
+            sigma_values  # Regularized noise std dev
         )
 
         # Log the ratio of means to verify calculation
@@ -348,13 +344,13 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         logging.info(f"Mean ratio (mean|ΔI|/meanσ): {mean_ratio:.3e} (should be similar to mean significance)")
 
     num_nan_significance = np.sum(np.isnan(significance_map_flat))
-    logging.info(f"Calculated Poisson significance ratio map (|ΔI_jitter / σ_I_poisson|). {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
+    logging.info(f"Calculated regularized significance ratio map (|ΔI_jitter / σ_I_reg|). {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
 
     # Log stats for the new ratio (ignoring NaNs)
     if num_nan_significance < significance_map_flat.size:
-        logging.info(f"Poisson Significance Ratio Stats (excluding NaNs): Min={np.nanmin(significance_map_flat):.3e}, Max={np.nanmax(significance_map_flat):.3e}, Mean={np.nanmean(significance_map_flat):.3e}")
+        logging.info(f"Regularized Significance Ratio Stats (excluding NaNs): Min={np.nanmin(significance_map_flat):.3e}, Max={np.nanmax(significance_map_flat):.3e}, Mean={np.nanmean(significance_map_flat):.3e}")
     else:
-        logging.info("Poisson Significance Ratio Stats: All NaN")
+        logging.info("Regularized Significance Ratio Stats: All NaN")
     # --- End Calculation ---
 
    # 10. Reshape significance map (Keep robust version)
@@ -414,7 +410,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
 
     cmap = plt.get_cmap('viridis')
     # cmap.set_bad(color='grey', alpha=0.5)
-    plot_label = '|ΔI_jitter / σ_I_poisson|' # UPDATED LABEL (σ_I_poisson ≈ sqrt(I0 * I_1photon))
+    plot_label = '|ΔI_jitter / σ_I_reg|' # UPDATED LABEL (σ_I_reg ≈ sqrt(I0 + I_1photon))
 
     # Determine robust color limits, ignoring NaNs and Infs
     plot_data_for_limits = plot_data.copy()
@@ -448,18 +444,18 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     plt.colorbar(im, label=plot_label)
     plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
     plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Poisson Significance (|ΔI_jitter| / Noise σ_poisson) in {slice_dim}={slice_val} plane\n(N={mean_photons_per_pixel:.1f} photons/pixel)') # UPDATED TITLE
+    plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane\n(N={mean_photons_per_pixel:.1f} photons/pixel)') # UPDATED TITLE
 
     # Removed contour lines for cleaner visualization
 
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
-    plt.savefig(f"sase_poisson_significance_map_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
-    logging.info(f"Saved 2D Poisson significance map plot to sase_poisson_significance_map_{slice_dim}{slice_val}.png")
+    plt.savefig(f"sase_reg_significance_map_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
+    logging.info(f"Saved 2D regularized significance map plot to sase_reg_significance_map_{slice_dim}{slice_val}.png")
     # plt.show()
 
     elapsed_time_2d = time.time() - start_time_2d
-    logging.info(f"2D Poisson Significance Visualization finished in {elapsed_time_2d:.2f} seconds.")
+    logging.info(f"2D Regularized Significance Visualization finished in {elapsed_time_2d:.2f} seconds.")
 
 
 # --- Main Calculation ---
