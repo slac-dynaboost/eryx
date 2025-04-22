@@ -131,12 +131,16 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
                              dq_frac: float, device: torch.device,
                              slice_dim: str, slice_val: float,
                              h_range: list, k_range: list, l_range: list,
-                             sampling_rate: float):
-    """Calculates and visualizes the 2D sensitivity map d(ln I)/d|q|."""
-    logging.info("\n--- Starting 2D Sensitivity Visualization ---")
+                             sampling_rate: float,
+                             # --- New Parameters ---
+                             rel_energy_jitter: float,
+                             noise_level_frac: float):
+    """Calculates and visualizes the 2D significance map:
+       (Fractional Intensity Change due to Jitter) / (Fractional Noise Level)"""
+    logging.info("\n--- Starting 2D Significance Visualization ---") # Changed title
     start_time_2d = time.time()
 
-    # 1. Define the 2D grid sampling parameters
+    # 1. Define the 2D grid sampling parameters (Keep as is)
     h_sampling_2d = (h_range[0], h_range[1], sampling_rate)
     k_sampling_2d = (k_range[0], k_range[1], sampling_rate)
     l_sampling_2d = (l_range[0], l_range[1], sampling_rate)
@@ -278,9 +282,35 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
          logging.info(f"Derivative Map Stats (dlnI/d|q|, excluding NaNs): Min={np.nanmin(dlnIdq_map_flat):.3e}, Max={np.nanmax(dlnIdq_map_flat):.3e}, Mean={np.nanmean(dlnIdq_map_flat):.3e}")
     else:
          logging.info("Derivative Map Stats (dlnI/d|q|): All NaN")
-    # --- End NaN Handling ---
 
-    # 7. Reshape derivative map
+    # 7. Calculate Fractional Change Map
+    # frac_change = abs(d(ln I)/d|q|) * rel_energy_jitter * |q|
+    q_norm_slice_np = q_norm_slice.squeeze().cpu().numpy() # Need |q| for frac_change
+    frac_change_map_flat = np.full_like(dlnIdq_map_flat, np.nan)
+    valid_derivative_mask = ~np.isnan(dlnIdq_map_flat)
+    frac_change_map_flat[valid_derivative_mask] = (
+        np.abs(dlnIdq_map_flat[valid_derivative_mask]) *
+        rel_energy_jitter *
+        q_norm_slice_np[valid_derivative_mask] # Use |q| for each pixel
+    )
+
+    # 8. Calculate Significance Ratio Map
+    significance_map_flat = np.full_like(frac_change_map_flat, np.nan)
+    if noise_level_frac > 1e-12: # Avoid division by zero if noise is effectively zero
+        valid_frac_change_mask = ~np.isnan(frac_change_map_flat)
+        significance_map_flat[valid_frac_change_mask] = (
+            frac_change_map_flat[valid_frac_change_mask] / noise_level_frac
+        )
+    else:
+        # If noise is zero, ratio is infinite where frac_change > 0
+        positive_frac_change_mask = (~np.isnan(frac_change_map_flat)) & (frac_change_map_flat > 1e-12)
+        significance_map_flat[positive_frac_change_mask] = np.inf
+
+    num_nan_significance = np.sum(np.isnan(significance_map_flat))
+    logging.info(f"Calculated significance ratio map. {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
+    # --- End Calculation ---
+
+    # 9. Reshape significance map
     try:
         # Ensure map_shape_2d corresponds to the actual slice dimensions
         if slice_dim.lower() == 'h': # k-l plane
@@ -330,17 +360,38 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
          if np.isclose(vmin, vmax): # If still close (e.g., all zeros)
               vmin -= 0.1
               vmax += 0.1
+        # Focus on the range around 1.0 (where jitter effect equals noise)
+        # Use percentiles, but maybe cap vmax to emphasize lower values
+        vmin = np.percentile(valid_data, 1)  # Show values near zero
+        vmax = np.percentile(valid_data, 99) # Cap at 99th percentile
+        # Ensure vmin is at least 0
+        vmin = max(0, vmin)
+        # Maybe set a fixed reasonable upper limit? e.g., 10
+        # vmax = min(vmax, 10)
+        if np.isclose(vmin, vmax): vmin -= 0.1; vmax += 0.1
+        if vmin < 0: vmin = 0 # Ensure vmin is not negative
     else:
-         vmin, vmax = -1, 1 # Default range if no valid data
+        vmin, vmax = 0, 1 # Default range if no valid data
+
+    logging.info(f"Plotting Significance Ratio map with vmin={vmin:.2f}, vmax={vmax:.2f}")
 
     im = plt.imshow(plot_data.T, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax,
                     extent=[h_range[0], h_range[1], k_range[0], k_range[1]] if slice_dim.lower() == 'l' else \
                            [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
-                           [h_range[0], h_range[1], l_range[0], l_range[1]]) # Adjust extent based on slice
+                           [h_range[0], h_range[1], l_range[0], l_range[1]])
     plt.colorbar(im, label=plot_label)
-    plt.xlabel(f'{plane_axes[0]} index / Å⁻¹') # Assuming axes correspond roughly to hkl
+    plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
     plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Sensitivity Map {plot_label} in {slice_dim}={slice_val} plane (NaNs excluded)')
+    plt.title(f'Significance Ratio in {slice_dim}={slice_val} plane (Jitter Effect / Noise Level)')
+    # Add contour line where ratio = 1?
+    # if valid_data.size > 0:
+    #     try:
+    #         X, Y = np.meshgrid(np.linspace(h_range[0], h_range[1], reshape_dims[0]),
+    #                            np.linspace(k_range[0], k_range[1], reshape_dims[1])) # Adjust axes based on slice
+    #         plt.contour(X, Y, plot_data.T, levels=[1.0], colors='red', linestyles='dashed')
+    #     except Exception as contour_e:
+    #         logging.warning(f"Could not draw contour line: {contour_e}")
+
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
     plt.savefig(f"sase_sensitivity_map_{slice_dim}{slice_val}.png", dpi=150)
@@ -460,6 +511,7 @@ def run_back_of_envelope_refactored():
     # --- Generate 2D Visualization (Optional) ---
     if VISUALIZE_2D:
         try:
+            # Pass the calculated noise_level_frac and REL_ENERGY_JITTER
             visualize_2d_sensitivity(
                 pdb_path=PDB_PATH,
                 sim_params=SIM_PARAMS,
@@ -472,7 +524,10 @@ def run_back_of_envelope_refactored():
                 h_range=H_RANGE_2D,
                 k_range=K_RANGE_2D,
                 l_range=L_RANGE_2D,
-                sampling_rate=SAMPLING_RATE_2D
+                sampling_rate=SAMPLING_RATE_2D,
+                # --- Pass new args ---
+                rel_energy_jitter=REL_ENERGY_JITTER,
+                noise_level_frac=noise_level_frac
             )
         except Exception as e:
             logging.error(f"Failed during 2D sensitivity visualization: {e}", exc_info=True)
