@@ -139,6 +139,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     """Calculates and visualizes the 2D regularized significance map:
        |ΔI_jitter / σ_I_reg| where σ_I_reg ≈ sqrt(I0 + I_1photon)"""
     logging.info("\n--- Starting 2D Regularized Significance Visualization ---") # Changed title
+    logging.info(f"Parameters: rel_energy_jitter={rel_energy_jitter:.6f}, mean_photons_per_pixel={mean_photons_per_pixel:.1f}")
     start_time_2d = time.time()
 
     # 1. Define the 2D grid sampling parameters (Keep as is)
@@ -310,10 +311,13 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     else:
         I_1photon = I_mean / mean_photons_per_pixel
         logging.info(f"Estimated I_1photon ≈ {I_1photon:.3e} (using I_mean={I_mean:.3e}, N_mean={mean_photons_per_pixel:.1e})")
+        logging.info(f"This means each pixel has approximately {mean_photons_per_pixel:.1f} photons on average")
 
     # Ensure I0 is non-negative before adding I_1photon and taking sqrt
     I0_non_negative = np.maximum(I0_np, 0)
+    # Calculate per-pixel noise level based on photon statistics
     sigma_I_reg_flat = np.sqrt(I0_non_negative + I_1photon)
+    logging.info(f"Noise level stats: Min={np.nanmin(sigma_I_reg_flat):.3e}, Max={np.nanmax(sigma_I_reg_flat):.3e}, Mean={np.nanmean(sigma_I_reg_flat):.3e}")
     # Avoid division by zero if sigma_I_reg is somehow zero
     sigma_I_reg_safe = np.where(np.abs(sigma_I_reg_flat) < 1e-15, 1e-15, sigma_I_reg_flat)
 
@@ -322,11 +326,21 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # Calculate where both delta_I and sigma_I are valid
     valid_calculation_mask = ~np.isnan(delta_I_jitter_flat) & ~np.isnan(sigma_I_reg_safe) & (np.abs(sigma_I_reg_safe) > 1e-15)
 
+    # Log the numerator and denominator statistics
     if np.any(valid_calculation_mask):
+        abs_delta_I = np.abs(delta_I_jitter_flat[valid_calculation_mask])
+        sigma_values = sigma_I_reg_safe[valid_calculation_mask]
+        logging.info(f"Numerator |ΔI_jitter| stats: Min={np.min(abs_delta_I):.3e}, Max={np.max(abs_delta_I):.3e}, Mean={np.mean(abs_delta_I):.3e}")
+        logging.info(f"Denominator σ_I_reg stats: Min={np.min(sigma_values):.3e}, Max={np.max(sigma_values):.3e}, Mean={np.mean(sigma_values):.3e}")
+        
         significance_map_flat[valid_calculation_mask] = (
-            np.abs(delta_I_jitter_flat[valid_calculation_mask]) / # Absolute change
-            sigma_I_reg_safe[valid_calculation_mask]              # Regularized noise std dev
+            abs_delta_I / # Absolute change
+            sigma_values  # Regularized noise std dev
         )
+        
+        # Log the ratio of means to verify calculation
+        mean_ratio = np.mean(abs_delta_I) / np.mean(sigma_values)
+        logging.info(f"Mean ratio (mean|ΔI|/meanσ): {mean_ratio:.3e} (should be similar to mean significance)")
 
     num_nan_significance = np.sum(np.isnan(significance_map_flat))
     logging.info(f"Calculated regularized significance ratio map (|ΔI_jitter / σ_I_reg|). {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
@@ -429,7 +443,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     plt.colorbar(im, label=plot_label)
     plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
     plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane') # UPDATED TITLE
+    plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane\n(N={mean_photons_per_pixel:.1f} photons/pixel)') # UPDATED TITLE
 
     # Removed contour lines for cleaner visualization
 
