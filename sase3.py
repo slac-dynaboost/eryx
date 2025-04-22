@@ -317,7 +317,10 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     logging.info(f"Intensity Stats (I0 - Base): Min={np.nanmin(I_slice_np):.3e}, Max={np.nanmax(I_slice_np):.3e}, Mean={np.nanmean(I_slice_np):.3e}, NaN count={np.sum(np.isnan(I_slice_np))}")
     logging.info(f"Intensity Stats (I1 - Perturbed): Min={np.nanmin(I_perturbed_slice_np):.3e}, Max={np.nanmax(I_perturbed_slice_np):.3e}, Mean={np.nanmean(I_perturbed_slice_np):.3e}, NaN count={np.sum(np.isnan(I_perturbed_slice_np))}")
  
-    # --- NaN Interpolation before Finite Difference ---
+    # --- NaN/High Value Masking & Interpolation before Finite Difference ---
+    INTENSITY_THRESHOLD = 20000.0 # Define threshold for treating high values as NaN for interpolation
+    logging.info(f"Intensity threshold for NaN masking during interpolation: {INTENSITY_THRESHOLD:.1f}")
+ 
     hkl_np = hkl_grid_slice.cpu().numpy()
     # Select coordinate columns based on slice dimension
     if slice_dim.lower() == 'h':
@@ -327,17 +330,43 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     else: # 'l' slice
         coords_2d = hkl_np[:, :2] # Use h, k
  
-    logging.info("Attempting NaN interpolation for I0...")
-    I_slice_np_interp = interpolate_nans_2d(coords_2d, I_slice_np, method='nearest')
-    logging.info("Attempting NaN interpolation for I1...")
-    I_perturbed_slice_np_interp = interpolate_nans_2d(coords_2d, I_perturbed_slice_np, method='nearest')
-    # --- End NaN Interpolation ---
+    # Keep original arrays for derivative calculation later
+    I_slice_np_original = I_slice_np.copy()
+    I_perturbed_slice_np_original = I_perturbed_slice_np.copy()
+ 
+    # Create masks for NaNs and high values
+    nan_mask_I0 = np.isnan(I_slice_np_original)
+    nan_mask_I1 = np.isnan(I_perturbed_slice_np_original)
+    high_mask_I0 = I_slice_np_original > INTENSITY_THRESHOLD
+    high_mask_I1 = I_perturbed_slice_np_original > INTENSITY_THRESHOLD
+ 
+    # Combine masks
+    combined_mask_I0 = nan_mask_I0 | high_mask_I0
+    combined_mask_I1 = nan_mask_I1 | high_mask_I1
+    num_masked_I0 = np.sum(combined_mask_I0)
+    num_masked_I1 = np.sum(combined_mask_I1)
+    logging.info(f"Masking {num_masked_I0} points in I0 (NaN or > {INTENSITY_THRESHOLD}) before interpolation.")
+    logging.info(f"Masking {num_masked_I1} points in I1 (NaN or > {INTENSITY_THRESHOLD}) before interpolation.")
+ 
+    # Create copies and apply combined masks (set to NaN)
+    I_slice_np_masked = I_slice_np_original.copy()
+    I_perturbed_slice_np_masked = I_perturbed_slice_np_original.copy()
+    I_slice_np_masked[combined_mask_I0] = np.nan
+    I_perturbed_slice_np_masked[combined_mask_I1] = np.nan
+ 
+    # Interpolate the masked arrays
+    logging.info("Attempting NaN interpolation for masked I0...")
+    I_slice_np_interp = interpolate_nans_2d(coords_2d, I_slice_np_masked, method='nearest')
+    logging.info("Attempting NaN interpolation for masked I1...")
+    I_perturbed_slice_np_interp = interpolate_nans_2d(coords_2d, I_perturbed_slice_np_masked, method='nearest')
+    # --- End NaN/High Value Masking & Interpolation ---
  
     # Calculate finite difference using interpolated arrays
     dI_np = I_perturbed_slice_np_interp - I_slice_np_interp
-    # Use original I0 for derivative calculation later, but interpolated I0/I1 for dI
-    I0_np = I_slice_np_interp # Update I0_np to be the interpolated version for consistency in I_avg calc etc.
-    I1_np = I_perturbed_slice_np_interp # Update I1_np as well
+ 
+    # Update I0_np and I1_np to the interpolated versions for subsequent calculations (I_avg) and plotting
+    I0_np = I_slice_np_interp
+    I1_np = I_perturbed_slice_np_interp
  
     logging.info(f"Difference Stats (dI = I1_interp - I0_interp): Min={np.nanmin(dI_np):.3e}, Max={np.nanmax(dI_np):.3e}, Mean={np.nanmean(dI_np):.3e}, AbsMean={np.nanmean(np.abs(dI_np)):.3e}, NaN count={np.sum(np.isnan(dI_np))}/{dI_np.size}")
 
@@ -348,9 +377,9 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
  
     # --- Calculate Regularized Significance Ratio ---
     # 6. Calculate d(ln I)/d|q| map, handling NaNs
-    # Use the *original* I0 before interpolation for the derivative calculation
+    # Use the *original* I0 before interpolation/masking for the derivative calculation
     # but use the interpolated dI_np calculated previously.
-    I0_np_original = I_slice.cpu().numpy() # Get original I0 again
+    # I0_np_original is already available from the interpolation block
     # I1_np and dI_np are already the interpolated versions from the previous block
  
     dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
