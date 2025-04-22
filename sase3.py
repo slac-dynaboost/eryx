@@ -236,14 +236,25 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         A_inv_tensor = torch.tensor(temp_model.model.A_inv, dtype=DTYPE_REAL, device=device)
         del temp_model # Free memory
  
-        # Use generate_grid from map_utils_torch, get HKL for interpolation coords
-        q_grid_slice, hkl_grid_slice, map_shape_2d = generate_grid(
-            A_inv_tensor, h_sampling_2d, k_sampling_2d, l_sampling_2d, return_hkl=True # Set return_hkl=True
+        # Use generate_grid from map_utils_torch (returns q_grid, map_shape)
+        q_grid_slice, map_shape_2d = generate_grid(
+            A_inv_tensor, h_sampling_2d, k_sampling_2d, l_sampling_2d # return_hkl likely not supported or needed here
         )
         q_grid_slice = q_grid_slice.to(dtype=DTYPE_REAL)
-        hkl_grid_slice = hkl_grid_slice.to(dtype=DTYPE_REAL) # Also ensure HKL is correct dtype
         num_pixels = q_grid_slice.shape[0]
-        logging.info(f"Generated base grid for 2D slice: {num_pixels} points, map shape: {map_shape_2d}")
+        logging.info(f"Generated base q_grid for 2D slice: {num_pixels} points, map shape: {map_shape_2d}")
+
+        # Manually calculate HKL grid from q_grid and A_inv
+        # hkl = (1/(2π)) * q * (A_inv^T)^(-1)
+        scaling_factor = torch.tensor(1.0 / (2.0 * torch.pi), dtype=DTYPE_REAL, device=device)
+        try:
+            A_inv_T_inv = torch.linalg.inv(A_inv_tensor.T)
+        except torch._C._LinAlgError as e:
+             logging.error(f"Failed to invert A_inv_tensor.T: {e}", exc_info=True)
+             # Handle error appropriately, maybe return or raise
+             return
+        hkl_grid_slice = torch.matmul(q_grid_slice * scaling_factor, A_inv_T_inv).to(dtype=DTYPE_REAL)
+        logging.info(f"Manually calculated hkl_grid_slice, shape: {hkl_grid_slice.shape}")
 
     except Exception as e:
         logging.error(f"Failed to generate base grid for 2D slice: {e}", exc_info=True)
