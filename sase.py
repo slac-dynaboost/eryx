@@ -27,7 +27,7 @@ SIM_PARAMS = {
     'hsampling': [-4, 4, 3],
     'ksampling': [-4, 4, 3],
     'lsampling': [-4, 4, 3],
-    'use_data_adp': False # Use computed ADPs
+    # 'use_data_adp' removed - should be passed to apply_disorder if needed
 }
 # Use fixed gamma values for this estimation
 GAMMA_INTRA = 1.5
