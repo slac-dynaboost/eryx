@@ -158,7 +158,17 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # 2. Generate base q-vectors for the slice
     try:
         # Need A_inv to generate grid. Get it from a temporary model instance.
-        temp_model = OnePhonon(pdb_path=pdb_path, hsampling=h_sampling_2d, ksampling=k_sampling_2d, lsampling=l_sampling_2d, **sim_params, device=device)
+        # Extract non-sampling params from sim_params
+        other_sim_params = {k: v for k, v in sim_params.items() if k not in ['hsampling', 'ksampling', 'lsampling']}
+
+        temp_model = OnePhonon(
+            pdb_path=pdb_path,
+            hsampling=h_sampling_2d,    # Use the specific 2D sampling
+            ksampling=k_sampling_2d,    # Use the specific 2D sampling
+            lsampling=l_sampling_2d,    # Use the specific 2D sampling
+            **other_sim_params,         # Pass the rest of the params
+            device=device
+        )
         A_inv_tensor = torch.tensor(temp_model.model.A_inv, dtype=DTYPE_REAL, device=device)
         del temp_model # Free memory
 
@@ -191,22 +201,22 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
 
     # 5. Simulate intensities
     try:
+        # Extract non-sampling params from sim_params
+        other_sim_params = {k: v for k, v in sim_params.items() if k not in ['hsampling', 'ksampling', 'lsampling']}
+
         gamma_intra_tensor = torch.tensor(gamma_intra, dtype=DTYPE_REAL, device=device)
         gamma_inter_tensor = torch.tensor(gamma_inter, dtype=DTYPE_REAL, device=device)
+
         eval_params_2d = {
             'pdb_path': pdb_path,
             'q_vectors': q_eval_2d,            # Pass combined points
-            'hsampling': sim_params['hsampling'], # Still needed for GNM ADP
-            'ksampling': sim_params['ksampling'],
-            'lsampling': sim_params['lsampling'],
-            'expand_p1': sim_params['expand_p1'],
-            'group_by': sim_params['group_by'],
-            'model': sim_params['model'],
-            'gnm_cutoff': sim_params['gnm_cutoff'],
-            'res_limit': sim_params['res_limit'],
+            'hsampling': sim_params['hsampling'], # <<< Still need the ORIGINAL sampling for GNM ADP
+            'ksampling': sim_params['ksampling'], # <<< Still need the ORIGINAL sampling for GNM ADP
+            'lsampling': sim_params['lsampling'], # <<< Still need the ORIGINAL sampling for GNM ADP
             'gamma_intra': gamma_intra_tensor,
             'gamma_inter': gamma_inter_tensor,
-            'device': device
+            'device': device,
+            **other_sim_params # Pass other params like expand_p1, group_by, model, gnm_cutoff, res_limit
         }
         model_2d = OnePhonon(**eval_params_2d)
         logging.info("Model initialized for 2D simulation.")
