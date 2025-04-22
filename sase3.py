@@ -247,8 +247,20 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     logging.info(f"Intensity Stats (I0 - Base): Min={np.nanmin(I_slice_np):.3e}, Max={np.nanmax(I_slice_np):.3e}, Mean={np.nanmean(I_slice_np):.3e}, NaN count={np.sum(np.isnan(I_slice_np))}")
     logging.info(f"Intensity Stats (I1 - Perturbed): Min={np.nanmin(I_perturbed_slice_np):.3e}, Max={np.nanmax(I_perturbed_slice_np):.3e}, Mean={np.nanmean(I_perturbed_slice_np):.3e}, NaN count={np.sum(np.isnan(I_perturbed_slice_np))}")
 
+    # --- NaN Handling before Finite Difference ---
+    nan_mask_I0 = np.isnan(I_slice_np)
+    nan_mask_I1 = np.isnan(I_perturbed_slice_np)
+    combined_nan_mask = nan_mask_I0 | nan_mask_I1
+    num_combined_nans = np.sum(combined_nan_mask)
+    if num_combined_nans > 0:
+        logging.warning(f"Found {num_combined_nans} pixels where either I0 or I1 is NaN. Masking these before calculating dI.")
+        # Set both I0 and I1 to NaN where the combined mask is True
+        I_slice_np[combined_nan_mask] = np.nan
+        I_perturbed_slice_np[combined_nan_mask] = np.nan
+    # --- End NaN Handling ---
+
     dI_np = I_perturbed_slice_np - I_slice_np
-    logging.info(f"Difference Stats (dI = I1-I0): Min={np.nanmin(dI_np):.3e}, Max={np.nanmax(dI_np):.3e}, Mean={np.nanmean(dI_np):.3e}, AbsMean={np.nanmean(np.abs(dI_np)):.3e}, Zero count={np.sum(np.isclose(dI_np, 0))}/{dI_np.size}")
+    logging.info(f"Difference Stats (dI = I1-I0): Min={np.nanmin(dI_np):.3e}, Max={np.nanmax(dI_np):.3e}, Mean={np.nanmean(dI_np):.3e}, AbsMean={np.nanmean(np.abs(dI_np)):.3e}, NaN count={np.sum(np.isnan(dI_np))}/{dI_np.size}")
 
     # Check dq magnitude as well
     dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
