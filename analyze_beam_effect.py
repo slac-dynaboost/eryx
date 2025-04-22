@@ -33,7 +33,7 @@ SIM_PARAMS = {
     'hsampling': [-4, 4, 3], # (min, max, points_per_index)
     'ksampling': [-4, 4, 3],
     'lsampling': [-4, 4, 3],
-    'use_data_adp': False   # Use computed ADPs for a consistent baseline
+    # 'use_data_adp' removed - will be passed explicitly to apply_disorder
 }
 # --- Ground Truth and Initial Guess Gamma ---
 # !!! SET PLAUSIBLE VALUES FOR YOUR SYSTEM !!!
@@ -376,7 +376,7 @@ def run_analysis():
             **common_params_true_gamma
         )
         with torch.no_grad(): # No gradients needed for ground truth generation
-            I_sim_samples_true = model_ground_truth.apply_disorder()
+            I_sim_samples_true = model_ground_truth.apply_disorder(use_data_adp=False)
             logging.info(f"Ground truth simulation completed. Intensity shape: {I_sim_samples_true.shape}")
 
         # Average the ground truth simulation per pixel
@@ -454,7 +454,7 @@ def run_analysis():
             **common_params_optimizable_gamma # Use optimizable gamma
         )
 
-        I_sim_ideal = model_ideal.apply_disorder()
+        I_sim_ideal = model_ideal.apply_disorder(use_data_adp=False)
         logging.info(f"Scenario A simulation completed. Intensity shape: {I_sim_ideal.shape}")
 
         # Calculate loss against pseudo-experimental data
@@ -504,7 +504,7 @@ def run_analysis():
             **common_params_optimizable_gamma # Use optimizable gamma
         )
 
-        I_sim_samples = model_realistic.apply_disorder()
+        I_sim_samples = model_realistic.apply_disorder(use_data_adp=False)
         logging.info(f"Scenario B simulation completed. Intensity shape: {I_sim_samples.shape}")
 
         # Average results per pixel
