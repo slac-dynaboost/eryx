@@ -234,6 +234,21 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         return
 
     # 6. Calculate derivative map
+    # --- Debugging: Check Intensity Stats ---
+    I_slice_np = I_slice.cpu().numpy()
+    I_perturbed_slice_np = I_perturbed_slice.cpu().numpy()
+
+    logging.info(f"Intensity Stats (I0 - Base): Min={np.nanmin(I_slice_np):.3e}, Max={np.nanmax(I_slice_np):.3e}, Mean={np.nanmean(I_slice_np):.3e}, NaN count={np.sum(np.isnan(I_slice_np))}")
+    logging.info(f"Intensity Stats (I1 - Perturbed): Min={np.nanmin(I_perturbed_slice_np):.3e}, Max={np.nanmax(I_perturbed_slice_np):.3e}, Mean={np.nanmean(I_perturbed_slice_np):.3e}, NaN count={np.sum(np.isnan(I_perturbed_slice_np))}")
+
+    dI_np = I_perturbed_slice_np - I_slice_np
+    logging.info(f"Difference Stats (dI = I1-I0): Min={np.nanmin(dI_np):.3e}, Max={np.nanmax(dI_np):.3e}, Mean={np.nanmean(dI_np):.3e}, AbsMean={np.nanmean(np.abs(dI_np)):.3e}, Zero count={np.sum(np.isclose(dI_np, 0))}/{dI_np.size}")
+
+    # Check dq magnitude as well
+    dq_mag_slice_np = dq_mag_slice.squeeze().cpu().numpy()
+    logging.info(f"Step Size Stats (dq): Min={np.nanmin(dq_mag_slice_np):.3e}, Max={np.nanmax(dq_mag_slice_np):.3e}, Mean={np.nanmean(dq_mag_slice_np):.3e}")
+    # --- End Debugging ---
+
     I0 = I_slice
     I1 = I_perturbed_slice
     dI = I1 - I0
@@ -251,6 +266,9 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     # Handle NaNs from simulation or calculation
     nan_mask = np.isnan(I0_np) | np.isnan(I1.cpu().numpy()) | np.isnan(dlnIdq_map_flat)
     dlnIdq_map_flat[nan_mask] = np.nan # Propagate NaNs
+
+    # Check the final derivative map stats before plotting
+    logging.info(f"Derivative Map Stats (dlnI/d|q|): Min={np.nanmin(dlnIdq_map_flat):.3e}, Max={np.nanmax(dlnIdq_map_flat):.3e}, Mean={np.nanmean(dlnIdq_map_flat):.3e}, NaN count={np.sum(np.isnan(dlnIdq_map_flat))}")
 
     # 7. Reshape derivative map
     try:
