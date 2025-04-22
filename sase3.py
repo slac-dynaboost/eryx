@@ -303,21 +303,24 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         )
         # We take the absolute value later when dividing
 
-    # 8. Calculate Regularized Noise Standard Deviation (σ_I_reg)
-    I_mean = np.nanmean(I0_np)
+    # 8. Calculate Regularized Noise Standard Deviation (σ_I_reg) using AVERAGE intensity
+    I_mean = np.nanmean(I0_np) # Use I0 mean to estimate I_1photon (or could use I_avg mean)
     if np.isnan(I_mean) or mean_photons_per_pixel <= 0:
         I_1photon = 0.0
         logging.warning("Could not estimate I_1photon, setting regularization term to 0.")
     else:
         I_1photon = I_mean / mean_photons_per_pixel
         logging.info(f"Estimated I_1photon ≈ {I_1photon:.3e} (using I_mean={I_mean:.3e}, N_mean={mean_photons_per_pixel:.1e})")
-        logging.info(f"This means each pixel has approximately {mean_photons_per_pixel:.1f} photons on average")
 
-    # Ensure I0 is non-negative before adding I_1photon and taking sqrt
-    I0_non_negative = np.maximum(I0_np, 0)
-    # Calculate per-pixel noise level using regularization: sqrt(I0 + I_1photon)
-    sigma_I_reg_flat = np.sqrt(I0_non_negative + I_1photon)
-    logging.info(f"Regularized Noise Std Dev (σ_I_reg) Stats: Min={np.nanmin(sigma_I_reg_flat):.3e}, Max={np.nanmax(sigma_I_reg_flat):.3e}, Mean={np.nanmean(sigma_I_reg_flat):.3e}")
+    # Calculate average intensity per pixel
+    I_avg_np = (I0_np + I1_np) / 2.0
+    logging.info(f"Average Intensity Stats (I_avg): Min={np.nanmin(I_avg_np):.3e}, Max={np.nanmax(I_avg_np):.3e}, Mean={np.nanmean(I_avg_np):.3e}, NaN count={np.sum(np.isnan(I_avg_np))}")
+
+    # Ensure I_avg is non-negative before adding I_1photon and taking sqrt
+    I_avg_non_negative = np.maximum(I_avg_np, 0)
+    sigma_I_reg_flat = np.sqrt(I_avg_non_negative + I_1photon) # USE I_avg here
+    logging.info(f"Noise Std Dev Stats (sigma_I_reg based on I_avg): Min={np.nanmin(sigma_I_reg_flat):.3e}, Max={np.nanmax(sigma_I_reg_flat):.3e}, Mean={np.nanmean(sigma_I_reg_flat):.3e}, NaN count={np.sum(np.isnan(sigma_I_reg_flat))}")
+
     # Avoid division by zero if sigma_I_reg is somehow zero or NaN
     sigma_I_reg_safe = np.where(np.abs(sigma_I_reg_flat) < 1e-15, 1e-15, sigma_I_reg_flat)
     sigma_I_reg_safe = np.where(np.isnan(sigma_I_reg_safe), 1e-15, sigma_I_reg_safe) # Handle potential NaNs
@@ -332,11 +335,11 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         abs_delta_I = np.abs(delta_I_jitter_flat[valid_calculation_mask])
         sigma_values = sigma_I_reg_safe[valid_calculation_mask]
         logging.info(f"Numerator |ΔI_jitter| stats: Min={np.min(abs_delta_I):.3e}, Max={np.max(abs_delta_I):.3e}, Mean={np.mean(abs_delta_I):.3e}")
-        logging.info(f"Denominator σ_I_reg stats: Min={np.min(sigma_values):.3e}, Max={np.max(sigma_values):.3e}, Mean={np.mean(sigma_values):.3e}")
+        logging.info(f"Denominator σ_I_reg (based on I_avg) stats: Min={np.min(sigma_values):.3e}, Max={np.max(sigma_values):.3e}, Mean={np.mean(sigma_values):.3e}")
 
         significance_map_flat[valid_calculation_mask] = (
             abs_delta_I / # Absolute change
-            sigma_values  # Regularized noise std dev
+            sigma_values  # Regularized noise std dev based on I_avg
         )
 
         # Log the ratio of means to verify calculation
@@ -344,7 +347,7 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
         logging.info(f"Mean ratio (mean|ΔI|/meanσ): {mean_ratio:.3e} (should be similar to mean significance)")
 
     num_nan_significance = np.sum(np.isnan(significance_map_flat))
-    logging.info(f"Calculated regularized significance ratio map (|ΔI_jitter / σ_I_reg|). {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
+    logging.info(f"Calculated regularized significance ratio map (|ΔI_jitter / σ_I_reg| using I_avg). {num_nan_significance}/{significance_map_flat.size} pixels are NaN.")
 
     # Log stats for the new ratio (ignoring NaNs)
     if num_nan_significance < significance_map_flat.size:
@@ -444,14 +447,31 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     plt.colorbar(im, label=plot_label)
     plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
     plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane\n(N={mean_photons_per_pixel:.1f} photons/pixel)') # UPDATED TITLE
+    plt.title(f'Reg. Significance (|ΔI_j| / σ_reg based on I_avg) in {slice_dim}={slice_val} plane') # Updated title
 
-    # Removed contour lines for cleaner visualization
+    # Add contour line where ratio = 1?
+    if valid_data.size > 0 and vmin < 1.0 < vmax:
+        try:
+            # Define X, Y based on slice
+            if slice_dim.lower() == 'l':
+                 x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
+                 y_coords = np.linspace(k_range[0], k_range[1], reshape_dims[1])
+            elif slice_dim.lower() == 'h':
+                 x_coords = np.linspace(k_range[0], k_range[1], reshape_dims[0])
+                 y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
+            else: # k slice
+                 x_coords = np.linspace(h_range[0], h_range[1], reshape_dims[0])
+                 y_coords = np.linspace(l_range[0], l_range[1], reshape_dims[1])
+            X, Y = np.meshgrid(x_coords, y_coords)
+            plt.contour(X, Y, plot_data.T, levels=[1.0], colors='red', linestyles='dashed')
+            logging.info("Added contour line at Significance Ratio = 1.0")
+        except Exception as contour_e:
+            logging.warning(f"Could not draw contour line at 1.0: {contour_e}")
 
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
-    plt.savefig(f"sase_reg_significance_map_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
-    logging.info(f"Saved 2D regularized significance map plot to sase_reg_significance_map_{slice_dim}{slice_val}.png")
+    plt.savefig(f"sase_reg_significance_map_{slice_dim}{slice_val}_Iavg.png", dpi=150) # Changed filename
+    logging.info(f"Saved 2D regularized significance map plot to sase_reg_significance_map_{slice_dim}{slice_val}_Iavg.png")
     # plt.show()
 
     elapsed_time_2d = time.time() - start_time_2d
