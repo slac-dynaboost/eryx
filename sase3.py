@@ -137,8 +137,8 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
                              # --- Need Mean Photons ---
                              mean_photons_per_pixel: float):
     """Calculates and visualizes the 2D regularized significance map:
-       |ΔI_jitter / σ_I_reg| where σ_I_reg ≈ sqrt(I0 + I_1photon)"""
-    logging.info("\n--- Starting 2D Regularized Significance Visualization ---") # Changed title
+       |ΔI_jitter / σ_I_reg| where σ_I_reg ≈ sqrt(I_avg + I_1photon)"""
+    logging.info("\n--- Starting 2D Regularized Significance Visualization (Noise based on I_avg) ---") # Updated title
     logging.info(f"Parameters: rel_energy_jitter={rel_energy_jitter:.6f}, mean_photons_per_pixel={mean_photons_per_pixel:.1f}")
     start_time_2d = time.time()
 
