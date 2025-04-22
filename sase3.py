@@ -338,9 +338,9 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
                            [k_range[0], k_range[1], l_range[0], l_range[1]] if slice_dim.lower() == 'h' else \
                            [h_range[0], h_range[1], l_range[0], l_range[1]]) # Adjust extent based on slice
     plt.colorbar(im, label=plot_label)
-    plt.xlabel(f'{plane_axes[0]} index')
-    plt.ylabel(f'{plane_axes[1]} index')
-    plt.title(f'Sensitivity Map {plot_label} in {slice_dim}={slice_val} plane')
+    plt.xlabel(f'{plane_axes[0]} index / Å⁻¹') # Assuming axes correspond roughly to hkl
+    plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
+    plt.title(f'Sensitivity Map {plot_label} in {slice_dim}={slice_val} plane (NaNs excluded)')
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
     plt.savefig(f"sase_sensitivity_map_{slice_dim}{slice_val}.png", dpi=150)
