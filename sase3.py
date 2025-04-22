@@ -448,18 +448,18 @@ def visualize_2d_sensitivity(pdb_path: str, sim_params: Dict,
     plt.colorbar(im, label=plot_label)
     plt.xlabel(f'{plane_axes[0]} index / Å⁻¹')
     plt.ylabel(f'{plane_axes[1]} index / Å⁻¹')
-    plt.title(f'Regularized Significance (|ΔI_jitter| / Noise σ_reg) in {slice_dim}={slice_val} plane\n(N={mean_photons_per_pixel:.1f} photons/pixel)') # UPDATED TITLE
+    plt.title(f'Poisson Significance (|ΔI_jitter| / Noise σ_poisson) in {slice_dim}={slice_val} plane\n(N={mean_photons_per_pixel:.1f} photons/pixel)') # UPDATED TITLE
 
     # Removed contour lines for cleaner visualization
 
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
-    plt.savefig(f"sase_reg_significance_map_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
-    logging.info(f"Saved 2D regularized significance map plot to sase_reg_significance_map_{slice_dim}{slice_val}.png")
+    plt.savefig(f"sase_poisson_significance_map_{slice_dim}{slice_val}.png", dpi=150) # Changed filename
+    logging.info(f"Saved 2D Poisson significance map plot to sase_poisson_significance_map_{slice_dim}{slice_val}.png")
     # plt.show()
 
     elapsed_time_2d = time.time() - start_time_2d
-    logging.info(f"2D Regularized Significance Visualization finished in {elapsed_time_2d:.2f} seconds.")
+    logging.info(f"2D Poisson Significance Visualization finished in {elapsed_time_2d:.2f} seconds.")
 
 
 # --- Main Calculation ---
