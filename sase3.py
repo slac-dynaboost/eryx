@@ -47,14 +47,14 @@ NUM_VIS_POINTS = 5
 # -- 2D Visualization Parameters --
 VISUALIZE_2D = True # Set to True to enable 2D plot generation
 SLICE_DIM = 'h'     # Dimension to slice (h, k, or l)
-SLICE_VAL = 1.0     # <<-- CHANGE THIS: Choose a non-zero value (e.g., 0.5, 1.0)
+SLICE_VAL = 3.1     # <<-- CHANGE THIS: Choose a non-zero value (e.g., 0.5, 1.0)
 H_RANGE_2D = [-4, 4, 3] # Range for h in 2D plot
 K_RANGE_2D = [-17, 17, 3] # Range for k in 2D plot
 L_RANGE_2D = [-29, 29, 3] # Range for l in 2D plot
 SAMPLING_RATE_2D = 5.0 # Sampling rate (points per Miller index) for 2D plot
 
 # -- Computation Settings --
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cpu')
 DTYPE_REAL = torch.float64
 DTYPE_COMPLEX = torch.complex128
 
