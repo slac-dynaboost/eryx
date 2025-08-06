@@ -66,6 +66,7 @@ class TestBase(unittest.TestCase):
         
         # Always set device attribute for OnePhonon models
         obj.device = self.device
+        
             
         # Set all attributes from state dictionary
         for attr_name, attr_value in state.items():

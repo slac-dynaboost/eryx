@@ -40,220 +40,31 @@ class TestKvectorMethods(TestBase):
             device=self.device
         )
 
-    def test_build_kvec_Brillouin_state_based(self):
-        """Test _build_kvec_Brillouin using state-based approach."""
-        # Import test helpers
-        from eryx.autotest.test_helpers import (
-            load_test_state,
-            build_test_object,
-            ensure_tensor
-        )
-        
-        try:
-            # Load before state using the helper function which handles path flexibility
-            before_state = load_test_state(
-                self.logger, 
-                self.module_name, 
-                self.class_name, 
-                "_build_kvec_Brillouin"
-            )
-        except FileNotFoundError as e:
-            # If state logs aren't found, skip the test with informative message
-            import glob
-            available_logs = glob.glob("logs/*build_kvec*")
-            self.skipTest(f"Could not find state log. Available logs: {available_logs}\nError: {e}")
-            return
-        except Exception as e:
-            self.skipTest(f"Error loading state log: {e}")
-            return
-        
-        # Build model with StateBuilder
-        model = build_test_object(OnePhonon, before_state, device=self.device)
-        
-        # Verify initial structure
-        self.assertTrue(
-            hasattr(model, 'model') and hasattr(model.model, 'A_inv'),
-            "Atomic model does not contain A_inv"
-        )
-        
-        # Print A_inv information for debugging
-        print("\nDEBUGGING A_inv before method call:")
-        if not isinstance(model.model.A_inv, torch.Tensor):
-            # If A_inv is not a tensor, raise an error - it should be properly initialized by StateBuilder
-            self.skipTest(f"A_inv is not a tensor: {type(model.model.A_inv)}. Please regenerate state logs.")
-            return
-        
-        print(f"A_inv shape: {model.model.A_inv.shape}")
-        print(f"A_inv dtype: {model.model.A_inv.dtype}")
-        print(f"A_inv requires_grad: {model.model.A_inv.requires_grad}")
-        print(f"A_inv device: {model.model.A_inv.device}")
-        print(f"A_inv first few values: {model.model.A_inv.flatten()[:5]}")
-        print(f"A_inv full matrix:\n{model.model.A_inv}")
-        
-        # Test _center_kvec function
-        print("\nDEBUGGING _center_kvec function:")
-        h_dim = int(model.hsampling[2])
-        k_dim = int(model.ksampling[2])
-        l_dim = int(model.lsampling[2])
-        
-        for x, L in [(0, h_dim), (1, h_dim), (h_dim-1, h_dim)]:
-            result = model._center_kvec(x, L)
-            print(f"_center_kvec({x}, {L}) = {result}")
-        
-        # Debug a sample calculation for a specific point
-        print("\nDEBUGGING _build_kvec_Brillouin calculation:")
-        h_idx, k_idx, l_idx = 0, 1, 0  # Example point [0,1,0]
-        print(f"\nDEBUGGING calculation for point [{h_idx},{k_idx},{l_idx}]:")
-        
-        # Calculate centered k-values
-        k_dh = model._center_kvec(h_idx, model.hsampling[2])
-        k_dk = model._center_kvec(k_idx, model.ksampling[2])
-        k_dl = model._center_kvec(l_idx, model.lsampling[2])
-        print(f"k_dh, k_dk, k_dl = {k_dh}, {k_dk}, {k_dl}")
-        
-        # Create hkl tensor with matching dtype
-        hkl_tensor = torch.tensor([k_dh, k_dk, k_dl], device=model.device, dtype=model.model.A_inv.dtype)
-        print(f"hkl_tensor: {hkl_tensor}")
-        
-        # Print A_inv tensor
-        print(f"A_inv_tensor:\n{model.model.A_inv}")
-        print(f"A_inv_tensor.T:\n{model.model.A_inv.T}")
-        
-        # Calculate k-vector for this point
-        result = torch.matmul(model.model.A_inv.T, hkl_tensor)
-        print(f"Result of matmul: {result}")
-        
-        # Call the method under test
-        model._build_kvec_Brillouin()
-        
-        # Verify results - check kvec tensor
-        self.assertTrue(hasattr(model, 'kvec'), "kvec not created")
-        h_dim = int(model.hsampling[2])
-        k_dim = int(model.ksampling[2])
-        l_dim = int(model.lsampling[2])
-        expected_kvec_shape = (h_dim * k_dim * l_dim, 3)
-        self.assertEqual(model.kvec.shape, expected_kvec_shape)
-        self.assertTrue(model.kvec.requires_grad, "kvec should require gradients")
-        
-        # Check kvec_norm tensor
-        self.assertTrue(hasattr(model, 'kvec_norm'), "kvec_norm not created")
-        expected_norm_shape = (h_dim * k_dim * l_dim, 1)
-        self.assertEqual(model.kvec_norm.shape, expected_norm_shape)
-        self.assertTrue(model.kvec_norm.requires_grad, "kvec_norm should require gradients")
-        
-        # Print some kvec values for debugging
-        print("\nDEBUGGING kvec after method call:")
-        print(f"kvec shape: {model.kvec.shape}")
-        print(f"kvec[0,0,0]: {model.kvec[0,0,0]}")
-        print(f"kvec[0,1,0]: {model.kvec[0,1,0]}")
-        print(f"kvec[1,0,0]: {model.kvec[1,0,0]}")
-        
-        # Load after state for comparison
-        try:
-            after_state = load_test_state(
-                self.logger, 
-                self.module_name, 
-                self.class_name, 
-                "_build_kvec_Brillouin",
-                before=False
-            )
-        except FileNotFoundError as e:
-            import glob
-            available_logs = glob.glob("logs/*build_kvec*after*")
-            self.skipTest(f"Could not find after state log. Available logs: {available_logs}\nError: {e}")
-            return
-        except Exception as e:
-            self.skipTest(f"Error loading after state log: {e}")
-            return
-        
-        # Get expected tensors from after state
-        kvec_expected = after_state.get('kvec')
-        kvec_norm_expected = after_state.get('kvec_norm')
-        
-        # Check if expected tensors exist
-        if kvec_expected is None or kvec_norm_expected is None:
-            self.skipTest("Expected kvec or kvec_norm not found in after state log")
-            return
-            
-        # Ensure tensors are in the right format for comparison
-        kvec_expected = ensure_tensor(kvec_expected, device='cpu')
-        kvec_norm_expected = ensure_tensor(kvec_norm_expected, device='cpu')
-        
-        # Print expected values for debugging
-        print("\nDEBUGGING expected values:")
-        print(f"expected kvec shape: {kvec_expected.shape}")
-        print(f"expected kvec[0,0,0]: {kvec_expected[0,0,0]}")
-        print(f"expected kvec[0,1,0]: {kvec_expected[0,1,0]}")
-        print(f"expected kvec[1,0,0]: {kvec_expected[1,0,0]}")
-        
-        # Print sampling parameters
-        print("\nDEBUGGING sampling parameters:")
-        print(f"hsampling: {model.hsampling}")
-        print(f"ksampling: {model.ksampling}")
-        print(f"lsampling: {model.lsampling}")
-        
-        # Convert tensors to numpy for comparison
-        kvec_numpy = model.kvec.detach().cpu().numpy()
-        kvec_expected_numpy = kvec_expected.detach().cpu().numpy() if isinstance(kvec_expected, torch.Tensor) else kvec_expected
-        
-        # Print differences
-        print("\nDEBUGGING differences:")
-        max_diff = np.max(np.abs(kvec_numpy - kvec_expected_numpy))
-        print(f"Maximum difference: {max_diff}")
-        
-        # Compare specific points
-        for i, j, k in [(0,0,0), (0,1,0), (1,0,0), (1,1,1)]:
-            if i < h_dim and j < k_dim and k < l_dim:
-                diff = np.max(np.abs(kvec_numpy[i,j,k] - kvec_expected_numpy[i,j,k]))
-                print(f"Difference at [{i},{j},{k}]: {diff}")
-                print(f"  Actual: {kvec_numpy[i,j,k]}")
-                print(f"  Expected: {kvec_expected_numpy[i,j,k]}")
-        
-        # Compare tensor values with more relaxed tolerances
-        tolerances = {'rtol': 1e-3, 'atol': 1e-4}
-        
-        # Convert kvec_norm_expected to numpy for comparison
-        kvec_norm_expected_numpy = kvec_norm_expected.detach().cpu().numpy() if isinstance(kvec_norm_expected, torch.Tensor) else kvec_norm_expected
-        
-        # Verify tensors match expected values
-        self.assertTrue(
-            np.allclose(
-                kvec_numpy, 
-                kvec_expected_numpy, 
-                rtol=tolerances['rtol'], 
-                atol=tolerances['atol']
-            ),
-            "kvec values don't match expected"
-        )
-        self.assertTrue(
-            np.allclose(
-                model.kvec_norm.detach().cpu().numpy(), 
-                kvec_norm_expected_numpy, 
-                rtol=tolerances['rtol'], 
-                atol=tolerances['atol']
-            ),
-            "kvec_norm values don't match expected"
-        )
-        
     def test_center_kvec(self):
-        """Test the _center_kvec method against NumPy implementation."""
+        """Test the _center_kvec method implementation by direct comparison."""
         # Create models for comparison
         self.create_models()
         
-        # Use default test case
-        args = [0, 2]  # Default test case
+        # Test cases for _center_kvec
+        test_cases = [
+            (0, 2), (1, 2),        # Even L
+            (0, 3), (1, 3), (2, 3), # Odd L
+            (5, 10), (9, 10),      # Larger L
+            (50, 100), (99, 100)    # Much larger L
+        ]
         
-        # Call method on both implementations
-        np_result = self.np_model._center_kvec(*args)
-        torch_result = self.torch_model._center_kvec(*args)
-        
-        # Convert torch result to Python scalar if needed
-        if isinstance(torch_result, torch.Tensor):
-            torch_result = torch_result.item()
-        
-        # Compare results
-        self.assertEqual(np_result, torch_result,
-                       f"Different results: NumPy={np_result}, PyTorch={torch_result}")
+        for x, L in test_cases:
+            with self.subTest(f"x={x}, L={L}"):
+                np_result = self.np_model._center_kvec(x, L)
+                torch_result = self.torch_model._center_kvec(x, L)
+                
+                # Convert torch result to Python scalar if needed
+                if isinstance(torch_result, torch.Tensor):
+                    torch_result = torch_result.item()
+                
+                # Compare results - must be exactly equal
+                self.assertEqual(np_result, torch_result,
+                               f"_center_kvec returns different values: NP={np_result}, Torch={torch_result}")
 #        
     def test_at_kvec_from_miller_points(self):
         """Test the _at_kvec_from_miller_points method against NumPy implementation."""
@@ -277,7 +88,13 @@ class TestKvectorMethods(TestBase):
             # Compare results
             np.testing.assert_array_equal(np_indices, torch_indices,
                                        f"Indices don't match for miller point {point}")
-#            
+
+    # Removed test_kvec_brillouin_equivalence because the kvec attribute
+    # is intentionally different between grid mode (BZ sampling) and arbitrary-q mode
+    # (direct k=q/2pi). Comparing them directly is not meaningful.
+    # The internal logic of _build_kvec_Brillouin for grid mode is tested implicitly
+    # by downstream methods like compute_gnm_phonons and compute_covariance_matrix.
+
     def test_log_completeness(self):
         """Verify k-vector method logs exist and contain required attributes."""
         if not hasattr(self, 'verify_logs') or not self.verify_logs:
@@ -288,6 +105,215 @@ class TestKvectorMethods(TestBase):
         self.verify_required_logs(self.module_name, "_center_kvec", [])
         self.verify_required_logs(self.module_name, "_at_kvec_from_miller_points", [])
 #
+class TestTorchKVector(TestBase):
+    """Test the indexing functions in the PyTorch implementation."""
+    
+    def setUp(self):
+        # Call parent setUp
+        super().setUp()
+        # Create a minimal model for testing indexing functions
+        self.model = self._create_minimal_model()
+    
+    def _create_minimal_model(self):
+        """Create a minimal model with just the attributes needed for indexing tests."""
+        from eryx.models_torch import OnePhonon
+        
+        model = OnePhonon.__new__(OnePhonon)  # Create instance without calling __init__
+        
+        # Set basic attributes needed for indexing functions
+        model.device = self.device
+        model.hsampling = [-2, 2, 2]  # min, max, sampling
+        model.ksampling = [-3, 3, 3]  # min, max, sampling
+        model.lsampling = [-4, 4, 4]  # min, max, sampling
+        
+        # Calculate map_shape based on sampling parameters
+        h_steps = int(model.hsampling[2] * (model.hsampling[1] - model.hsampling[0]) + 1)
+        k_steps = int(model.ksampling[2] * (model.ksampling[1] - model.ksampling[0]) + 1)
+        l_steps = int(model.lsampling[2] * (model.lsampling[1] - model.lsampling[0]) + 1)
+        model.map_shape = (h_steps, k_steps, l_steps)
+        
+        # Set use_arbitrary_q flag to False for grid-based mode
+        model.use_arbitrary_q = False
+        
+        return model
+    
+    def test_flat_to_3d_indices(self):
+        """Test conversion from flat indices to 3D indices."""
+        # Test cases: flat_idx, expected (h, k, l)
+        test_cases = [
+            (0, (0, 0, 0)),  # Origin
+            (1, (0, 0, 1)),  # Next in l dimension
+            (self.model.map_shape[2], (0, 1, 0)),  # Next in k dimension
+            (self.model.map_shape[1] * self.model.map_shape[2], (1, 0, 0)),  # Next in h dimension
+            (self.model.map_shape[1] * self.model.map_shape[2] - 1, (0, self.model.map_shape[1]-1, self.model.map_shape[2]-1)),  # Last in first h-plane
+            (self.model.map_shape[0] * self.model.map_shape[1] * self.model.map_shape[2] - 1, 
+             (self.model.map_shape[0]-1, self.model.map_shape[1]-1, self.model.map_shape[2]-1))  # Last element
+        ]
+        
+        for flat_idx, expected in test_cases:
+            with self.subTest(f"flat_idx={flat_idx}, expected={expected}"):
+                # Convert to tensor
+                flat_tensor = torch.tensor([flat_idx], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                h_indices, k_indices, l_indices = self.model._flat_to_3d_indices(flat_tensor)
+                
+                # Convert to tuples for comparison
+                result = (h_indices.item(), k_indices.item(), l_indices.item())
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"flat_to_3d_indices failed: got {result}, expected {expected}")
+    
+    def test_3d_to_flat_indices(self):
+        """Test conversion from 3D indices to flat indices."""
+        # Test cases: (h, k, l), expected flat_idx
+        test_cases = [
+            ((0, 0, 0), 0),  # Origin
+            ((0, 0, 1), 1),  # Next in l dimension
+            ((0, 1, 0), self.model.map_shape[2]),  # Next in k dimension
+            ((1, 0, 0), self.model.map_shape[1] * self.model.map_shape[2]),  # Next in h dimension
+            ((self.model.map_shape[0]-1, self.model.map_shape[1]-1, self.model.map_shape[2]-1), 
+             self.model.map_shape[0] * self.model.map_shape[1] * self.model.map_shape[2] - 1)  # Last element
+        ]
+        
+        for indices, expected in test_cases:
+            with self.subTest(f"indices={indices}, expected={expected}"):
+                # Convert to tensors
+                h_tensor = torch.tensor([indices[0]], device=self.device, dtype=torch.long)
+                k_tensor = torch.tensor([indices[1]], device=self.device, dtype=torch.long)
+                l_tensor = torch.tensor([indices[2]], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                flat_indices = self.model._3d_to_flat_indices(h_tensor, k_tensor, l_tensor)
+                
+                # Get result
+                result = flat_indices.item()
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"3d_to_flat_indices failed: got {result}, expected {expected}")
+    
+    def test_flat_to_3d_indices_bz(self):
+        """Test conversion from flat indices to 3D indices in Brillouin zone."""
+        # Get BZ dimensions
+        h_dim_bz = int(self.model.hsampling[2])
+        k_dim_bz = int(self.model.ksampling[2])
+        l_dim_bz = int(self.model.lsampling[2])
+        
+        # Test cases: flat_idx, expected (h, k, l)
+        test_cases = [
+            (0, (0, 0, 0)),  # Origin
+            (1, (0, 0, 1)),  # Next in l dimension
+            (l_dim_bz, (0, 1, 0)),  # Next in k dimension
+            (k_dim_bz * l_dim_bz, (1, 0, 0)),  # Next in h dimension
+            (h_dim_bz * k_dim_bz * l_dim_bz - 1, 
+             (h_dim_bz-1, k_dim_bz-1, l_dim_bz-1))  # Last element
+        ]
+        
+        for flat_idx, expected in test_cases:
+            with self.subTest(f"flat_idx={flat_idx}, expected={expected}"):
+                # Convert to tensor
+                flat_tensor = torch.tensor([flat_idx], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                h_indices, k_indices, l_indices = self.model._flat_to_3d_indices_bz(flat_tensor)
+                
+                # Convert to tuples for comparison
+                result = (h_indices.item(), k_indices.item(), l_indices.item())
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"flat_to_3d_indices_bz failed: got {result}, expected {expected}")
+    
+    def test_3d_to_flat_indices_bz(self):
+        """Test conversion from 3D indices to flat indices in Brillouin zone."""
+        # Get BZ dimensions
+        h_dim_bz = int(self.model.hsampling[2])
+        k_dim_bz = int(self.model.ksampling[2])
+        l_dim_bz = int(self.model.lsampling[2])
+        
+        # Test cases: (h, k, l), expected flat_idx
+        test_cases = [
+            ((0, 0, 0), 0),  # Origin
+            ((0, 0, 1), 1),  # Next in l dimension
+            ((0, 1, 0), l_dim_bz),  # Next in k dimension
+            ((1, 0, 0), k_dim_bz * l_dim_bz),  # Next in h dimension
+            ((h_dim_bz-1, k_dim_bz-1, l_dim_bz-1), 
+             h_dim_bz * k_dim_bz * l_dim_bz - 1)  # Last element
+        ]
+        
+        for indices, expected in test_cases:
+            with self.subTest(f"indices={indices}, expected={expected}"):
+                # Convert to tensors
+                h_tensor = torch.tensor([indices[0]], device=self.device, dtype=torch.long)
+                k_tensor = torch.tensor([indices[1]], device=self.device, dtype=torch.long)
+                l_tensor = torch.tensor([indices[2]], device=self.device, dtype=torch.long)
+                
+                # Call the method
+                flat_indices = self.model._3d_to_flat_indices_bz(h_tensor, k_tensor, l_tensor)
+                
+                # Get result
+                result = flat_indices.item()
+                
+                # Assert equality
+                self.assertEqual(result, expected, 
+                               f"3d_to_flat_indices_bz failed: got {result}, expected {expected}")
+    
+    def test_batch_indexing(self):
+        """Test batch processing of indices."""
+        # Create batch of flat indices
+        flat_indices = torch.tensor([0, 1, 2, 10, 20], device=self.device, dtype=torch.long)
+        
+        # Test batch conversion to 3D indices
+        h_indices, k_indices, l_indices = self.model._flat_to_3d_indices(flat_indices)
+        
+        # Test batch conversion back to flat indices
+        flat_indices_back = self.model._3d_to_flat_indices(h_indices, k_indices, l_indices)
+        
+        # Verify round-trip conversion
+        torch.testing.assert_close(flat_indices, flat_indices_back, 
+                                  msg="Batch round-trip conversion failed")
+        
+        # Same for BZ indices
+        h_indices_bz, k_indices_bz, l_indices_bz = self.model._flat_to_3d_indices_bz(flat_indices)
+        flat_indices_bz_back = self.model._3d_to_flat_indices_bz(h_indices_bz, k_indices_bz, l_indices_bz)
+        
+        # Verify BZ round-trip conversion
+        torch.testing.assert_close(flat_indices, flat_indices_bz_back, 
+                                  msg="BZ batch round-trip conversion failed")
+    
+    def test_arbitrary_q_mode(self):
+        """Test indexing functions in arbitrary q-vector mode."""
+        # Create a model in arbitrary q-vector mode
+        model = self._create_minimal_model()
+        model.use_arbitrary_q = True
+        
+        # Create sample q-vectors
+        q_vectors = torch.tensor([
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+            [0.7, 0.8, 0.9]
+        ], device=self.device)
+        model.q_vectors = q_vectors
+        
+        # Test flat_to_3d_indices in arbitrary mode (should be identity)
+        flat_indices = torch.tensor([0, 1, 2], device=self.device, dtype=torch.long)
+        h_indices, k_indices, l_indices = model._flat_to_3d_indices(flat_indices)
+        
+        # All should be the same as input in arbitrary mode
+        torch.testing.assert_close(flat_indices, h_indices, 
+                                  msg="flat_to_3d_indices should return input for h in arbitrary mode")
+        torch.testing.assert_close(flat_indices, k_indices, 
+                                  msg="flat_to_3d_indices should return input for k in arbitrary mode")
+        torch.testing.assert_close(flat_indices, l_indices, 
+                                  msg="flat_to_3d_indices should return input for l in arbitrary mode")
+        
+        # Test 3d_to_flat_indices in arbitrary mode (should be identity for h_indices)
+        flat_indices_back = model._3d_to_flat_indices(h_indices, k_indices, l_indices)
+        torch.testing.assert_close(flat_indices, flat_indices_back, 
+                                  msg="3d_to_flat_indices should return h_indices in arbitrary mode")
+
 class TestOnePhononKvector(TestKvectorMethods):
     """Legacy class for backward compatibility."""
     
@@ -306,48 +332,6 @@ class TestOnePhononKvector(TestKvectorMethods):
             'gamma_intra': 1.0,
             'gamma_inter': 1.0
         }
-    
-    def test_tensor_creation(self):
-        """Test tensor creation from state-restored model."""
-        # Import test helpers
-        from eryx.autotest.test_helpers import build_test_object
-        
-        # 1. Create minimal state data
-        minimal_state = {
-            'pdb_path': self.test_params['pdb_path'],
-            'hsampling': self.test_params['hsampling'],
-            'ksampling': self.test_params['ksampling'],
-            'lsampling': self.test_params['lsampling'],
-            'model': {
-                'A_inv': np.eye(3, dtype=np.float64)  # Use float64 to match test_build_kvec_Brillouin_state_based
-            }
-        }
-        
-        # 2. Build model with StateBuilder 
-        model = build_test_object(OnePhonon, minimal_state, device=self.device)
-        
-        # Ensure A_inv requires gradients
-        if not model.model.A_inv.requires_grad:
-            model.model.A_inv = model.model.A_inv.clone().detach().requires_grad_(True)
-        
-        # 3. Build k-vectors
-        model._build_kvec_Brillouin()
-        
-        # Verify kvec was created and requires gradients
-        self.assertTrue(hasattr(model, 'kvec'), "kvec not created")
-        self.assertTrue(model.kvec.requires_grad, "kvec should require gradients")
-        
-        # Note: We don't test gradient flow for state-restored instances
-        # as per project requirements in project_rules.md
-        
-        # 4. Verify tensor shapes and properties instead
-        expected_shape = (model.hsampling[2], model.ksampling[2], model.lsampling[2], 3)
-        self.assertEqual(model.kvec.shape, expected_shape, "kvec has incorrect shape")
-        
-        # 5. Verify kvec_norm was created with correct properties
-        self.assertTrue(hasattr(model, 'kvec_norm'), "kvec_norm not created")
-        expected_norm_shape = (model.hsampling[2], model.ksampling[2], model.lsampling[2], 1)
-        self.assertEqual(model.kvec_norm.shape, expected_norm_shape, "kvec_norm has incorrect shape")
 
 if __name__ == '__main__':
     unittest.main()

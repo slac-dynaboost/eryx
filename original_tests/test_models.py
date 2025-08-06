@@ -9,7 +9,7 @@ from eryx.pdb import AtomicModel
 from eryx.map_utils import generate_grid
 from eryx.base import compute_molecular_transform
 from eryx.base import compute_crystal_transform
-from base import setup_model
+from tests.base import setup_model
 
 class TestTransforms:
     """

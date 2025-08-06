@@ -24,6 +24,14 @@ class GaussianNetworkModel:
         - Original NumPy implementation in eryx/pdb.py:GaussianNetworkModel
     """
     
+    def __init__(self):
+        """Initialize with default attributes."""
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.real_dtype = torch.float64
+        self.complex_dtype = torch.complex128
+        self.real_dtype = torch.float64
+        self.complex_dtype = torch.complex128
+    
     def compute_hessian(self) -> torch.Tensor:
         """
         For a pair of atoms the Hessian in a GNM is defined as:
@@ -33,13 +41,13 @@ class GaussianNetworkModel:
         
         Returns:
             hessian: torch.Tensor of shape (n_asu, n_atoms_per_asu, n_cell, n_asu, n_atoms_per_asu)
-                with dtype torch.complex64
+                with dtype torch.complex128
         """
         hessian = torch.zeros((self.n_asu, self.n_atoms_per_asu,
                               self.n_cell, self.n_asu, self.n_atoms_per_asu),
-                             dtype=torch.complex64, device=self.device)
+                             dtype=self.complex_dtype, device=self.device)
         hessian_diagonal = torch.zeros((self.n_asu, self.n_atoms_per_asu),
-                                      dtype=torch.complex64, device=self.device)
+                                      dtype=self.complex_dtype, device=self.device)
 
         # off-diagonal
         for i_asu in range(self.n_asu):
@@ -48,7 +56,7 @@ class GaussianNetworkModel:
                     for i_at in range(self.n_atoms_per_asu):
                         iat_neighbors = self.asu_neighbors[i_asu][i_cell][j_asu][i_at]
                         if len(iat_neighbors) > 0:
-                            gamma = self.gamma[i_cell, i_asu, j_asu].to(torch.complex64)
+                            gamma = self.gamma[i_cell, i_asu, j_asu].to(self.complex_dtype)
                             for j_at in iat_neighbors:
                                 hessian[i_asu, i_at, i_cell, j_asu, j_at] = -gamma
                             hessian_diagonal[i_asu, i_at] -= gamma * len(iat_neighbors)
@@ -56,7 +64,7 @@ class GaussianNetworkModel:
         # diagonal (also correct for over-counted self term)
         for i_asu in range(self.n_asu):
             for i_at in range(self.n_atoms_per_asu):
-                gamma_self = self.gamma[self.id_cell_ref, i_asu, i_asu].to(torch.complex64)
+                gamma_self = self.gamma[self.id_cell_ref, i_asu, i_asu].to(self.complex_dtype)
                 hessian[i_asu, i_at, self.id_cell_ref, i_asu, i_at] = -hessian_diagonal[i_asu, i_at] - gamma_self
 
         return hessian
@@ -84,8 +92,8 @@ class GaussianNetworkModel:
         Kmat_batch = ref_cell_hessian.unsqueeze(0).repeat(batch_size, 1, 1, 1, 1)
         
         # Handle complex data type for batch
-        if hessian.dtype != torch.complex64:
-            Kmat_batch = Kmat_batch.to(torch.complex64)
+        if hessian.dtype != self.complex_dtype:
+            Kmat_batch = Kmat_batch.to(self.complex_dtype)
         
         # For each non-reference cell:
         for j_cell in range(self.n_cell):
@@ -139,6 +147,8 @@ class GaussianNetworkModel:
         Returns:
             Tensor of shape [batch_size, m, n] containing pseudo-inverses
         """
+        # Ensure high precision
+        batch_matrices = batch_matrices.to(dtype=self.complex_dtype)
         # Get batch dimensions and matrix shape
         batch_size, n, m = batch_matrices.shape
         
@@ -162,7 +172,7 @@ class GaussianNetworkModel:
         S_pinv_values = S_pinv[:, :min_dim].to(dtype=batch_matrices.dtype)
         
         # Create empty matrices for the batch
-        S_pinv_matrix = torch.zeros(batch_size, m, n, device=self.device, dtype=batch_matrices.dtype)
+        S_pinv_matrix = torch.zeros(batch_size, m, n, device=self.device, dtype=self.complex_dtype)
         
         # Create indices for batch diagonal assignment
         batch_indices = torch.arange(batch_size, device=self.device).repeat_interleave(min_dim)
@@ -218,7 +228,7 @@ class GaussianNetworkModel:
         identity = torch.eye(
             Kmat_batch_2d.shape[1], 
             device=Kmat_batch_2d.device, 
-            dtype=Kmat_batch_2d.dtype
+            dtype=self.complex_dtype
         ).unsqueeze(0).expand(batch_size, -1, -1)
         
         Kmat_batch_2d_reg = Kmat_batch_2d + eps * identity

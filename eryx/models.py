@@ -178,15 +178,68 @@ class OnePhonon:
             for i_asu in range(self.n_asu):
                 xyz = np.copy(self.crystal.get_asu_xyz(i_asu))
                 xyz -= np.mean(xyz, axis=0)
+                
+                # Debug print for centered coordinates
+                if i_asu == 0:
+                    print(f"NumPy ASU {i_asu} Centered XYZ (mean): {np.mean(xyz, axis=0)}")
+                    print(f"NumPy ASU {i_asu} Centered XYZ (first 3 atoms):")
+                    for i in range(min(3, xyz.shape[0])):
+                        print(f"  Atom {i}: {xyz[i]}")
+                
                 for i_atom in range(self.n_atoms_per_asu):
+                    # Debug print for specific atoms
+                    if i_asu == 0 and i_atom < 3:
+                        print(f"  NumPy Atom {i_atom} XYZ: {xyz[i_atom]}")
+                    
+                    # Create fresh Atmp for each atom
+                    Atmp = np.zeros((3, 3))
+                    
+                    # Fill the skew-symmetric matrix
                     Atmp[0, 1] = xyz[i_atom, 2]
                     Atmp[0, 2] = -xyz[i_atom, 1]
                     Atmp[1, 2] = xyz[i_atom, 0]
+                    
+                    # Debug print before subtraction
+                    if i_asu == 0 and i_atom < 3:
+                        print(f"  NumPy Atom {i_atom} Atmp before subtraction:\n{Atmp}")
+                    
+                    # Apply skew-symmetry
                     Atmp -= Atmp.T
-                    self.Amat[i_asu, i_atom] = np.hstack([Adiag, Atmp])
+                    
+                    # Debug print after subtraction
+                    if i_asu == 0 and i_atom < 3:
+                        print(f"  NumPy Atom {i_atom} Atmp after subtraction:\n{Atmp}")
+                    
+                    # Create the full block
+                    stacked_block = np.hstack([Adiag, Atmp])
+                    
+                    # Debug print for stacked block
+                    if i_asu == 0 and i_atom < 3:
+                        print(f"  NumPy Atom {i_atom} Stacked Block:\n{stacked_block}")
+                    
+                    # Assign to Amat
+                    self.Amat[i_asu, i_atom] = stacked_block
+            
+            # Reshape to final form
             self.Amat = self.Amat.reshape((self.n_asu,
                                            self.n_dof_per_asu_actual,
                                            self.n_dof_per_asu))
+            
+            # Debug prints for final Amat
+            if self.n_asu > 0 and self.n_atoms_per_asu > 0:
+                print(f"\nNumPy DEBUG _build_A: First ASU, first atom Amat block:")
+                print(self.Amat[0, 0:3, :])
+                if self.n_atoms_per_asu > 1:
+                    print(f"\nNumPy DEBUG _build_A: First ASU, second atom Amat block:")
+                    print(self.Amat[0, 3:6, :])
+                if self.n_atoms_per_asu > 2:
+                    print(f"\nNumPy DEBUG _build_A: First ASU, third atom Amat block:")
+                    print(self.Amat[0, 6:9, :])
+                
+                # Print the entire Amat shape and a summary of its values
+                print(f"\nNumPy DEBUG _build_A: Amat shape: {self.Amat.shape}")
+                print(f"NumPy DEBUG _build_A: Amat min: {self.Amat.min()}, max: {self.Amat.max()}")
+                print(f"NumPy DEBUG _build_A: Amat mean: {self.Amat.mean()}, std: {self.Amat.std()}")
         else:
             self.Amat = None
 
@@ -243,11 +296,43 @@ class OnePhonon:
         -------
         M_allatoms : numpy.ndarray, shape (n_asu, n_atoms*3, n_asu, n_atoms*3)
         """
+        print("\n--- NumPy _build_M_allatoms Debug ---")
+        
+        # Extract weights
         mass_array = np.array([element.weight for structure in self.crystal.model.elements for element in structure])
-        mass_list = [np.kron(mass_array, np.eye(3))[:, 3 * i:3 * (i + 1)] for i in
-                     range(self.n_asu * self.n_atoms_per_asu)]
-        return block_diag(*mass_list).reshape((self.n_asu, self.n_dof_per_asu_actual,
-                                               self.n_asu, self.n_dof_per_asu_actual))
+        print(f"NumPy mass_array: shape={mass_array.shape}, dtype={mass_array.dtype}")
+        print(f"NumPy mass_array stats: min={mass_array.min()}, max={mass_array.max()}, mean={mass_array.mean()}")
+        print(f"NumPy mass_array first few elements: {mass_array[:5]}")
+        
+        # Create mass_list
+        print("\nCreating NumPy mass_list...")
+        mass_list = []
+        for i in range(self.n_asu * self.n_atoms_per_asu):
+            # Create 3x3 block for each atom (mass * identity)
+            block = np.eye(3) * mass_array[i]
+            mass_list.append(block)
+        
+        print(f"NumPy mass_list length: {len(mass_list)}")
+        print(f"NumPy first block shape: {mass_list[0].shape}")
+        print(f"NumPy first block:\n{mass_list[0]}")
+        
+        # Create block diagonal matrix
+        print("\nCreating NumPy block diagonal matrix...")
+        M_block_diag = block_diag(*mass_list)
+        print(f"NumPy M_block_diag shape: {M_block_diag.shape}")
+        print(f"NumPy M_block_diag diagonal elements (first few): {np.diagonal(M_block_diag)[:15]}")
+        
+        # Reshape to 4D tensor
+        M_allatoms = M_block_diag.reshape((self.n_asu, self.n_dof_per_asu_actual,
+                                           self.n_asu, self.n_dof_per_asu_actual))
+        
+        # Debug prints for M_allatoms
+        print(f"\nNumPy M_allatoms shape: {M_allatoms.shape}")
+        print(f"NumPy M_allatoms diag[0:5]: {np.diagonal(M_allatoms[0,:,0,:])[:5]}")
+        if M_allatoms.shape[0] > 1 and M_allatoms.shape[2] > 1:
+            print(f"NumPy M_allatoms[0,0,1,0]: {M_allatoms[0,0,1,0]}")
+        
+        return M_allatoms
 
     #@debug
     def _center_kvec(self, x, L):
@@ -481,8 +566,29 @@ class OnePhonon:
             for dk in range(self.ksampling[2]):
                 for dl in range(self.lsampling[2]):
 
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"\n--- NumPy Debug for BZ point (0,1,0) ---")
+                        print(f"V[0,1,0] shape: {self.V[0,1,0].shape}")
+                        print(f"Winv[0,1,0] shape: {self.Winv[0,1,0].shape}")
+                        print(f"V[0,1,0][0,0] (abs): {np.abs(self.V[0,1,0][0,0]):.8e}")
+                        print(f"Winv[0,1,0][0]: {self.Winv[0,1,0][0]:.8e}")
+                    
                     q_indices = self._at_kvec_from_miller_points((dh, dk, dl))
+                    
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"q_indices shape: {q_indices.shape}")
+                        if q_indices.size > 0:
+                            print(f"First few q_indices: {q_indices[:5]}")
+                    
                     q_indices = q_indices[self.res_mask[q_indices]]
+                    
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0:
+                        print(f"valid q_indices shape: {q_indices.shape}")
+                        if q_indices.size > 0:
+                            print(f"First few valid q_indices: {q_indices[:5]}")
 
                     F = np.zeros((q_indices.shape[0],
                                   self.n_asu,
@@ -503,11 +609,31 @@ class OnePhonon:
                             sum_over_atoms=False)
                     F = F.reshape((q_indices.shape[0],
                                    self.n_asu * self.n_dof_per_asu))
+                    
+                    # Debug print for specific BZ point
+                    if dh == 0 and dk == 1 and dl == 0 and q_indices.size > 0:
+                        print(f"F shape: {F.shape}")
+                        print(f"F[0,0] (abs): {np.abs(F[0,0]):.8e}" if F.size > 0 else "F is empty")
 
                     if rank == -1:
-                        Id[q_indices] += np.dot(
-                            np.square(np.abs(np.dot(F, self.V[dh, dk, dl]))),
-                            self.Winv[dh, dk, dl])
+                        # Debug print for specific BZ point
+                        if dh == 0 and dk == 1 and dl == 0 and q_indices.size > 0:
+                            FV = np.dot(F, self.V[dh, dk, dl])
+                            FV_abs_squared = np.square(np.abs(FV))
+                            print(f"FV shape: {FV.shape}")
+                            print(f"FV_abs_squared shape: {FV_abs_squared.shape}")
+                            print(f"Winv shape: {self.Winv[dh, dk, dl].shape}")
+                            print(f"FV[0,0] (abs): {np.abs(FV[0,0]):.8e}" if FV.size > 0 else "FV is empty")
+                            print(f"FV_abs_squared[0,0]: {FV_abs_squared[0,0]:.8e}" if FV_abs_squared.size > 0 else "FV_abs_squared is empty")
+                            print(f"Winv[0]: {self.Winv[dh, dk, dl][0]:.8e}")
+                            intensity = np.dot(FV_abs_squared, self.Winv[dh, dk, dl])
+                            print(f"intensity shape: {intensity.shape}")
+                            print(f"intensity[0]: {intensity[0]:.8e}" if intensity.size > 0 else "intensity is empty")
+                            Id[q_indices] += intensity
+                        else:
+                            Id[q_indices] += np.dot(
+                                np.square(np.abs(np.dot(F, self.V[dh, dk, dl]))),
+                                self.Winv[dh, dk, dl])
                     else:
                         Id[q_indices] += np.square(
                             np.abs(np.dot(F, self.V[dh,dk,dl,:,rank]))) * \

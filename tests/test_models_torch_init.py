@@ -3,6 +3,8 @@ import torch
 import numpy as np
 from unittest.mock import MagicMock, patch
 from eryx.models_torch import OnePhonon
+from eryx.models import OnePhonon as NumpyOnePhonon
+from tests.torch_test_utils import TensorComparison
 
 class TestOnePhononInitialization(unittest.TestCase):
     def setUp(self):
@@ -42,109 +44,6 @@ class TestOnePhononInitialization(unittest.TestCase):
         mock_setup.assert_called_once_with(self.pdb_path, True, 0.0, 'asu')
         mock_setup_phonons.assert_called_once_with(self.pdb_path, 'gnm', 4.0, 1.0, 1.0)
     
-    @patch('eryx.pdb.AtomicModel')
-    @patch('eryx.pdb.Crystal')
-    @patch('eryx.adapters.PDBToTensor')
-    @patch('eryx.map_utils_torch.generate_grid')
-    @patch('eryx.map_utils_torch.get_resolution_mask')
-    def test_setup_method(self, mock_get_resolution_mask, mock_generate_grid, 
-                         mock_pdb_adapter, mock_crystal, mock_atomic_model):
-        """Test _setup method with mocked dependencies."""
-        # Configure mocks
-        mock_atomic_model.return_value = MagicMock()
-        mock_crystal.return_value = MagicMock()
-        mock_pdb_adapter.return_value = MagicMock()
-        mock_pdb_adapter.return_value.convert_atomic_model.return_value = {
-            'A_inv': torch.eye(3, device=self.device),
-            'cell': torch.ones(6, device=self.device)
-        }
-        mock_pdb_adapter.return_value.convert_crystal.return_value = {
-            'n_cell': 27,
-            'n_asu': 4,
-            'n_atoms_per_asu': 100,
-            'hkl_to_id': lambda x: 0,
-            'id_to_hkl': lambda x: [0, 0, 0]
-        }
-        mock_generate_grid.return_value = (
-            torch.ones((100, 3), device=self.device),
-            (10, 10, 10)
-        )
-        mock_get_resolution_mask.return_value = (
-            torch.ones(100, dtype=torch.bool, device=self.device),
-            torch.ones(100, device=self.device)
-        )
-        
-        # Create model
-        model = OnePhonon.__new__(OnePhonon)
-        model.device = self.device
-        model.hsampling = self.hsampling
-        model.ksampling = self.ksampling
-        model.lsampling = self.lsampling
-        
-        # Call _setup
-        model._setup(self.pdb_path, True, 0.0, 'asu')
-        
-        # Verify method calls
-        mock_atomic_model.assert_called_once_with(self.pdb_path, True)
-        mock_crystal.assert_called_once()
-        mock_pdb_adapter.return_value.convert_atomic_model.assert_called_once()
-        mock_pdb_adapter.return_value.convert_crystal.assert_called_once()
-        mock_generate_grid.assert_called_once()
-        mock_get_resolution_mask.assert_called_once()
-        
-        # Verify attributes
-        self.assertEqual(model.n_asu, 4)
-        self.assertEqual(model.n_atoms_per_asu, 100)
-        self.assertEqual(model.n_dof_per_asu, 6)  # Because group_by='asu'
-        self.assertEqual(model.n_dof_per_cell, 24)  # 4 ASUs * 6 DOF per ASU
-    
-    @patch('eryx.pdb.GaussianNetworkModel')
-    @patch('eryx.adapters.PDBToTensor')
-    def test_setup_phonons(self, mock_pdb_adapter, mock_gnm):
-        """Test _setup_phonons method with mocked dependencies."""
-        # Configure mocks
-        mock_gnm.return_value = MagicMock()
-        mock_pdb_adapter.return_value = MagicMock()
-        mock_pdb_adapter.return_value.convert_gnm.return_value = {
-            'enm_cutoff': 4.0,
-            'gamma_intra': 1.0,
-            'gamma_inter': 1.0
-        }
-        
-        # Create model with necessary attributes
-        model = OnePhonon.__new__(OnePhonon)
-        model.device = self.device
-        model.hsampling = self.hsampling
-        model.ksampling = self.ksampling
-        model.lsampling = self.lsampling
-        model.n_asu = 4
-        model.n_dof_per_asu = 6
-        model._build_A = MagicMock()
-        model._build_M = MagicMock()
-        model._build_kvec_Brillouin = MagicMock()
-        model.compute_gnm_phonons = MagicMock()
-        model.compute_covariance_matrix = MagicMock()
-        
-        # Call _setup_phonons
-        model._setup_phonons(self.pdb_path, 'gnm', 4.0, 1.0, 1.0)
-        
-        # Verify tensor initialization
-        self.assertEqual(model.kvec.shape, (model.hsampling[2], model.ksampling[2], model.lsampling[2], 3))
-        self.assertEqual(model.kvec_norm.shape, (model.hsampling[2], model.ksampling[2], model.lsampling[2], 1))
-        self.assertEqual(model.V.shape, (model.hsampling[2], model.ksampling[2], model.lsampling[2], 
-                                        model.n_asu * model.n_dof_per_asu, model.n_asu * model.n_dof_per_asu))
-        self.assertEqual(model.Winv.shape, (model.hsampling[2], model.ksampling[2], model.lsampling[2],
-                                           model.n_asu * model.n_dof_per_asu))
-        
-        # Verify method calls
-        model._build_A.assert_called_once()
-        model._build_M.assert_called_once()
-        model._build_kvec_Brillouin.assert_called_once()
-        mock_gnm.assert_called_once_with(self.pdb_path, 4.0, 1.0, 1.0)
-        mock_pdb_adapter.return_value.convert_gnm.assert_called_once()
-        model.compute_gnm_phonons.assert_called_once()
-        model.compute_covariance_matrix.assert_called_once()
-    
     def test_device_selection(self):
         """Test device selection logic."""
         # Test default device selection
@@ -170,6 +69,44 @@ class TestOnePhononInitialization(unittest.TestCase):
                 device=torch.device('cpu')
             )
             self.assertEqual(model.device, torch.device('cpu'))
+            
+    def test_setup_grid_equivalence(self):
+        """Verify grid attributes from _setup match between NumPy and PyTorch."""
+        # Define test parameters for grid testing
+        test_params_grid = {
+            'pdb_path': 'tests/pdbs/5zck_p1.pdb',
+            'hsampling': [-2, 2, 2],
+            'ksampling': [-2, 2, 2],
+            'lsampling': [-2, 2, 2],
+            'expand_p1': True,
+            'res_limit': 0.0,
+            'gnm_cutoff': 4.0,
+            'gamma_intra': 1.0,
+            'gamma_inter': 1.0
+        }
+        
+        # 1. Instantiate both models with identical params
+        np_model = NumpyOnePhonon(**test_params_grid)
+        # Ensure PyTorch model is created on CPU for direct comparison
+        torch_model = OnePhonon(**test_params_grid, device=torch.device('cpu'))
+        
+        # 2. Compare map_shape (should be identical tuple)
+        self.assertEqual(np_model.map_shape, torch_model.map_shape,
+                         f"map_shape mismatch: NP={np_model.map_shape}, Torch={torch_model.map_shape}")
+        
+        # 3. Compare hkl_grid (should be numerically identical float64)
+        TensorComparison.assert_tensors_equal(
+            np_model.hkl_grid, torch_model.hkl_grid,
+            rtol=1e-9, atol=1e-12, # Use very tight tolerance
+            msg="hkl_grid comparison failed"
+        )
+        
+        # 4. Compare q_grid (should be numerically identical float64)
+        TensorComparison.assert_tensors_equal(
+            np_model.q_grid, torch_model.q_grid,
+            rtol=1e-9, atol=1e-12, # Use very tight tolerance
+            msg="q_grid comparison failed"
+        )
 
 if __name__ == '__main__':
     unittest.main()

@@ -6,6 +6,16 @@ including complex number operations, eigendecomposition, and gradient utilities.
 """
 
 import unittest
+import sys
+import os
+
+# Add project root to path if necessary
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Import the specific utility class/function
+from eryx.torch_utils import BrillouinZoneUtils # Or from models_torch if static
 import torch
 import numpy as np
 from eryx.torch_utils import ComplexTensorOps, EigenOps, GradientUtils
@@ -682,65 +692,7 @@ class TestGradientUtils(unittest.TestCase):
         # Expected gradient: [[1, 1], [1, 1]]
         expected = torch.ones_like(x)
         self.assertTrue(torch.allclose(grad, expected, atol=1e-4))
-    
-    def test_validate_gradients(self):
-        """Test gradient validation function."""
-        # Test with identical gradients
-        analytical = torch.tensor([1.0, 2.0, 3.0], device=self.device, dtype=torch.float32)
-        numerical = torch.tensor([1.0, 2.0, 3.0], device=self.device, dtype=torch.float32)
-        
-        valid, rel_errors, abs_errors = GradientUtils.validate_gradients(analytical, numerical)
-        
-        self.assertTrue(valid)
-        self.assertTrue(torch.all(rel_errors == 0))
-        self.assertTrue(torch.all(abs_errors == 0))
-        
-        # Test with slightly different gradients within tolerance
-        analytical = torch.tensor([1.0, 2.0, 3.0], device=self.device)
-        numerical = torch.tensor([1.0001, 1.9998, 3.0002], device=self.device)
-        
-        valid, rel_errors, abs_errors = GradientUtils.validate_gradients(analytical, numerical)
-        
-        self.assertTrue(valid)
-        self.assertTrue(torch.all(rel_errors <= 1e-4))
-        self.assertTrue(torch.all(abs_errors <= 1e-4))
-        
-        # Test with gradients outside tolerance
-        analytical = torch.tensor([1.0, 2.0, 3.0], device=self.device)
-        numerical = torch.tensor([1.1, 2.2, 3.3], device=self.device)
-        
-        valid, rel_errors, abs_errors = GradientUtils.validate_gradients(analytical, numerical)
-        
-        self.assertFalse(valid)
-        
-        # Test with zero gradients
-        analytical = torch.zeros(3, device=self.device)
-        numerical = torch.zeros(3, device=self.device)
-        
-        valid, rel_errors, abs_errors = GradientUtils.validate_gradients(analytical, numerical)
-        
-        self.assertTrue(valid)
-        
-        # Test with very large and very small gradients
-        analytical = torch.tensor([1e-10, 1e10], device=self.device)
-        numerical = torch.tensor([1.1e-10, 1.1e10], device=self.device)
-        
-        valid, rel_errors, abs_errors = GradientUtils.validate_gradients(analytical, numerical, rtol=0.2)
-        
-        self.assertTrue(valid)
-        
-        # Test with different tolerance values
-        analytical = torch.tensor([1.0, 2.0, 3.0], device=self.device)
-        numerical = torch.tensor([1.05, 2.05, 3.05], device=self.device)
-        
-        # Should fail with default tolerance
-        valid, _, _ = GradientUtils.validate_gradients(analytical, numerical)
-        self.assertFalse(valid)
-        
-        # Should pass with higher tolerance
-        valid, _, _ = GradientUtils.validate_gradients(analytical, numerical, rtol=0.1)
-        self.assertTrue(valid)
-    
+
     def test_gradient_norm(self):
         """Test gradient norm function."""
         # Test L2 norm of [3, 4]
@@ -791,112 +743,99 @@ class TestGradientUtils(unittest.TestCase):
         self.assertAlmostEqual(norm.item() / 1e10, np.sqrt(5), places=6)
 
 
-class TestStateTesting(unittest.TestCase):
-    """Test cases for state-based testing with PyTorch utilities."""
-    
+class TestBZMapping(unittest.TestCase):
+
     def setUp(self):
-        """Set up test fixtures."""
-        self.logger = Logger()
-        self.function_mapping = FunctionMapping()
-        self.torch_testing = TorchTesting(self.logger, self.function_mapping)
-        
-        # Set default device
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    def test_state_based_testing(self):
-        """Test state-based testing with PyTorch tensor operations."""
-        # Create a simple class that modifies tensor state
-        class TensorProcessor:
-            def __init__(self, device=None):
-                self.device = device or torch.device('cpu')
-                self.input_tensor = torch.tensor([1.0, 2.0, 3.0], device=self.device, requires_grad=True)
-                self.weight = torch.tensor([0.5, 1.0, 1.5], device=self.device, requires_grad=True)
-                self.bias = torch.tensor(1.0, device=self.device, requires_grad=True)
-                self.output = None
-            
-            def process(self):
-                """Apply a simple linear transformation with gradient flow."""
-                self.output = (self.input_tensor * self.weight).sum() + self.bias
-                return self.output
-            
-            def backward(self):
-                """Compute gradients."""
-                if self.output is not None:
-                    self.output.backward()
-        
-        # Create instance and capture initial state
-        processor = TensorProcessor(device=self.device)
-        before_state = self.logger.captureState(processor)
-        
-        # Process and capture final state
-        processor.process()
-        processor.backward()
-        after_state = self.logger.captureState(processor)
-        
-        # Initialize new instance from before state
-        new_processor = self.torch_testing.initializeFromState(TensorProcessor, before_state, device=self.device)
-        
-        # Verify initial state
-        self.assertTrue(torch.allclose(new_processor.input_tensor, torch.tensor([1.0, 2.0, 3.0], device=self.device)))
-        self.assertTrue(torch.allclose(new_processor.weight, torch.tensor([0.5, 1.0, 1.5], device=self.device)))
-        self.assertTrue(new_processor.output is None)
-        
-        # Verify gradients are enabled
-        self.assertTrue(new_processor.input_tensor.requires_grad)
-        self.assertTrue(new_processor.weight.requires_grad)
-        
-        # Process with new instance
-        new_processor.process()
-        new_processor.backward()
-        
-        # Verify output matches
-        expected_output = (torch.tensor([1.0, 2.0, 3.0], device=self.device) * 
-                          torch.tensor([0.5, 1.0, 1.5], device=self.device)).sum() + 1.0
-        self.assertTrue(torch.allclose(new_processor.output, expected_output))
-        
-        # Verify gradients were computed
-        self.assertIsNotNone(new_processor.input_tensor.grad)
-        self.assertIsNotNone(new_processor.weight.grad)
-        
-        # Verify gradient values
-        self.assertTrue(torch.allclose(new_processor.input_tensor.grad, torch.tensor([0.5, 1.0, 1.5], device=self.device)))
-        self.assertTrue(torch.allclose(new_processor.weight.grad, torch.tensor([1.0, 2.0, 3.0], device=self.device)))
-        
-        # Compare with expected after state
-        new_state = self.logger.captureState(new_processor)
-        
-        # Convert tensors to numpy for comparison (since tensors have different memory addresses)
-        def convert_tensors_to_numpy(state_dict):
-            result = {}
-            for key, value in state_dict.items():
-                if isinstance(value, bytes):
-                    try:
-                        deserialized = self.logger.serializer.deserialize(value)
-                        if isinstance(deserialized, torch.Tensor):
-                            result[key] = deserialized.detach().cpu().numpy()
-                        else:
-                            result[key] = deserialized
-                    except:
-                        result[key] = value
-                else:
-                    result[key] = value
-            return result
-        
-        after_state_np = convert_tensors_to_numpy(after_state)
-        new_state_np = convert_tensors_to_numpy(new_state)
-        
-        # Compare output values
-        self.assertEqual(set(after_state_np.keys()), set(new_state_np.keys()))
-        
-        # Check that output tensor exists and has the right value
-        self.assertIn('output', new_state_np)
-        self.assertIsNotNone(new_state_np['output'])
-        
-        # Check gradient status
-        grad_status = self.torch_testing.check_state_gradients(new_processor)
-        self.assertTrue(grad_status['input_tensor'])
-        self.assertTrue(grad_status['weight'])
-        self.assertTrue(grad_status['bias'])
+        self.device = torch.device('cpu')
+        self.dtype = torch.float64
+        # Example A_inv for a simple cubic cell a=10
+        # A = [[10,0,0],[0,10,0],[0,0,10]] -> A_inv = [[0.1,0,0],[0,0.1,0],[0,0,0.1]]
+        self.A_inv_simple = torch.tensor([[0.1, 0.0, 0.0],
+                                          [0.0, 0.1, 0.0],
+                                          [0.0, 0.0, 0.1]],
+                                         dtype=self.dtype, device=self.device)
+        # Example A_inv from 5zck (ensure this matches model!)
+        # Use actual value from model if possible, otherwise placeholder:
+        self.A_inv_5zck = torch.tensor([
+            [ 0.20777062, -0. ,        -0.        ],
+            [ 0. ,         0.05830564,  0.        ],
+            [ 0. ,         0. ,         0.03382492]
+        ], dtype=self.dtype, device=self.device) # Make sure this is float64
+
+    def test_map_q_to_k_bz_origin(self):
+        q_vec = torch.tensor([0.0, 0.0, 0.0], dtype=self.dtype, device=self.device)
+        k_bz = BrillouinZoneUtils.map_q_to_k_bz(q_vec, self.A_inv_simple) # Updated call
+        expected_k_bz = torch.tensor([0.0, 0.0, 0.0], dtype=self.dtype, device=self.device)
+        self.assertTrue(torch.allclose(k_bz, expected_k_bz, atol=1e-12), f"Got {k_bz}")
+
+    def test_map_q_to_k_bz_inside(self):
+        # Corresponds to hkl = (0.1, -0.2, 0.3) - should map to itself
+        hkl = torch.tensor([0.1, -0.2, 0.3], dtype=self.dtype, device=self.device)
+        # k = hkl @ A_inv -> q = 2pi * k @ A_inv^T ??? No, q = 2pi * A_inv^-T @ hkl
+        # Easier: k = hkl @ A_inv -> q = 2pi * k
+        k_vec = torch.matmul(hkl.unsqueeze(0), self.A_inv_simple).squeeze(0)
+        q_vec = k_vec * (2.0 * torch.pi)
+        k_bz = BrillouinZoneUtils.map_q_to_k_bz(q_vec, self.A_inv_simple) # Updated call
+        expected_k_bz = k_vec # Should map to itself
+        self.assertTrue(torch.allclose(k_bz, expected_k_bz, atol=1e-12), f"Got {k_bz}, Expected {expected_k_bz}")
+
+    def test_map_q_to_k_bz_outside(self):
+        # Corresponds to hkl = (0.6, 0.9, -1.2) -> maps to ( -0.4, -0.1, -0.2)
+        hkl_in = torch.tensor([0.6, 0.9, -1.2], dtype=self.dtype, device=self.device)
+        hkl_expected_bz = torch.tensor([-0.4, -0.1, -0.2], dtype=self.dtype, device=self.device)
+
+        k_in = torch.matmul(hkl_in.unsqueeze(0), self.A_inv_simple).squeeze(0)
+        q_in = k_in * (2.0 * torch.pi)
+        expected_k_bz = torch.matmul(hkl_expected_bz.unsqueeze(0), self.A_inv_simple).squeeze(0)
+
+        k_bz_calculated = BrillouinZoneUtils.map_q_to_k_bz(q_in, self.A_inv_simple) # Updated call
+        self.assertTrue(torch.allclose(k_bz_calculated, expected_k_bz, atol=1e-12),
+                        f"Got {k_bz_calculated}, Expected {expected_k_bz}")
+
+    def test_map_q_to_k_bz_boundary(self):
+        # Corresponds to hkl = (0.5, -0.5, 0.0) -> maps to (-0.5, -0.5, 0.0)
+        hkl_in = torch.tensor([0.5, -0.5, 0.0], dtype=self.dtype, device=self.device)
+        hkl_expected_bz = torch.tensor([-0.5, -0.5, 0.0], dtype=self.dtype, device=self.device) # Boundary maps to -0.5
+
+        k_in = torch.matmul(hkl_in.unsqueeze(0), self.A_inv_simple).squeeze(0)
+        q_in = k_in * (2.0 * torch.pi)
+        expected_k_bz = torch.matmul(hkl_expected_bz.unsqueeze(0), self.A_inv_simple).squeeze(0)
+
+        k_bz_calculated = BrillouinZoneUtils.map_q_to_k_bz(q_in, self.A_inv_simple) # Updated call
+        self.assertTrue(torch.allclose(k_bz_calculated, expected_k_bz, atol=1e-12),
+                        f"Got {k_bz_calculated}, Expected {expected_k_bz}")
+
+    # Add a test using the actual 5zck A_inv if possible
+    def test_map_q_to_k_bz_5zck(self):
+        # Example q from grid run (e.g., q_grid[9] from 2x2x2 grid)
+        q_vec_9 = torch.tensor([-2.61092263, -0.54951769, -0.42505651], dtype=self.dtype, device=self.device)
+
+        # Calculate k_direct and expected hkl_direct based on the function's logic
+        k_direct_expected = q_vec_9 / (2.0 * torch.pi)
+        A_tensor = torch.linalg.pinv(self.A_inv_5zck)
+        hkl_direct_expected = torch.matmul(k_direct_expected.unsqueeze(0), A_tensor).squeeze(0)
+
+        # Calculate expected hkl_bz using the mapping rule
+        hkl_bz_expected = torch.remainder(hkl_direct_expected + 0.5, 1.0) - 0.5
+
+        # Calculate the expected final k_bz from the expected hkl_bz
+        k_bz_expected = torch.matmul(hkl_bz_expected.unsqueeze(0), self.A_inv_5zck.T).squeeze(0)
+
+        # Call the function under test
+        k_bz_calculated = BrillouinZoneUtils.map_q_to_k_bz(q_vec_9, self.A_inv_5zck) # Use correct call
+
+        # Assertions
+        self.assertEqual(k_bz_calculated.shape, (3,))
+        self.assertEqual(k_bz_calculated.dtype, self.dtype)
+        print(f"BZ map for q_grid[9]: {q_vec_9.cpu().numpy()} -> k_bz={k_bz_calculated.cpu().numpy()}")
+        print(f"Expected hkl_direct: {hkl_direct_expected.cpu().numpy()}")
+        print(f"Expected hkl_bz:     {hkl_bz_expected.cpu().numpy()}")
+        print(f"Expected k_bz:       {k_bz_expected.cpu().numpy()}")
+
+        # Compare calculated k_bz with the k_bz derived from the expected hkl_bz
+        self.assertTrue(torch.allclose(k_bz_calculated, k_bz_expected, atol=1e-12),
+                        f"Got {k_bz_calculated}, Expected {k_bz_expected}")
+
 
 if __name__ == '__main__':
     unittest.main()

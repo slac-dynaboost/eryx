@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from eryx.pdb import AtomicModel
 import eryx.map_utils as map_utils
-from base import setup_model
+from tests.base import setup_model
 
 def test_compute_multiplicity():
     """ Test that the correct multiplicity values are assigned to hkl indices. """
